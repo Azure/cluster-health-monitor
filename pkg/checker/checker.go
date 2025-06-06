@@ -5,6 +5,7 @@ import (
 
 	yaml "gopkg.in/yaml.v3"
 
+	dnscheck "github.com/Azure/cluster-health-monitor/pkg/checker/dnscheck"
 	"github.com/Azure/cluster-health-monitor/pkg/checker/example"
 )
 
@@ -35,6 +36,11 @@ func init() {
 	// this is a example to show how to register a checker
 	registerChecker("example", func(name string, spec map[string]any) (Checker, error) {
 		return example.BuildExampleChecker(name, spec)
+	})
+
+	// Register dns checker
+	registerChecker("dns", func(name string, spec map[string]any) (Checker, error) {
+		return dnscheck.BuildDNSChecker(name, spec)
 	})
 }
 
