@@ -5,7 +5,7 @@ import (
 
 	yaml "gopkg.in/yaml.v3"
 
-	dnscheck "github.com/Azure/cluster-health-monitor/pkg/checker/dnscheck"
+	"github.com/Azure/cluster-health-monitor/pkg/checker/dnscheck"
 	"github.com/Azure/cluster-health-monitor/pkg/checker/example"
 )
 
