@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mitchellh/mapstructure"
+	"github.com/spf13/viper"
 	v1 "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -71,8 +71,11 @@ func BuildDNSCheckerWithClient(name string, spec map[string]any, client kubernet
 		kubeClient: client,
 	}
 
-	if err := mapstructure.Decode(spec, checker); err != nil {
-		return nil, fmt.Errorf("failed to decode DNSChecker spec: %w", err)
+	v := viper.New()
+	v.MergeConfigMap(spec)
+	err := v.Unmarshal(&checker)
+	if err != nil {
+		return nil, fmt.Errorf("failed to unmarshal DNSChecker spec: %w", err)
 	}
 
 	if checker.Domain == "" {
