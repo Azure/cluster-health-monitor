@@ -1,11 +1,9 @@
 package checker
 
 import (
-	"context"
 	"testing"
 
 	"github.com/Azure/cluster-health-monitor/pkg/checker/dnscheck"
-	"github.com/Azure/cluster-health-monitor/pkg/types"
 	. "github.com/onsi/gomega"
 )
 
@@ -28,33 +26,6 @@ checkers:
 	dc, ok := checkers[0].(*dnscheck.DNSChecker)
 	g.Expect(ok).To(BeTrue(), "checker should be of type *dnscheck.DNSChecker")
 	g.Expect(dc.Name()).To(Equal("dns"), "checker should have the correct name")
-}
-
-func TestCheckerRunReturnsResult(t *testing.T) {
-	// Test that checker Run method returns Result structure
-	yamlData := []byte(`
-checkers:
-- name: test-dns 
-  type: dns 
-  interval: 10s
-  dnsConfig:
-    domain: example.com
-`)
-
-	g := NewGomegaWithT(t)
-	checkers, err := BuildCheckersFromConfig(yamlData)
-	g.Expect(err).NotTo(HaveOccurred(), "failed to build checkers")
-	g.Expect(checkers).To(HaveLen(1), "expected 1 checker")
-
-	// Test that Run returns a Result
-	ctx := context.Background()
-	result := checkers[0].Run(ctx)
-	
-	// Since DNS checker is not implemented, it should return unknown status
-	g.Expect(result.Status).To(Equal(types.StatusUnknown))
-	g.Expect(result.ErrorDetail).NotTo(BeNil())
-	g.Expect(result.ErrorDetail.Code).To(Equal("NOT_IMPLEMENTED"))
-	g.Expect(result.ErrorDetail.Message).To(Equal("DNSChecker not implemented yet"))
 }
 
 func TestValidationInBuildCheckersFromConfig(t *testing.T) {

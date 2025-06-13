@@ -11,7 +11,6 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 
 	"github.com/Azure/cluster-health-monitor/pkg/config"
-	"github.com/Azure/cluster-health-monitor/pkg/types"
 )
 
 func TestBuildDNSChecker(t *testing.T) {
@@ -78,24 +77,6 @@ func TestBuildDNSChecker(t *testing.T) {
 	}
 }
 
-func TestDNSCheckerRunReturnsResult(t *testing.T) {
-	g := NewWithT(t)
-
-	checker, err := BuildDNSChecker("test-dns-checker", &config.DNSConfig{
-		Domain: "example.com",
-	})
-	g.Expect(err).NotTo(HaveOccurred())
-	g.Expect(checker).NotTo(BeNil())
-
-	ctx := context.Background()
-	result := checker.Run(ctx)
-
-	// Since DNSChecker is not implemented, it should return unknown status
-	g.Expect(result.Status).To(Equal(types.StatusUnknown))
-	g.Expect(result.ErrorDetail).NotTo(BeNil())
-	g.Expect(result.ErrorDetail.Code).To(Equal("NOT_IMPLEMENTED"))
-	g.Expect(result.ErrorDetail.Message).To(Equal("DNSChecker not implemented yet"))
-}
 func TestGetCoreDNSServiceIP(t *testing.T) {
 	for _, tc := range []struct {
 		name           string
