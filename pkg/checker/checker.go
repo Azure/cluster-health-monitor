@@ -10,11 +10,12 @@ import (
 	"github.com/Azure/cluster-health-monitor/pkg/checker/dnscheck"
 	"github.com/Azure/cluster-health-monitor/pkg/checker/podstartup"
 	"github.com/Azure/cluster-health-monitor/pkg/config"
+	"github.com/Azure/cluster-health-monitor/pkg/types"
 )
 
 type Checker interface {
 	Name() string
-	Run(ctx context.Context) error
+	Run(ctx context.Context) types.Result
 }
 
 func BuildCheckersFromConfig(cfg []byte) ([]Checker, error) {

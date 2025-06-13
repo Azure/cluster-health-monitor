@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/Azure/cluster-health-monitor/pkg/config"
+	"github.com/Azure/cluster-health-monitor/pkg/types"
 )
 
 // DNSChecker implements the Checker interface for DNS checks.
@@ -33,11 +34,17 @@ func (c DNSChecker) Name() string {
 	return c.name
 }
 
-func (c DNSChecker) Run(ctx context.Context) error {
+func (c DNSChecker) Run(ctx context.Context) types.Result {
 	// TODO: Get the CoreDNS service IP and pod IPs.
 
 	// TODO: Get LocalDNS IP.
 
 	// TODO: Implement the DNS checking logic here
-	return fmt.Errorf("DNSChecker not implemented yet")
+	return types.Result{
+		Status: types.StatusUnhealthy,
+		ErrorDetail: &types.ErrorDetail{
+			Code:    "NOT_IMPLEMENTED",
+			Message: "DNSChecker not implemented yet",
+		},
+	}
 }

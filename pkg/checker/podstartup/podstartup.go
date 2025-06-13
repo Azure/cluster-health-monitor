@@ -2,9 +2,9 @@ package podstartup
 
 import (
 	"context"
-	"errors"
 
 	"github.com/Azure/cluster-health-monitor/pkg/config"
+	"github.com/Azure/cluster-health-monitor/pkg/types"
 )
 
 type PodStartupChecker struct {
@@ -23,6 +23,12 @@ func (c *PodStartupChecker) Name() string {
 	return c.name
 }
 
-func (c *PodStartupChecker) Run(ctx context.Context) error {
-	return errors.New("PodStartupChecker not implemented yet")
+func (c *PodStartupChecker) Run(ctx context.Context) types.Result {
+	return types.Result{
+		Status: types.StatusUnhealthy,
+		ErrorDetail: &types.ErrorDetail{
+			Code:    "NOT_IMPLEMENTED",
+			Message: "PodStartupChecker not implemented yet",
+		},
+	}
 }
