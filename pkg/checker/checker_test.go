@@ -49,7 +49,7 @@ checkers:
 	// Test that Run returns a Result
 	ctx := context.Background()
 	result := checkers[0].Run(ctx)
-	
+
 	// Since DNS checker is not implemented, it should return unhealthy status
 	g.Expect(result.Status).To(Equal(types.StatusUnhealthy))
 	g.Expect(result.ErrorDetail).NotTo(BeNil())

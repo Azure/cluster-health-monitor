@@ -5,8 +5,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/Azure/cluster-health-monitor/pkg/checker"
 	"github.com/Azure/cluster-health-monitor/pkg/config"
-	"github.com/Azure/cluster-health-monitor/pkg/types"
 )
 
 // DNSChecker implements the Checker interface for DNS checks.
@@ -15,36 +15,42 @@ type DNSChecker struct {
 	config *config.DNSConfig
 }
 
-// BuildDNSChecker creates a new DNSChecker instance.
-func BuildDNSChecker(name string, config *config.DNSConfig) (*DNSChecker, error) {
-	if name == "" {
+func init() {
+	checker.RegisterChecker(config.CheckTypeDNS, func(cfg *config.CheckerConfig) (checker.Checker, error) {
+		return Build(cfg)
+	})
+}
+
+// Build creates a new DNSChecker instance.
+func Build(config *config.CheckerConfig) (checker.Checker, error) {
+	if config.Name == "" {
 		return nil, fmt.Errorf("checker name cannot be empty")
 	}
-	if err := config.ValidateDNSConfig(); err != nil {
+	if err := config.DNSConfig.ValidateDNSConfig(); err != nil {
 		return nil, err
 	}
 
 	return &DNSChecker{
-		name:   name,
-		config: config,
+		name:   config.Name,
+		config: config.DNSConfig,
 	}, nil
 }
 
-func (c DNSChecker) Name() string {
+func (c *DNSChecker) Name() string {
 	return c.name
 }
 
-func (c DNSChecker) Run(ctx context.Context) types.Result {
+func (c *DNSChecker) Run(ctx context.Context) (checker.Result, error) {
 	// TODO: Get the CoreDNS service IP and pod IPs.
 
 	// TODO: Get LocalDNS IP.
 
 	// TODO: Implement the DNS checking logic here
-	return types.Result{
-		Status: types.StatusUnhealthy,
-		ErrorDetail: &types.ErrorDetail{
+	return checker.Result{
+		Status: checker.StatusUnhealthy,
+		ErrorDetail: &checker.ErrorDetail{
 			Code:    "NOT_IMPLEMENTED",
 			Message: "DNSChecker not implemented yet",
 		},
-	}
+	}, nil
 }

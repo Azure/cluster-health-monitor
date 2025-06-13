@@ -1,6 +1,12 @@
 package config
 
-import "time"
+import (
+	"fmt"
+	"os"
+	"time"
+
+	yaml "gopkg.in/yaml.v3"
+)
 
 type CheckerType string
 
@@ -55,4 +61,30 @@ type DNSConfig struct {
 }
 
 type PodStartupConfig struct {
+}
+
+func ParsefromYAML(path string) (*Config, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read file: %w", err)
+	}
+	var cfg Config
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal yaml: %w", err)
+	}
+	if hasDuplicateNames(cfg.Checkers) {
+		return nil, fmt.Errorf("duplicate checker names found in configuration")
+	}
+	return &cfg, nil
+}
+
+func hasDuplicateNames(checkers []CheckerConfig) bool {
+	nameSet := make(map[string]struct{})
+	for _, checker := range checkers {
+		if _, exists := nameSet[checker.Name]; exists {
+			return true
+		}
+		nameSet[checker.Name] = struct{}{}
+	}
+	return false
 }
