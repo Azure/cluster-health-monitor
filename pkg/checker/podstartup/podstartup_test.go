@@ -20,8 +20,8 @@ func TestPodStartupCheckerRunReturnsResult(t *testing.T) {
 	ctx := context.Background()
 	result := checker.Run(ctx)
 	
-	// Since PodStartupChecker is not implemented, it should return unhealthy status
-	g.Expect(result.Status).To(Equal(types.StatusUnhealthy))
+	// Since PodStartupChecker is not implemented, it should return unknown status
+	g.Expect(result.Status).To(Equal(types.StatusUnknown))
 	g.Expect(result.ErrorDetail).NotTo(BeNil())
 	g.Expect(result.ErrorDetail.Code).To(Equal("NOT_IMPLEMENTED"))
 	g.Expect(result.ErrorDetail.Message).To(Equal("PodStartupChecker not implemented yet"))

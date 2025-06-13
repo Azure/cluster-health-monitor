@@ -50,8 +50,8 @@ checkers:
 	ctx := context.Background()
 	result := checkers[0].Run(ctx)
 	
-	// Since DNS checker is not implemented, it should return unhealthy status
-	g.Expect(result.Status).To(Equal(types.StatusUnhealthy))
+	// Since DNS checker is not implemented, it should return unknown status
+	g.Expect(result.Status).To(Equal(types.StatusUnknown))
 	g.Expect(result.ErrorDetail).NotTo(BeNil())
 	g.Expect(result.ErrorDetail.Code).To(Equal("NOT_IMPLEMENTED"))
 	g.Expect(result.ErrorDetail.Message).To(Equal("DNSChecker not implemented yet"))

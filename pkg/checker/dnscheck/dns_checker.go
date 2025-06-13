@@ -41,7 +41,7 @@ func (c DNSChecker) Run(ctx context.Context) types.Result {
 
 	// TODO: Implement the DNS checking logic here
 	return types.Result{
-		Status: types.StatusUnhealthy,
+		Status: types.StatusUnknown,
 		ErrorDetail: &types.ErrorDetail{
 			Code:    "NOT_IMPLEMENTED",
 			Message: "DNSChecker not implemented yet",
