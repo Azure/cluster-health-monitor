@@ -3,7 +3,10 @@ package dnscheck
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net"
+	"sync"
 
 	discoveryv1 "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -87,7 +90,29 @@ func (c DNSChecker) Run(ctx context.Context) types.Result {
 		dnsTargets[target] = struct{}{}
 	}
 
-	// TODO: Implement the DNS checking logic here
+	var wg sync.WaitGroup
+	for target := range dnsTargets {
+		wg.Add(1)
+		go func(t DNSTarget) {
+			defer wg.Done()
+			err := c.resolveDomain(ctx, t)
+
+			if err != nil {
+				if errors.Is(err, context.DeadlineExceeded) {
+					// TODO: Collect timeout.
+					return
+				}
+				// TODO: Collect error.
+				return
+			}
+
+			// TODO: Collect success.
+		}(target)
+	}
+	wg.Wait()
+
+	// TODO: Aggregate results.
+
 	return types.NewUnknownResult("NOT_IMPLEMENTED", "DNSChecker not implemented yet")
 }
 
@@ -139,4 +164,18 @@ func getCoreDNSPodIPs(ctx context.Context, clientset kubernetes.Interface) ([]DN
 	}
 
 	return dnsTargets, nil
+}
+
+// resolveDomain performs the DNS query against the specified DNSTarget.
+func (c *DNSChecker) resolveDomain(ctx context.Context, dnsTarget DNSTarget) error {
+	resolver := &net.Resolver{
+		PreferGo: true,
+		Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			d := net.Dialer{}
+			return d.DialContext(ctx, network, net.JoinHostPort(dnsTarget.IP, "53"))
+		},
+	}
+
+	_, err := resolver.LookupHost(ctx, c.config.Domain)
+	return err
 }
