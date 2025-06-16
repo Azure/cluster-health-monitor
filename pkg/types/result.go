@@ -23,3 +23,32 @@ type Result struct {
 	Status      Status       `json:"status"`
 	ErrorDetail *ErrorDetail `json:"errorDetail,omitempty"`
 }
+
+// NewHealthyResult creates a new Result with StatusHealthy
+func NewHealthyResult() Result {
+	return Result{
+		Status: StatusHealthy,
+	}
+}
+
+// NewUnhealthyResult creates a new Result with StatusUnhealthy and error details
+func NewUnhealthyResult(code, message string) Result {
+	return Result{
+		Status: StatusUnhealthy,
+		ErrorDetail: &ErrorDetail{
+			Code:    code,
+			Message: message,
+		},
+	}
+}
+
+// NewUnknownResult creates a new Result with StatusUnknown and error details
+func NewUnknownResult(code, message string) Result {
+	return Result{
+		Status: StatusUnknown,
+		ErrorDetail: &ErrorDetail{
+			Code:    code,
+			Message: message,
+		},
+	}
+}

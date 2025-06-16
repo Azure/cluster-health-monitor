@@ -61,46 +61,22 @@ func (c DNSChecker) Name() string {
 func (c DNSChecker) Run(ctx context.Context) types.Result {
 	k8sConfig, err := rest.InClusterConfig()
 	if err != nil {
-		return types.Result{
-			Status: types.StatusUnknown,
-			ErrorDetail: &types.ErrorDetail{
-				Code:    "IN_CLUSTER_CONFIG_ERROR",
-				Message: fmt.Sprintf("failed to get in-cluster config: %v", err),
-			},
-		}
+		return types.NewUnknownResult("IN_CLUSTER_CONFIG_ERROR", fmt.Sprintf("failed to get in-cluster config: %v", err))
 	}
 
 	clientset, err := kubernetes.NewForConfig(k8sConfig)
 	if err != nil {
-		return types.Result{
-			Status: types.StatusUnknown,
-			ErrorDetail: &types.ErrorDetail{
-				Code:    "K8S_CLIENT_ERROR",
-				Message: fmt.Sprintf("failed to create Kubernetes client: %v", err),
-			},
-		}
+		return types.NewUnknownResult("K8S_CLIENT_ERROR", fmt.Sprintf("failed to create Kubernetes client: %v", err))
 	}
 
 	coreDNSServiceTarget, err := getCoreDNSServiceIP(ctx, clientset)
 	if err != nil {
-		return types.Result{
-			Status: types.StatusUnknown,
-			ErrorDetail: &types.ErrorDetail{
-				Code:    "COREDNS_SERVICE_IP_ERROR",
-				Message: fmt.Sprintf("failed to get CoreDNS service IP: %v", err),
-			},
-		}
+		return types.NewUnknownResult("COREDNS_SERVICE_IP_ERROR", fmt.Sprintf("failed to get CoreDNS service IP: %v", err))
 	}
 
 	coreDNSPodTargets, err := getCoreDNSPodIPs(ctx, clientset)
 	if err != nil {
-		return types.Result{
-			Status: types.StatusUnknown,
-			ErrorDetail: &types.ErrorDetail{
-				Code:    "COREDNS_POD_IPS_ERROR",
-				Message: fmt.Sprintf("failed to get CoreDNS pod IPs: %v", err),
-			},
-		}
+		return types.NewUnknownResult("COREDNS_POD_IPS_ERROR", fmt.Sprintf("failed to get CoreDNS pod IPs: %v", err))
 	}
 
 	// TODO: Get LocalDNS IP.
@@ -112,13 +88,7 @@ func (c DNSChecker) Run(ctx context.Context) types.Result {
 	}
 
 	// TODO: Implement the DNS checking logic here
-	return types.Result{
-		Status: types.StatusUnknown,
-		ErrorDetail: &types.ErrorDetail{
-			Code:    "NOT_IMPLEMENTED",
-			Message: "DNSChecker not implemented yet",
-		},
-	}
+	return types.NewUnknownResult("NOT_IMPLEMENTED", "DNSChecker not implemented yet")
 }
 
 // getCoreDNSServiceIP returns the ClusterIP of the CoreDNS service in the cluster as a DNSTarget.

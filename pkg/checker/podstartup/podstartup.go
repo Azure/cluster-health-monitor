@@ -24,11 +24,5 @@ func (c *PodStartupChecker) Name() string {
 }
 
 func (c *PodStartupChecker) Run(ctx context.Context) types.Result {
-	return types.Result{
-		Status: types.StatusUnknown,
-		ErrorDetail: &types.ErrorDetail{
-			Code:    "NOT_IMPLEMENTED",
-			Message: "PodStartupChecker not implemented yet",
-		},
-	}
+	return types.NewUnknownResult("NOT_IMPLEMENTED", "PodStartupChecker not implemented yet")
 }
