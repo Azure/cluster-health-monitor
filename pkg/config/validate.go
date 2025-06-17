@@ -41,6 +41,8 @@ func (c *PodStartupConfig) ValidatePodStartupConfig() error {
 	if c.Namespace == "" {
 		return fmt.Errorf("namespace is required for PodStartupChecker")
 	}
-	// TODO? implement more validation
+	if c.MaxSyntheticPods <= 0 {
+		return fmt.Errorf("maxSyntheticPods must be greater than 0 for PodStartupChecker")
+	}
 	return nil
 }
