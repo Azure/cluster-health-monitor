@@ -55,4 +55,12 @@ type DNSConfig struct {
 }
 
 type PodStartupConfig struct {
+	// Required.
+	// The namespace in which to create synthetic pods for startup checks.
+	Namespace string `yaml:"namespace"`
+	// Required.
+	// The maximum number of synthetic pods created by the checker that can exist at any one time. If the limit has been reached, the checker
+	// will not create any more synthetic pods until some of the existing ones are deleted. Instead, it will fail the run with an error.
+	// Reaching this limit effectively disables the checker.
+	MaxSyntheticPods int `yaml:"maxSyntheticPods"`
 }

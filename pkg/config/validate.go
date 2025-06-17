@@ -33,3 +33,14 @@ func (c *DNSConfig) ValidateDNSConfig() error {
 	}
 	return nil
 }
+
+func (c *PodStartupConfig) ValidatePodStartupConfig() error {
+	if c == nil {
+		return fmt.Errorf("podStartupConfig is required for PodStartupChecker")
+	}
+	if c.Namespace == "" {
+		return fmt.Errorf("namespace is required for PodStartupChecker")
+	}
+	// TODO? implement more validation
+	return nil
+}
