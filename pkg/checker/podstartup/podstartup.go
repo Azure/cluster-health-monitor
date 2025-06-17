@@ -62,31 +62,31 @@ func (c *PodStartupChecker) Name() string {
 }
 
 func (c *PodStartupChecker) Run(ctx context.Context) error {
-	// labels shared by all synthetic pods created by this checker
+	// podLabels are shared by all synthetic pods created by this checker.
 	podLabels := map[string]string{
 		"cluster-health-monitor/checker-name": c.name,
 		"app":                                 "cluster-health-monitor-podstartup-synthetic",
 	}
 
-	// garbage collect any synthetic pods previously created by this checker
+	// Garbage collect any synthetic pods previously created by this checker.
 	pods, err := c.k8sClientset.CoreV1().Pods(c.config.Namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: labels.SelectorFromSet(labels.Set(podLabels)).String(),
 	})
 	if err != nil {
 		return fmt.Errorf("failed to list pods in namespace %s: %w", c.config.Namespace, err)
 	}
-
 	if err := c.garbageCollect(ctx, pods.Items); err != nil {
+		// Logging instead of returning an error here to avoid failing the checker run.
 		fmt.Printf("garbageCollect failed: %s\n", err.Error())
 	}
 
-	// do not run the checker if the maximum number of synthetic pods has been reached
+	// Do not run the checker if the maximum number of synthetic pods has been reached.
 	if len(pods.Items) >= c.config.MaxSyntheticPods {
 		return fmt.Errorf("maximum number of synthetic pods reached in namespace %s, current: %d, max allowed: %d, delete some pods before running the checker again",
 			c.config.Namespace, len(pods.Items), c.config.MaxSyntheticPods)
 	}
 
-	// Create synthetic pod
+	// Create a synthetic pod to measure the startup time.
 	synthPod, err := c.k8sClientset.CoreV1().Pods(c.config.Namespace).Create(ctx, &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   fmt.Sprintf("%s-synthetic-%d", c.name, time.Now().UnixNano()),
@@ -95,6 +95,7 @@ func (c *PodStartupChecker) Run(ctx context.Context) error {
 		Spec: corev1.PodSpec{
 			Containers: []corev1.Container{
 				{
+					// TODO? Maybe use a different image
 					Name:  "pause",
 					Image: "k8s.gcr.io/pause:3.2",
 				},
@@ -106,7 +107,6 @@ func (c *PodStartupChecker) Run(ctx context.Context) error {
 		return fmt.Errorf("failed to create synthetic pod in namespace %s: %w", c.config.Namespace, err)
 	}
 
-	// Poll the durations to calculate the startup duration metric
 	podCreationToContainerReadyDuration, err := c.pollPodCreationToContainerReadyDuration(ctx, synthPod.Name)
 	if err != nil {
 		return fmt.Errorf("failed to poll pod creation and container ready time for pod %s in namespace %s: %w", synthPod.Name, c.config.Namespace, err)
@@ -125,6 +125,7 @@ func (c *PodStartupChecker) Run(ctx context.Context) error {
 
 	err = c.k8sClientset.CoreV1().Pods(c.config.Namespace).Delete(ctx, synthPod.Name, metav1.DeleteOptions{})
 	if err != nil && !apierrors.IsNotFound(err) {
+		// Logging instead of returning an error here to avoid failing the checker run.
 		fmt.Printf("failed to delete synthetic pod %s in namespace %s: %s\n", synthPod.Name, c.config.Namespace, err.Error())
 	}
 
@@ -192,6 +193,7 @@ func (c *PodStartupChecker) getImagePullDuration(ctx context.Context, podName st
 		} else if strings.Contains(event.Message, "already present on machine") {
 			return 0, nil
 		} else {
+			// Logging instead of returning an error to avoid failing the checker run.
 			fmt.Printf("Unexpected event message format for pod %s in namespace %s: %s\n", podName, c.config.Namespace, event.Message)
 		}
 	}
