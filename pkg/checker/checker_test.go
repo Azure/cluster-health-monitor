@@ -6,13 +6,14 @@ import (
 	"testing"
 
 	"github.com/Azure/cluster-health-monitor/pkg/config"
+	"github.com/Azure/cluster-health-monitor/pkg/types"
 	. "github.com/onsi/gomega"
 )
 
 type fakeChecker struct{ name string }
 
-func (f *fakeChecker) Name() string                  { return f.name }
-func (f *fakeChecker) Run(ctx context.Context) error { return nil }
+func (f *fakeChecker) Name() string                                   { return f.name }
+func (f *fakeChecker) Run(ctx context.Context) (*types.Result, error) { return nil, nil }
 
 func fakeBuilder(cfg *config.CheckerConfig) (Checker, error) {
 	if cfg.Name == "fail" {

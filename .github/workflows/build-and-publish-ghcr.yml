@@ -1,4 +1,6 @@
-name: publish_images
+# This workflow builds and publishes the cluster-health-monitor image to GitHub Container Registry (ghcr.io).
+
+name: build_and_publish_ghcr
 
 on:
   workflow_dispatch:

@@ -20,6 +20,7 @@ import (
 
 	"github.com/Azure/cluster-health-monitor/pkg/checker"
 	"github.com/Azure/cluster-health-monitor/pkg/config"
+	"github.com/Azure/cluster-health-monitor/pkg/types"
 )
 
 type PodStartupChecker struct {
@@ -61,7 +62,7 @@ func (c *PodStartupChecker) Name() string {
 	return c.name
 }
 
-func (c *PodStartupChecker) Run(ctx context.Context) error {
+func (c *PodStartupChecker) Run(ctx context.Context) (*types.Result, error) {
 	// podLabels are shared by all synthetic pods created by this checker.
 	podLabels := map[string]string{
 		"cluster-health-monitor/checker-name": c.name,
@@ -73,7 +74,7 @@ func (c *PodStartupChecker) Run(ctx context.Context) error {
 		LabelSelector: labels.SelectorFromSet(labels.Set(podLabels)).String(),
 	})
 	if err != nil {
-		return fmt.Errorf("failed to list pods in namespace %s: %w", c.config.Namespace, err)
+		return nil, fmt.Errorf("failed to list pods in namespace %s: %w", c.config.Namespace, err)
 	}
 	if err := c.garbageCollect(ctx, pods.Items); err != nil {
 		// Logging instead of returning an error here to avoid failing the checker run.
@@ -82,7 +83,7 @@ func (c *PodStartupChecker) Run(ctx context.Context) error {
 
 	// Do not run the checker if the maximum number of synthetic pods has been reached.
 	if len(pods.Items) >= c.config.MaxSyntheticPods {
-		return fmt.Errorf("maximum number of synthetic pods reached in namespace %s, current: %d, max allowed: %d, delete some pods before running the checker again",
+		return nil, fmt.Errorf("maximum number of synthetic pods reached in namespace %s, current: %d, max allowed: %d, delete some pods before running the checker again",
 			c.config.Namespace, len(pods.Items), c.config.MaxSyntheticPods)
 	}
 
@@ -104,23 +105,26 @@ func (c *PodStartupChecker) Run(ctx context.Context) error {
 		},
 	}, metav1.CreateOptions{})
 	if err != nil {
-		return fmt.Errorf("failed to create synthetic pod in namespace %s: %w", c.config.Namespace, err)
+		return nil, fmt.Errorf("failed to create synthetic pod in namespace %s: %w", c.config.Namespace, err)
 	}
 
 	podCreationToContainerReadyDuration, err := c.pollPodCreationToContainerReadyDuration(ctx, synthPod.Name)
 	if err != nil {
-		return fmt.Errorf("failed to poll pod creation and container ready time for pod %s in namespace %s: %w", synthPod.Name, c.config.Namespace, err)
+		return nil, fmt.Errorf("failed to poll pod creation and container ready time for pod %s in namespace %s: %w", synthPod.Name, c.config.Namespace, err)
 	}
 	// This does not poll because if the container is ready, the event for pulling the image should already exist.
 	imagePullDuration, err := c.getImagePullDuration(ctx, synthPod.Name)
 	if err != nil {
-		return fmt.Errorf("failed to poll image pull duration for pod %s in namespace %s: %w", synthPod.Name, c.config.Namespace, err)
+		return nil, fmt.Errorf("failed to poll image pull duration for pod %s in namespace %s: %w", synthPod.Name, c.config.Namespace, err)
 	}
 
-	podStartupDuration := podCreationToContainerReadyDuration - imagePullDuration
+	// We can only be accurate to the seconds place because that is our least precise measurement unit.
+	podStartupDuration := (podCreationToContainerReadyDuration - imagePullDuration).Round(time.Second)
 	if podStartupDuration > 5*time.Second {
-		// TODO return unhealthy result
-		return fmt.Errorf("pod startup duration for pod %s in namespace %s is too long", synthPod.Name, c.config.Namespace)
+		return types.Unhealthy(
+			"POD_STARTUP_DURATION_TOO_LONG",
+			fmt.Sprintf("pod startup duration for pod %s in namespace %s is too long: %s", synthPod.Name, c.config.Namespace, podStartupDuration.String()),
+		), nil
 	}
 
 	err = c.k8sClientset.CoreV1().Pods(c.config.Namespace).Delete(ctx, synthPod.Name, metav1.DeleteOptions{})
@@ -130,7 +134,7 @@ func (c *PodStartupChecker) Run(ctx context.Context) error {
 	}
 
 	// TODO return healthy result
-	return nil
+	return types.Healthy(), nil
 }
 
 func (c *PodStartupChecker) garbageCollect(ctx context.Context, pods []corev1.Pod) error {

@@ -1,7 +1,7 @@
-# This Github Action will build and publish images to Azure Container Registry(ACR), from where the published images will be
-# automatically pushed to the trusted registry, Microsoft Container Registry(MCR).
+# This Github Action will build and publish images to Azure Container Registry(ACR), from where the published images will be automatically
+# pushed to the trusted registry, Microsoft Container Registry(MCR).
 
-name: Building and Pushing to MCR
+name: build_and_publish_acr
 on:
   workflow_dispatch:
     inputs:

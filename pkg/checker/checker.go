@@ -8,11 +8,14 @@ import (
 	yaml "gopkg.in/yaml.v3"
 
 	"github.com/Azure/cluster-health-monitor/pkg/config"
+	"github.com/Azure/cluster-health-monitor/pkg/types"
 )
 
 type Checker interface {
 	Name() string
-	Run(ctx context.Context) error
+
+	// Run executes the health check logic for the checker.
+	Run(ctx context.Context) (*types.Result, error)
 }
 
 type Builder func(cfg *config.CheckerConfig) (Checker, error)
