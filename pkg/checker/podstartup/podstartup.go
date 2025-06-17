@@ -2,6 +2,7 @@ package podstartup
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -9,7 +10,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -68,20 +69,31 @@ func (c *PodStartupChecker) Run(ctx context.Context) error {
 		"cluster-health-monitor/checker-name": c.name,
 	}
 
-	// List pods and check count of exisiting. If too high attempt garbage collect and return with error
+	// garbage collect any synthetic pods previously created by this checker
 	pods, err := c.k8sClientset.CoreV1().Pods(c.config.Namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: labels.SelectorFromSet(labels.Set(podLabels)).String(),
 	})
 	if err != nil {
 		return fmt.Errorf("failed to list pods in namespace %s: %w", c.config.Namespace, err)
 	}
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				klog.Errorf("panic in garbageCollect: %s", err.Error())
+			}
+		}()
+		if err := c.garbageCollect(ctx, pods.Items); err != nil {
+			klog.Warningf("garbageCollect failed: %s", err.Error())
+		}
+	}()
+
+	// do not run the checker if the maximum number of synthetic pods has been reached
 	if len(pods.Items) >= c.config.MaxSyntheticPods {
-		c.garbageCollect(ctx, pods.Items)
 		return fmt.Errorf("maximum number of synthetic pods reached in namespace %s, current: %d, max allowed: %d, delete some pods before running the checker again",
 			c.config.Namespace, len(pods.Items), c.config.MaxSyntheticPods)
 	}
 
-	// Create synthetic pod in namespace
+	// Create synthetic pod
 	synthPod, err := c.k8sClientset.CoreV1().Pods(c.config.Namespace).Create(ctx, &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   fmt.Sprintf("%s-synthetic-%d", c.name, time.Now().UnixNano()),
@@ -116,20 +128,22 @@ func (c *PodStartupChecker) Run(ctx context.Context) error {
 	fmt.Println(podStartupTime)
 
 	err = c.k8sClientset.CoreV1().Pods(c.config.Namespace).Delete(ctx, synthPod.Name, metav1.DeleteOptions{})
-	if err != nil && !errors.IsNotFound(err) {
+	if err != nil && !apierrors.IsNotFound(err) {
 		klog.Warningf("failed to delete synthetic pod %s in namespace %s: %s", synthPod.Name, c.config.Namespace, err.Error())
 	}
 
 	return nil
 }
 
-func (c *PodStartupChecker) garbageCollect(ctx context.Context, pods []corev1.Pod) {
+func (c *PodStartupChecker) garbageCollect(ctx context.Context, pods []corev1.Pod) error {
+	var errs []error
 	for _, pod := range pods {
 		// TODO? Maybe take into account pod age and only try delete pods older than timeout in config
-		if err := c.k8sClientset.CoreV1().Pods(c.config.Namespace).Delete(ctx, pod.Name, metav1.DeleteOptions{}); err != nil && !errors.IsNotFound(err) {
-			klog.Errorf("failed to delete synthetic pod %s: %s", pod.Name, err.Error())
+		if err := c.k8sClientset.CoreV1().Pods(c.config.Namespace).Delete(ctx, pod.Name, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
+			errs = append(errs, fmt.Errorf("failed to delete synthetic pod %s: %s", pod.Name, err.Error()))
 		}
 	}
+	return errors.Join(errs...)
 }
 
 // Polls the pod until the container is ready or the context is no longer valid. It returns the duration between the
