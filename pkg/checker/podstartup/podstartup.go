@@ -118,7 +118,7 @@ func (c *PodStartupChecker) Run(ctx context.Context) (*types.Result, error) {
 		return nil, fmt.Errorf("failed to poll image pull duration for pod %s in namespace %s: %w", synthPod.Name, c.config.Namespace, err)
 	}
 
-	// We can only be accurate to the seconds place because that is our least precise measurement unit.
+	// Rounding to the seconds place because that is our least accurate measurement unit.
 	podStartupDuration := (podCreationToContainerReadyDuration - imagePullDuration).Round(time.Second)
 	if podStartupDuration > 5*time.Second {
 		return types.Unhealthy(
@@ -133,7 +133,6 @@ func (c *PodStartupChecker) Run(ctx context.Context) (*types.Result, error) {
 		fmt.Printf("failed to delete synthetic pod %s in namespace %s: %s\n", synthPod.Name, c.config.Namespace, err.Error())
 	}
 
-	// TODO return healthy result
 	return types.Healthy(), nil
 }
 
