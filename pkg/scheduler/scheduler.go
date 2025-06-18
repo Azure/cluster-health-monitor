@@ -53,7 +53,7 @@ func (r *Scheduler) scheduleChecker(ctx context.Context, chkSch CheckerSchedule)
 			func() {
 				runCtx, cancel := context.WithTimeout(ctx, chkSch.Timeout)
 				defer cancel()
-				if err := chkSch.Checker.Run(runCtx); err != nil {
+				if _, err := chkSch.Checker.Run(runCtx); err != nil {
 					// TODO: handle the error of the checker and emit corresponding metrics
 					log.Printf("Checker %q failed: %s.", chkSch.Checker.Name(), err)
 				}

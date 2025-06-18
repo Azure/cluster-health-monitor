@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Azure/cluster-health-monitor/pkg/types"
 	. "github.com/onsi/gomega"
 )
 
@@ -18,13 +19,13 @@ type fakeChecker struct {
 }
 
 func (f *fakeChecker) Name() string { return f.name }
-func (f *fakeChecker) Run(ctx context.Context) error {
+func (f *fakeChecker) Run(ctx context.Context) (*types.Result, error) {
 	fmt.Println("Running fake checker:", f.name)
 	atomic.AddInt32(&f.runCount, 1)
 	if f.delay > 0 {
 		time.Sleep(f.delay)
 	}
-	return f.runErr
+	return types.Healthy(), f.runErr
 }
 
 func TestScheduler_Run_Periodic(t *testing.T) {
