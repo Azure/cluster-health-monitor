@@ -1,0 +1,11 @@
+checkers:
+  - name: dns1
+    type: dns
+    interval: 10s
+    timeout: 2s
+    dnsConfig:
+      domain: example.com
+  - name: podStartup1
+    type: podStartup
+    interval: 10s
+    timeout: 2s
