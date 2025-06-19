@@ -1,0 +1,22 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-health-monitor-config
+  namespace: cluster-health-monitor
+data:
+  config.yaml: |
+    checkers:
+      - name: "internal-dns-checker"
+        type: "dns"
+        interval: "10s"
+        timeout: "5s"
+        dnsConfig:
+          domain: "kubernetes.default.svc.cluster.local"
+      - name: "external-dns-checker"
+        type: "dns"
+        interval: "10s"
+        timeout: "5s"
+        dnsConfig:
+          domain: "mcr.microsoft.com"
+      # TODO: Add pod startup checker.

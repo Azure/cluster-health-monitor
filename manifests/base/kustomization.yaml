@@ -4,3 +4,4 @@ resources:
   - namespaces.yaml
   - rbac.yaml
   - deployment.yaml
+  - configmap.yaml
