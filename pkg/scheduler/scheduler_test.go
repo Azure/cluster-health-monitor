@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Azure/cluster-health-monitor/pkg/config"
 	"github.com/Azure/cluster-health-monitor/pkg/types"
 	. "github.com/onsi/gomega"
 )
@@ -27,6 +28,7 @@ func (f *fakeChecker) Run(ctx context.Context) (*types.Result, error) {
 	}
 	return types.Healthy(), f.runErr
 }
+func (f *fakeChecker) Type() config.CheckerType { return config.CheckerType("fake") }
 
 func TestScheduler_Run_Periodic(t *testing.T) {
 	t.Parallel()

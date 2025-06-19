@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Azure/cluster-health-monitor/pkg/checker"
+	"github.com/Azure/cluster-health-monitor/pkg/metrics"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -53,11 +54,9 @@ func (r *Scheduler) scheduleChecker(ctx context.Context, chkSch CheckerSchedule)
 			func() {
 				runCtx, cancel := context.WithTimeout(ctx, chkSch.Timeout)
 				defer cancel()
-				if _, err := chkSch.Checker.Run(runCtx); err != nil {
-					// TODO: handle the error of the checker and emit corresponding metrics
-					log.Printf("Checker %q failed: %s.", chkSch.Checker.Name(), err)
-				}
-				// TODO: handle the result of the checker and emit corresponding metrics
+				result, err := chkSch.Checker.Run(runCtx)
+
+				metrics.RecordCheckerResult(string(chkSch.Checker.Type()), chkSch.Checker.Name(), result, err)
 			}()
 
 		case <-ctx.Done():

@@ -42,6 +42,10 @@ func (c *PodStartupChecker) Name() string {
 	return c.name
 }
 
+func (c *PodStartupChecker) Type() config.CheckerType {
+	return config.CheckTypePodStartup
+}
+
 func (c *PodStartupChecker) Run(ctx context.Context) (*types.Result, error) {
 	return nil, errors.New("PodStartupChecker not implemented yet")
 }

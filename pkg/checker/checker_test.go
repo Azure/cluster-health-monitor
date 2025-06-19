@@ -14,6 +14,7 @@ type fakeChecker struct{ name string }
 
 func (f *fakeChecker) Name() string                                   { return f.name }
 func (f *fakeChecker) Run(ctx context.Context) (*types.Result, error) { return nil, nil }
+func (f *fakeChecker) Type() config.CheckerType                       { return config.CheckerType("fake") }
 
 func fakeBuilder(cfg *config.CheckerConfig) (Checker, error) {
 	if cfg.Name == "fail" {

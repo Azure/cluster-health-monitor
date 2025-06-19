@@ -61,6 +61,10 @@ func (c DNSChecker) Name() string {
 	return c.name
 }
 
+func (c DNSChecker) Type() config.CheckerType {
+	return config.CheckTypeDNS
+}
+
 // Run executes the DNS check.
 // It queries the CoreDNS service and pods for the configured domain.
 // If LocalDNS is configured, it should also query that.

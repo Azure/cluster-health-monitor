@@ -12,7 +12,11 @@ import (
 )
 
 type Checker interface {
+	// Name returns the name of the checker.
 	Name() string
+
+	// Type returns the type of the checker.
+	Type() config.CheckerType
 
 	// Run executes the health check logic for the checker.
 	Run(ctx context.Context) (*types.Result, error)
