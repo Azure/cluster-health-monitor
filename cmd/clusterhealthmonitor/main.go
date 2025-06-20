@@ -16,15 +16,21 @@ import (
 	"github.com/Azure/cluster-health-monitor/pkg/metrics"
 	"github.com/Azure/cluster-health-monitor/pkg/scheduler"
 	"gopkg.in/yaml.v3"
+	"k8s.io/klog/v2"
 )
 
 const (
 	defaultConfigPath = "/etc/cluster-health-monitor/config.yaml"
 )
 
+func init() {
+	klog.InitFlags(nil)
+}
+
 func main() {
 	configPath := flag.String("config", defaultConfigPath, "Path to the configuration file")
 	flag.Parse()
+	defer klog.Flush()
 
 	registerCheckers()
 
