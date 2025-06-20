@@ -52,8 +52,10 @@ docker-build-cluster-health-monitor: docker-buildx-builder
 ## Local Test with Kind
 ## --------------------------------------
 
+GIT_ROOT = $(shell git rev-parse --show-toplevel)
+LOCAL_IMAGE_NAME = cluster-health-monitor
+LOCAL_IMAGE_TAG = test-latest
 KIND_CLUSTER_NAME ?= chm-test
-LOCAL_IMAGE_TAG ?= test-latest
 KUBECONFIG ?= $(HOME)/.kube/config
 
 .PHONY: kind-create-cluster
@@ -68,16 +70,12 @@ kind-create-cluster:
 .PHONY: kind-build-image
 kind-build-image:
 	docker build \
-		--file docker/$(CLUSTER_HEALTH_MONITOR_IMAGE_NAME).Dockerfile \
-		--tag $(CLUSTER_HEALTH_MONITOR_IMAGE_NAME):$(LOCAL_IMAGE_TAG) .
-
-.PHONY: kind-update-test-kustomize
-kind-update-test-kustomize:
-	@sed -i '/path: .*\/image/ {n; s|value: cluster-health-monitor:.*|value: cluster-health-monitor:$(LOCAL_IMAGE_TAG)|}' manifests/overlays/test/image.patch.yaml
+		--file ${GIT_ROOT}/docker/$(LOCAL_IMAGE_NAME).Dockerfile \
+		--tag $(LOCAL_IMAGE_NAME):$(LOCAL_IMAGE_TAG) .
 
 .PHONY: kind-load-image
-kind-load-image: kind-build-image kind-update-test-kustomize
-	kind load docker-image $(CLUSTER_HEALTH_MONITOR_IMAGE_NAME):$(LOCAL_IMAGE_TAG) --name $(KIND_CLUSTER_NAME)
+kind-load-image: kind-build-image
+	kind load docker-image $(LOCAL_IMAGE_NAME):$(LOCAL_IMAGE_TAG) --name $(KIND_CLUSTER_NAME)
 
 .PHONY: kind-export-kubeconfig
 kind-export-kubeconfig:
@@ -85,11 +83,11 @@ kind-export-kubeconfig:
 
 .PHONY: kind-apply-manifests
 kind-apply-manifests: kind-export-kubeconfig
-	kubectl apply -k manifests/overlays/test
+	kubectl apply -k ${GIT_ROOT}/manifests/overlays/test
 
 .PHONY: kind-delete-deployment
 kind-delete-deployment: kind-export-kubeconfig
-	kubectl delete -k manifests/overlays/test
+	kubectl delete -k ${GIT_ROOT}/manifests/overlays/test
 
 .PHONY: kind-redeploy
 kind-redeploy: kind-delete-deployment kind-build-image kind-load-image kind-apply-manifests
