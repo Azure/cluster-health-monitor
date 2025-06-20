@@ -36,10 +36,6 @@ type DNSChecker struct {
 
 // BuildDNSChecker creates a new DNSChecker instance.
 func BuildDNSChecker(config *config.CheckerConfig) (checker.Checker, error) {
-	if err := config.DNSConfig.ValidateDNSConfig(); err != nil {
-		return nil, err
-	}
-
 	k8sConfig, err := rest.InClusterConfig()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get in-cluster config: %w", err)
