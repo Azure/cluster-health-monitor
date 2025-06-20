@@ -20,7 +20,7 @@ spec:
       containers:
         - name: cluster-health-monitor
           # TODO: Update the image to the correct registry and tag.
-          image: cluster-health-monitor:latest
+          image: shaomq/chm:latest
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 9800
