@@ -239,9 +239,11 @@ func (c *PodStartupChecker) parseImagePullDuration(message string) (time.Duratio
 }
 
 func (c *PodStartupChecker) generateSyntheticPod() *corev1.Pod {
+	podName := fmt.Sprintf("%s-synthetic-%d", c.name, time.Now().UnixNano())
+	podName = strings.ToLower(podName)
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:   fmt.Sprintf("%s-synthetic-%d", c.name, time.Now().UnixNano()),
+			Name:   podName,
 			Labels: c.podLabels,
 		},
 		// TODO? maybe allow configuring the pod spec in the config
