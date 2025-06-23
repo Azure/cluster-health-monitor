@@ -11,6 +11,7 @@ import (
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/validation"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
@@ -444,6 +445,44 @@ func TestPodStartupChecker_getImagePullDuration(t *testing.T) {
 			}
 			dur, err := checker.getImagePullDuration(context.Background(), "test-pod")
 			tt.validateRes(g, dur, err)
+		})
+	}
+}
+
+func TestGenerateSyntheticPod(t *testing.T) {
+	tests := []struct {
+		name        string
+		checkerName string
+	}{
+		{
+			name:        "generates valid synthetic pod",
+			checkerName: "test-checker",
+		},
+		{
+			name:        "succesfully handles uppercase checker name",
+			checkerName: "UPPERCASE",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+
+			checker := &PodStartupChecker{
+				name: tt.checkerName,
+				podLabels: map[string]string{
+					"cluster-health-monitor/checker-name": tt.checkerName,
+					"app":                                 "cluster-health-monitor-podstartup-synthetic",
+				},
+			}
+
+			pod := checker.generateSyntheticPod()
+			g.Expect(pod).ToNot(BeNil())
+
+			// Verify pod name is k8s compliant (DNS subdomain format)
+			g.Expect(validation.NameIsDNSSubdomain(pod.Name, false)).To(BeEmpty()) // this should not return any validation errors
+			// Verify checker labels are applied
+			g.Expect(pod.Labels).To(Equal(checker.podLabels))
 		})
 	}
 }
