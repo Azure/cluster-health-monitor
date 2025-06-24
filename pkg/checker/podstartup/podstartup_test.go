@@ -149,7 +149,7 @@ func TestPodStartupChecker_Run(t *testing.T) {
 }
 
 func TestPodStartupChecker_garbageCollect(t *testing.T) {
-	checkerName := "checker"
+	checkerName := "chk"
 	syntheticPodNamespace := "checker-ns"
 	checkerTimeout := 5 * time.Second
 	syntheticPodLabelKey := "cluster-health-monitor/checker-name"
@@ -162,41 +162,42 @@ func TestPodStartupChecker_garbageCollect(t *testing.T) {
 		{
 			name: "only removes pods older than timeout",
 			client: k8sfake.NewClientset(
-				podWithLabels("old-pod", syntheticPodNamespace, map[string]string{syntheticPodLabelKey: checkerName}, time.Now().Add(-2*time.Hour)),
-				podWithLabels("new-pod", syntheticPodNamespace, map[string]string{syntheticPodLabelKey: checkerName}, time.Now()),
+				podWithLabels("chk-synthetic-old", syntheticPodNamespace, map[string]string{syntheticPodLabelKey: checkerName}, time.Now().Add(-2*time.Hour)),
+				podWithLabels("chk-synthetic-new", syntheticPodNamespace, map[string]string{syntheticPodLabelKey: checkerName}, time.Now()),
 			),
 			validateRes: func(g *WithT, pods *corev1.PodList, err error) {
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(pods.Items).To(HaveLen(1))
-				g.Expect(pods.Items[0].Name).To(Equal("new-pod"))
+				g.Expect(pods.Items[0].Name).To(Equal("chk-synthetic-new"))
 			},
 		},
 		{
 			name: "no pods to delete",
 			client: k8sfake.NewClientset(
-				podWithLabels("new-pod-1", syntheticPodNamespace, map[string]string{syntheticPodLabelKey: checkerName}, time.Now()), // pod too new
-				podWithLabels("new-pod-2", syntheticPodNamespace, map[string]string{}, time.Now().Add(-2*time.Hour)),                // old pod wrong labels
+				podWithLabels("chk-synthetic-too-new", syntheticPodNamespace, map[string]string{syntheticPodLabelKey: checkerName}, time.Now()), // pod too new
+				podWithLabels("chk-synthetic-no-labels", syntheticPodNamespace, map[string]string{}, time.Now().Add(-2*time.Hour)),              // old pod wrong labels
+				podWithLabels("no-name-prefix", syntheticPodNamespace, map[string]string{}, time.Now().Add(-2*time.Hour)),                       // pod missing name prefix
 			),
 			validateRes: func(g *WithT, pods *corev1.PodList, err error) {
 				g.Expect(err).NotTo(HaveOccurred())
-				g.Expect(pods.Items).To(HaveLen(2))
+				g.Expect(pods.Items).To(HaveLen(3))
 				actualNames := make([]string, len(pods.Items))
 				for i, pod := range pods.Items {
 					actualNames[i] = pod.Name
 				}
-				g.Expect(actualNames).To(ConsistOf([]string{"new-pod-1", "new-pod-2"}))
+				g.Expect(actualNames).To(ConsistOf([]string{"chk-synthetic-too-new", "chk-synthetic-no-labels", "no-name-prefix"}))
 			},
 		},
 		{
 			name: "only removes pod with checker labels",
 			client: k8sfake.NewClientset(
-				podWithLabels("checker-pod", syntheticPodNamespace, map[string]string{syntheticPodLabelKey: checkerName}, time.Now().Add(-2*time.Hour)),
-				podWithLabels("non-checker-pod", syntheticPodNamespace, map[string]string{}, time.Now().Add(-2*time.Hour)),
+				podWithLabels("chk-synthetic-pod", syntheticPodNamespace, map[string]string{syntheticPodLabelKey: checkerName}, time.Now().Add(-2*time.Hour)),
+				podWithLabels("chk-synthetic-no-label-pod", syntheticPodNamespace, map[string]string{}, time.Now().Add(-2*time.Hour)),
 			),
 			validateRes: func(g *WithT, pods *corev1.PodList, err error) {
 				g.Expect(err).NotTo(HaveOccurred())
 				g.Expect(pods.Items).To(HaveLen(1))
-				g.Expect(pods.Items[0].Name).To(Equal("non-checker-pod"))
+				g.Expect(pods.Items[0].Name).To(Equal("chk-synthetic-no-label-pod"))
 			},
 		},
 		{
@@ -223,13 +224,13 @@ func TestPodStartupChecker_garbageCollect(t *testing.T) {
 			name: "error deleting pod",
 			client: func() *k8sfake.Clientset {
 				client := k8sfake.NewClientset(
-					podWithLabels("old-pod-1", syntheticPodNamespace, map[string]string{syntheticPodLabelKey: checkerName}, time.Now().Add(-2*time.Hour)),
-					podWithLabels("old-pod-2", syntheticPodNamespace, map[string]string{syntheticPodLabelKey: checkerName}, time.Now().Add(-2*time.Hour)),
+					podWithLabels("chk-synthetic-pod-1", syntheticPodNamespace, map[string]string{syntheticPodLabelKey: checkerName}, time.Now().Add(-2*time.Hour)),
+					podWithLabels("chk-synthetic-pod-2", syntheticPodNamespace, map[string]string{syntheticPodLabelKey: checkerName}, time.Now().Add(-2*time.Hour)),
 				)
 				// only fail the Delete call for old-pod-1
 				client.PrependReactor("delete", "pods", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
 					deleteAction, ok := action.(k8stesting.DeleteAction)
-					if ok && deleteAction.GetName() == "old-pod-1" {
+					if ok && deleteAction.GetName() == "chk-synthetic-pod-1" {
 						return true, nil, errors.New("error bad things")
 					}
 					return false, nil, nil
@@ -494,6 +495,8 @@ func TestGenerateSyntheticPod(t *testing.T) {
 
 			// Verify pod name is k8s compliant (DNS subdomain format)
 			g.Expect(validation.NameIsDNSSubdomain(pod.Name, false)).To(BeEmpty()) // this should not return any validation errors
+			// Verify pod name has expected prefix
+			g.Expect(pod.Name).To(HavePrefix(checker.syntheticPodNamePrefix()))
 			// Verify checker labels are applied
 			g.Expect(pod.Labels).To(Equal(checker.syntheticPodLabels()))
 		})

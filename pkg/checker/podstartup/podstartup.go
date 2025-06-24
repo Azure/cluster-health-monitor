@@ -178,6 +178,10 @@ func (c *PodStartupChecker) garbageCollect(ctx context.Context) error {
 	}
 	var errs []error
 	for _, pod := range podList.Items {
+		if !strings.HasPrefix(pod.Name, c.syntheticPodNamePrefix()) {
+			// This pod is not a synthetic pod created by this checker, skip it.
+			continue
+		}
 		if time.Since(pod.CreationTimestamp.Time) > c.timeout {
 			err := c.k8sClientset.CoreV1().Pods(c.config.SyntheticPodNamespace).Delete(ctx, pod.Name, metav1.DeleteOptions{})
 			if err != nil && !apierrors.IsNotFound(err) {
@@ -255,9 +259,14 @@ func (c *PodStartupChecker) syntheticPodLabels() map[string]string {
 	}
 }
 
+func (c *PodStartupChecker) syntheticPodNamePrefix() string {
+	// The synthetic pod name prefix is used as an additional safety measure to ensure that the checker only operates on its own synthetic pods.
+	// c.name is supposed to be a unique identifier for each checker, so this prefix should be unique across all checkers.
+	return strings.ToLower(fmt.Sprintf("%s-synthetic-", c.name))
+}
+
 func (c *PodStartupChecker) generateSyntheticPod() *corev1.Pod {
-	podName := fmt.Sprintf("%s-synthetic-%d", c.name, time.Now().UnixNano())
-	podName = strings.ToLower(podName)
+	podName := fmt.Sprintf("%s%d", c.syntheticPodNamePrefix(), time.Now().UnixNano())
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:   podName,
