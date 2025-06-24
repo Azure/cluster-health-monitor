@@ -13,7 +13,6 @@ func TestConfigValidate_Valid(t *testing.T) {
 		Checkers: []CheckerConfig{
 			{
 				Name:      "dns1",
-				Namespace: "default",
 				Type:      CheckTypeDNS,
 				Interval:  10 * time.Second,
 				Timeout:   2 * time.Second,
@@ -37,8 +36,8 @@ func TestConfigValidate_DuplicateNames(t *testing.T) {
 	g := NewWithT(t)
 	cfg := &Config{
 		Checkers: []CheckerConfig{
-			{Name: "foo", Namespace: "bar", Type: CheckTypeDNS, Interval: 1, Timeout: 1, DNSConfig: &DNSConfig{Domain: "a"}},
-			{Name: "foo", Namespace: "bar", Type: CheckTypeDNS, Interval: 1, Timeout: 1, DNSConfig: &DNSConfig{Domain: "b"}},
+			{Name: "foo", Type: CheckTypeDNS, Interval: 1, Timeout: 1, DNSConfig: &DNSConfig{Domain: "a"}},
+			{Name: "foo", Type: CheckTypeDNS, Interval: 1, Timeout: 1, DNSConfig: &DNSConfig{Domain: "b"}},
 		},
 	}
 	err := cfg.validate()
@@ -52,7 +51,6 @@ func TestCheckerConfigValidate_MissingFields(t *testing.T) {
 	err := chk.validate()
 	g.Expect(err).To(HaveOccurred())
 	g.Expect(err.Error()).To(ContainSubstring("missing 'name'"))
-	g.Expect(err.Error()).To(ContainSubstring("missing 'namespace'"))
 	g.Expect(err.Error()).To(ContainSubstring("missing 'type'"))
 	g.Expect(err.Error()).To(ContainSubstring("invalid 'interval'"))
 	g.Expect(err.Error()).To(ContainSubstring("invalid 'timeout'"))

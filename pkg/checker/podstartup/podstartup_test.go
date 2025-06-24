@@ -609,10 +609,9 @@ func TestValidateConfig(t *testing.T) {
 
 			// Valida config
 			config := &config.CheckerConfig{
-				Name:      "test-checker",
-				Namespace: "test-namespace",
-				Type:      config.CheckTypePodStartup,
-				Timeout:   10 * time.Second,
+				Name:    "test-checker",
+				Type:    config.CheckTypePodStartup,
+				Timeout: 10 * time.Second,
 				PodStartupConfig: &config.PodStartupConfig{
 					SyntheticPodNamespace:      "synthetic-pod-namespace",
 					SyntheticPodLabelKey:       "cluster-health-monitor/checker-name",
