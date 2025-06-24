@@ -18,6 +18,18 @@ func TestConfigValidate_Valid(t *testing.T) {
 				Timeout:   2 * time.Second,
 				DNSConfig: &DNSConfig{Domain: "example.com"},
 			},
+			{
+				Name:     "podStartup1",
+				Type:     CheckTypePodStartup,
+				Interval: 1 * time.Minute,
+				Timeout:  30 * time.Second,
+				PodStartupConfig: &PodStartupConfig{
+					SyntheticPodNamespace:      "default",
+					SyntheticPodLabelKey:       "cluster-health-monitor/checker-name",
+					SyntheticPodStartupTimeout: 5 * time.Second,
+					MaxSyntheticPods:           10,
+				},
+			},
 		},
 	}
 	err := cfg.validate()
