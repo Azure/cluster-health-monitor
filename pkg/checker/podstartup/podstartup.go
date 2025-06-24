@@ -54,14 +54,14 @@ func validateConfig(config *config.CheckerConfig) error {
 	if config.PodStartupConfig.SyntheticPodNamespace == "" {
 		errs = append(errs, fmt.Errorf("pod startup checker config missing synthetic pod namespace"))
 	}
-	if apivalidation.ValidateNamespaceName(config.PodStartupConfig.SyntheticPodNamespace, false) != nil {
+	if len(apivalidation.ValidateNamespaceName(config.PodStartupConfig.SyntheticPodNamespace, false)) > 0 {
 		errs = append(errs, fmt.Errorf("pod startup checker config synthetic pod namespace must be a valid k8s namespace name"))
 	}
 
 	if config.PodStartupConfig.SyntheticPodLabelKey == "" {
 		errs = append(errs, fmt.Errorf("pod startup checker config missing synthetic pod label key"))
 	}
-	if utilvalidation.IsQualifiedName(config.PodStartupConfig.SyntheticPodLabelKey) != nil {
+	if len(utilvalidation.IsQualifiedName(config.PodStartupConfig.SyntheticPodLabelKey)) > 0 {
 		errs = append(errs, fmt.Errorf("pod startup checker config synthetic pod label key must be a valid k8s label key"))
 	}
 
