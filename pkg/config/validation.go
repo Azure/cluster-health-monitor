@@ -3,6 +3,10 @@ package config
 import (
 	"errors"
 	"fmt"
+	"time"
+
+	apivalidation "k8s.io/apimachinery/pkg/api/validation"
+	utilvalidation "k8s.io/apimachinery/pkg/util/validation"
 )
 
 // validate validates the entire Config structure.
@@ -51,7 +55,9 @@ func (c *CheckerConfig) validate() error {
 			errs = append(errs, fmt.Errorf("checker config %q DNSConfig validation failed: %w", c.Name, err))
 		}
 	case CheckTypePodStartup:
-		// No specific config for pod startup checker.
+		if err := c.PodStartupConfig.validate(c.Timeout); err != nil {
+			errs = append(errs, fmt.Errorf("checker config %q PodStartupConfig validation failed: %w", c.Name, err))
+		}
 	default:
 		errs = append(errs, fmt.Errorf("checker config %q has unsupported type: %s", c.Name, c.Type))
 	}
@@ -67,4 +73,36 @@ func (c *DNSConfig) validate() error {
 		return fmt.Errorf("domain is required for DNSChecker")
 	}
 	return nil
+}
+
+func (c *PodStartupConfig) validate(checkerConfigTimeout time.Duration) error {
+	if c == nil {
+		return fmt.Errorf("pod startup checker config is required")
+	}
+
+	var errs []error
+	if c.SyntheticPodNamespace == "" {
+		errs = append(errs, fmt.Errorf("pod startup checker config missing synthetic pod namespace"))
+	}
+	if len(apivalidation.ValidateNamespaceName(c.SyntheticPodNamespace, false)) > 0 {
+		errs = append(errs, fmt.Errorf("pod startup checker config synthetic pod namespace must be a valid k8s namespace name"))
+	}
+
+	if c.SyntheticPodLabelKey == "" {
+		errs = append(errs, fmt.Errorf("pod startup checker config missing synthetic pod label key"))
+	}
+	if len(utilvalidation.IsQualifiedName(c.SyntheticPodLabelKey)) > 0 {
+		errs = append(errs, fmt.Errorf("pod startup checker config synthetic pod label key must be a valid k8s label key"))
+	}
+
+	if checkerConfigTimeout <= c.SyntheticPodStartupTimeout {
+		errs = append(errs, fmt.Errorf("checker timeout must be greater than the synthetic pod startup timeout (%s), got: %s",
+			checkerConfigTimeout, c.SyntheticPodStartupTimeout))
+	}
+
+	if c.MaxSyntheticPods <= 0 {
+		errs = append(errs, fmt.Errorf("pod startup checker config invalid max synthetic pods: %d, must be greater than 0", c.MaxSyntheticPods))
+	}
+
+	return errors.Join(errs...)
 }

@@ -10,10 +10,8 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	apivalidation "k8s.io/apimachinery/pkg/api/validation"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
-	utilvalidation "k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -41,48 +39,8 @@ func Register() {
 	checker.RegisterChecker(config.CheckTypePodStartup, BuildPodStartupChecker)
 }
 
-func validateConfig(config *config.CheckerConfig) error {
-	if config == nil {
-		return fmt.Errorf("checker config is required") // should never happen
-	}
-
-	if config.PodStartupConfig == nil {
-		return fmt.Errorf("pod startup checker config is required")
-	}
-
-	var errs []error
-	if config.PodStartupConfig.SyntheticPodNamespace == "" {
-		errs = append(errs, fmt.Errorf("pod startup checker config missing synthetic pod namespace"))
-	}
-	if len(apivalidation.ValidateNamespaceName(config.PodStartupConfig.SyntheticPodNamespace, false)) > 0 {
-		errs = append(errs, fmt.Errorf("pod startup checker config synthetic pod namespace must be a valid k8s namespace name"))
-	}
-
-	if config.PodStartupConfig.SyntheticPodLabelKey == "" {
-		errs = append(errs, fmt.Errorf("pod startup checker config missing synthetic pod label key"))
-	}
-	if len(utilvalidation.IsQualifiedName(config.PodStartupConfig.SyntheticPodLabelKey)) > 0 {
-		errs = append(errs, fmt.Errorf("pod startup checker config synthetic pod label key must be a valid k8s label key"))
-	}
-
-	if config.Timeout <= config.PodStartupConfig.SyntheticPodStartupTimeout {
-		errs = append(errs, fmt.Errorf("timeout must be greater than the maximum healthy pod startup duration (%s), got: %s",
-			config.Timeout, config.PodStartupConfig.SyntheticPodStartupTimeout))
-	}
-
-	if config.PodStartupConfig.MaxSyntheticPods <= 0 {
-		errs = append(errs, fmt.Errorf("pod startup checker config invalid max synthetic pods: %d, must be greater than 0", config.PodStartupConfig.MaxSyntheticPods))
-	}
-
-	return errors.Join(errs...)
-}
-
 // BuildPodStartupChecker creates a new PodStartupChecker instance.
 func BuildPodStartupChecker(config *config.CheckerConfig) (checker.Checker, error) {
-	if err := validateConfig(config); err != nil {
-		return nil, fmt.Errorf("invalid pod startup checker config: %w", err)
-	}
-
 	k8sConfig, err := rest.InClusterConfig()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get in-cluster config: %w", err)
