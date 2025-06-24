@@ -520,6 +520,17 @@ func TestValidateConfig(t *testing.T) {
 			},
 			validateRes: func(g *WithT, err error) {
 				g.Expect(err).To(HaveOccurred())
+				g.Expect(err.Error()).To(ContainSubstring("checker config is required"))
+			},
+		},
+		{
+			name: "nil podStartup config",
+			mutateConfig: func(cfg *config.CheckerConfig) *config.CheckerConfig {
+				cfg.PodStartupConfig = nil
+				return cfg
+			},
+			validateRes: func(g *WithT, err error) {
+				g.Expect(err).To(HaveOccurred())
 				g.Expect(err.Error()).To(ContainSubstring("pod startup checker config is required"))
 			},
 		},

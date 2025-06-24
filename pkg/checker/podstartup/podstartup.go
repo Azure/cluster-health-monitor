@@ -43,6 +43,10 @@ func Register() {
 
 func validateConfig(config *config.CheckerConfig) error {
 	if config == nil {
+		return fmt.Errorf("checker config is required") // should never happen
+	}
+
+	if config.PodStartupConfig == nil {
 		return fmt.Errorf("pod startup checker config is required")
 	}
 
