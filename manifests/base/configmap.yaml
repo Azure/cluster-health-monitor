@@ -5,7 +5,7 @@ metadata:
   name: cluster-health-monitor-config
   namespace: kube-system
 data:
-  config.yaml: |
+  config.yaml: |+
     checkers:
       - name: "internal-dns-checker"
         type: "dns"
@@ -19,4 +19,13 @@ data:
         timeout: "5s"
         dnsConfig:
           domain: "mcr.microsoft.com"
-      # TODO: Add pod startup checker.
+     - name: "pod-startup-checker"
+        type: "podStartup"
+        interval: "1m"
+        timeout: "30s"
+        podStartupConfig:
+          syntheticPodNamespace: "kube-system"
+          syntheticPodLabelKey: "kubernetes.azure.com/cluster-health-monitor-checker-synthetic"
+          syntheticPodStartupTimeout: "5s"
+          maxSyntheticPods: 10
+        

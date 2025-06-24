@@ -57,15 +57,15 @@ type DNSConfig struct {
 type PodStartupConfig struct {
 	// Required.
 	// The namespace in which synthetic pods are created.
-	SyntheticPodNamespace string `yaml:"namespace"`
+	SyntheticPodNamespace string `yaml:"syntheticPodNamespace"`
 	// Required.
 	// The Kubernetes label key used to identify synthetic pods created by the checker.
-	SyntheticPodLabelKey string `yaml:"labelSelector"`
+	SyntheticPodLabelKey string `yaml:"syntheticPodLabelKey"`
 	// Required.
 	// The maximum synthetic pod startup duration for which the checker will return healthy status. Exceeding this duration will cause the
 	// checker to return unhealthy status. The pod startup duration is defined as the time between the pod's creation timestamp and the time
 	// its container starts running, minus the image pull duration (including waiting).
-	SyntheticPodStartupTimeout time.Duration `yaml:"podStartupTimeout,omitempty"`
+	SyntheticPodStartupTimeout time.Duration `yaml:"syntheticPodStartupTimeout"`
 	// Required.
 	// The maximum number of synthetic pods created by the checker that can exist at any one time. If the limit has been reached, the checker
 	// will not create any more synthetic pods until some of the existing ones are deleted. Instead, it will fail the run with an error.
