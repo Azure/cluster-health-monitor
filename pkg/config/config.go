@@ -46,10 +46,33 @@ type CheckerConfig struct {
 	// Optional.
 	// The configuration for the DNS checker, this field is required if Type is CheckTypeDNS.
 	DNSConfig *DNSConfig `yaml:"dnsConfig,omitempty"`
+
+	// Optional.
+	// The configuration for the pod startup checker, this field is required if Type is CheckTypePodStartup.
+	PodStartupConfig *PodStartupConfig `yaml:"podStartupConfig,omitempty"`
 }
 
 type DNSConfig struct {
 	// Required.
 	// The domain to check, used to determine the DNS records to query.
 	Domain string `yaml:"domain"`
+}
+
+type PodStartupConfig struct {
+	// Required.
+	// The namespace in which synthetic pods are created.
+	SyntheticPodNamespace string `yaml:"namespace"`
+	// Required.
+	// The Kubernetes label key used to identify synthetic pods created by the checker.
+	SyntheticPodLabelKey string `yaml:"labelSelector"`
+	// Required.
+	// The maximum synthetic pod startup duration for which the checker will return healthy status. Exceeding this duration will cause the
+	// checker to return unhealthy status. The pod startup duration is defined as the time between the pod's creation timestamp and the time
+	// its container starts running, minus the image pull duration (including waiting).
+	SyntheticPodStartupTimeout time.Duration `yaml:"podStartupTimeout,omitempty"`
+	// Required.
+	// The maximum number of synthetic pods created by the checker that can exist at any one time. If the limit has been reached, the checker
+	// will not create any more synthetic pods until some of the existing ones are deleted. Instead, it will fail the run with an error.
+	// Reaching this limit effectively disables the checker.
+	MaxSyntheticPods int `yaml:"maxSyntheticPods,omitempty"`
 }
