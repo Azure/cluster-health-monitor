@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"regexp"
 	"strings"
 	"time"
@@ -63,16 +62,6 @@ func BuildPodStartupChecker(config *config.CheckerConfig) (checker.Checker, erro
 		return nil, fmt.Errorf("failed to create Kubernetes clientset: %w", err)
 	}
 
-	// Pods and service accounts must share the same namespace. Read the namespace the checker is running in.
-	data, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/namespace")
-	if err != nil {
-		return nil, fmt.Errorf("failed to read namespace from service account: %s", err)
-	}
-	namespace := strings.TrimSpace(string(data))
-	if namespace == "" {
-		return nil, fmt.Errorf("read empty namespace from service account")
-	}
-
 	podLabels := map[string]string{
 		"cluster-health-monitor/checker-name": config.Name,
 		"app":                                 "cluster-health-monitor-podstartup-synthetic",
@@ -84,9 +73,9 @@ func BuildPodStartupChecker(config *config.CheckerConfig) (checker.Checker, erro
 
 	return &PodStartupChecker{
 		name:         config.Name,
+		namespace:    config.Namespace,
 		timeout:      config.Timeout,
 		k8sClientset: k8sClientset,
-		namespace:    namespace,
 		podLabels:    podLabels,
 	}, nil
 }

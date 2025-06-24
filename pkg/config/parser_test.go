@@ -11,6 +11,7 @@ func TestParseFromYAML_Valid(t *testing.T) {
 	yamlData := []byte(`
 checkers:
   - name: dns1
+    namespace: default
     type: dns
     interval: 10s
     timeout: 2s

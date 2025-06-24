@@ -35,6 +35,9 @@ func (c *CheckerConfig) validate() error {
 	if c.Name == "" {
 		errs = append(errs, fmt.Errorf("checker config missing 'name'"))
 	}
+	if c.Namespace == "" {
+		errs = append(errs, fmt.Errorf("checker config missing 'namespace'"))
+	}
 	if c.Type == "" {
 		errs = append(errs, fmt.Errorf("checker config missing 'type'"))
 	}

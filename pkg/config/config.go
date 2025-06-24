@@ -24,6 +24,10 @@ type CheckerConfig struct {
 	Name string `yaml:"name"`
 
 	// Required.
+	// The namespace in which the checker will run. Any synthetic resources created by the checker will also be created in this namespace.
+	Namespace string `yaml:"namespace"`
+
+	// Required.
 	// The type of the checker, used to determine which checker implementation to use.
 	// Each checker type must be accompanied by its specific configuration if it requires additional parameters.
 	Type CheckerType `yaml:"type"`
