@@ -19,7 +19,7 @@ data:
         timeout: "5s"
         dnsConfig:
           domain: "mcr.microsoft.com"
-     - name: "pod-startup-checker"
+      - name: "pod-startup-checker"
         type: "podStartup"
         interval: "1m"
         timeout: "30s"
