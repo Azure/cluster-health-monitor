@@ -84,15 +84,15 @@ func (c *PodStartupConfig) validate(checkerConfigTimeout time.Duration) error {
 	if c.SyntheticPodNamespace == "" {
 		errs = append(errs, fmt.Errorf("pod startup checker config missing synthetic pod namespace"))
 	}
-	if len(apivalidation.ValidateNamespaceName(c.SyntheticPodNamespace, false)) > 0 {
-		errs = append(errs, fmt.Errorf("pod startup checker config synthetic pod namespace must be a valid k8s namespace name"))
+	for _, nsErr := range apivalidation.ValidateNamespaceName(c.SyntheticPodNamespace, false) {
+		errs = append(errs, fmt.Errorf("pod startup checker config synthetic pod namespace: %s", nsErr))
 	}
 
 	if c.SyntheticPodLabelKey == "" {
 		errs = append(errs, fmt.Errorf("pod startup checker config missing synthetic pod label key"))
 	}
-	if len(utilvalidation.IsQualifiedName(c.SyntheticPodLabelKey)) > 0 {
-		errs = append(errs, fmt.Errorf("pod startup checker config synthetic pod label key must be a valid k8s label key"))
+	for _, labelErr := range utilvalidation.IsQualifiedName(c.SyntheticPodLabelKey) {
+		errs = append(errs, fmt.Errorf("pod startup checker config synthetic pod label key: %s", labelErr))
 	}
 
 	if checkerConfigTimeout <= c.SyntheticPodStartupTimeout {

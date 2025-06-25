@@ -118,7 +118,7 @@ func TestPodStartupConfig_Validate(t *testing.T) {
 			},
 			validateRes: func(g *WithT, err error) {
 				g.Expect(err).To(HaveOccurred())
-				g.Expect(err.Error()).To(ContainSubstring("pod startup checker config synthetic pod namespace must be a valid k8s namespace name"))
+				g.Expect(err.Error()).To(ContainSubstring("pod startup checker config synthetic pod namespace"))
 			},
 		},
 		{
@@ -140,7 +140,7 @@ func TestPodStartupConfig_Validate(t *testing.T) {
 			},
 			validateRes: func(g *WithT, err error) {
 				g.Expect(err).To(HaveOccurred())
-				g.Expect(err.Error()).To(ContainSubstring("pod startup checker config synthetic pod label key must be a valid k8s label key"))
+				g.Expect(err.Error()).To(ContainSubstring("pod startup checker config synthetic pod label key"))
 			},
 		},
 		{
