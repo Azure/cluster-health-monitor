@@ -20,8 +20,8 @@ spec:
       containers:
         - name: cluster-health-monitor
           # TODO: Update the image to the latest version.
-          image: mcr.microsoft.com/aks/cluster-health-monitor/cluster-health-monitor:v0.0.3
-          imagePullPolicy: IfNotPresent
+          image: shaomq/cluster-health-monitor:latest
+          imagePullPolicy: Always
           ports:
             - containerPort: 9800
               name: metrics
