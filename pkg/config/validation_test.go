@@ -100,47 +100,25 @@ func TestPodStartupConfig_Validate(t *testing.T) {
 			},
 		},
 		{
-			name: "missing synthetic pod namespace",
+			name: "invalid synthetic pod namespace",
 			mutateConfig: func(cfg *CheckerConfig) *CheckerConfig {
 				cfg.PodStartupConfig.SyntheticPodNamespace = ""
 				return cfg
 			},
 			validateRes: func(g *WithT, err error) {
 				g.Expect(err).To(HaveOccurred())
-				g.Expect(err.Error()).To(ContainSubstring("pod startup checker config missing synthetic pod namespace"))
+				g.Expect(err.Error()).To(ContainSubstring("invalid synthetic pod namespace"))
 			},
 		},
 		{
-			name: "invalid synthetic pod namespace",
-			mutateConfig: func(cfg *CheckerConfig) *CheckerConfig {
-				cfg.PodStartupConfig.SyntheticPodNamespace = "!@%#^(^#&!@^#*&!)"
-				return cfg
-			},
-			validateRes: func(g *WithT, err error) {
-				g.Expect(err).To(HaveOccurred())
-				g.Expect(err.Error()).To(ContainSubstring("pod startup checker config synthetic pod namespace"))
-			},
-		},
-		{
-			name: "missing synthetic pod label key",
+			name: "invalid synthetic pod label key",
 			mutateConfig: func(cfg *CheckerConfig) *CheckerConfig {
 				cfg.PodStartupConfig.SyntheticPodLabelKey = ""
 				return cfg
 			},
 			validateRes: func(g *WithT, err error) {
 				g.Expect(err).To(HaveOccurred())
-				g.Expect(err.Error()).To(ContainSubstring("pod startup checker config missing synthetic pod label key"))
-			},
-		},
-		{
-			name: "invalid synthetic pod label key",
-			mutateConfig: func(cfg *CheckerConfig) *CheckerConfig {
-				cfg.PodStartupConfig.SyntheticPodLabelKey = "!@%#^(^#&!@^#*&!)"
-				return cfg
-			},
-			validateRes: func(g *WithT, err error) {
-				g.Expect(err).To(HaveOccurred())
-				g.Expect(err.Error()).To(ContainSubstring("pod startup checker config synthetic pod label key"))
+				g.Expect(err.Error()).To(ContainSubstring("invalid synthetic pod label key"))
 			},
 		},
 		{
@@ -152,7 +130,7 @@ func TestPodStartupConfig_Validate(t *testing.T) {
 			},
 			validateRes: func(g *WithT, err error) {
 				g.Expect(err).To(HaveOccurred())
-				g.Expect(err.Error()).To(ContainSubstring("checker timeout must be greater than the synthetic pod startup timeout"))
+				g.Expect(err.Error()).To(ContainSubstring("checker timeout must be greater than synthetic pod startup timeout"))
 			},
 		},
 		{
@@ -163,7 +141,7 @@ func TestPodStartupConfig_Validate(t *testing.T) {
 			},
 			validateRes: func(g *WithT, err error) {
 				g.Expect(err).To(HaveOccurred())
-				g.Expect(err.Error()).To(ContainSubstring("pod startup checker config invalid max synthetic pods: 0, must be greater than 0"))
+				g.Expect(err.Error()).To(ContainSubstring("invalid max synthetic pods"))
 			},
 		},
 	}

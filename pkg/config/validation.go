@@ -81,27 +81,20 @@ func (c *PodStartupConfig) validate(checkerConfigTimeout time.Duration) error {
 	}
 
 	var errs []error
-	if c.SyntheticPodNamespace == "" {
-		errs = append(errs, fmt.Errorf("pod startup checker config missing synthetic pod namespace"))
-	}
 	for _, nsErr := range apivalidation.ValidateNamespaceName(c.SyntheticPodNamespace, false) {
-		errs = append(errs, fmt.Errorf("pod startup checker config synthetic pod namespace: %s", nsErr))
-	}
-
-	if c.SyntheticPodLabelKey == "" {
-		errs = append(errs, fmt.Errorf("pod startup checker config missing synthetic pod label key"))
+		errs = append(errs, fmt.Errorf("invalid synthetic pod namespace: value='%s', error='%s'", c.SyntheticPodNamespace, nsErr))
 	}
 	for _, labelErr := range utilvalidation.IsQualifiedName(c.SyntheticPodLabelKey) {
-		errs = append(errs, fmt.Errorf("pod startup checker config synthetic pod label key: %s", labelErr))
+		errs = append(errs, fmt.Errorf("invalid synthetic pod label key: value='%s', error='%s'", c.SyntheticPodLabelKey, labelErr))
 	}
 
 	if checkerConfigTimeout <= c.SyntheticPodStartupTimeout {
-		errs = append(errs, fmt.Errorf("checker timeout must be greater than the synthetic pod startup timeout (%s), got: %s",
+		errs = append(errs, fmt.Errorf("checker timeout must be greater than synthetic pod startup timeout: checker timeout='%s', synthetic pod startup timeout='%s'",
 			checkerConfigTimeout, c.SyntheticPodStartupTimeout))
 	}
 
 	if c.MaxSyntheticPods <= 0 {
-		errs = append(errs, fmt.Errorf("pod startup checker config invalid max synthetic pods: %d, must be greater than 0", c.MaxSyntheticPods))
+		errs = append(errs, fmt.Errorf("invalid max synthetic pods: value=%d, must be greater than 0", c.MaxSyntheticPods))
 	}
 
 	return errors.Join(errs...)
