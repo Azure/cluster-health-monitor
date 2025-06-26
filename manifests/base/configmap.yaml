@@ -21,5 +21,5 @@ data:
           domain: "mcr.microsoft.com"
       - name: "pod-startup-checker"
         type: "podStartup"
-        interval: "1m"
+        interval: "30s"
         timeout: "30s"
