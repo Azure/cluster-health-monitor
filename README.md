@@ -6,7 +6,7 @@ A Kubernetes cluster health monitoring tool that checks various aspects of clust
 
 Cluster Health Monitor runs as a Kubernetes deployment and exposes metrics about the health of your cluster through a Prometheus endpoint.
 
-## Release new version to MCC
+## Release new version to MCR
 
 ### 1. Create a new tag
 ```bash
