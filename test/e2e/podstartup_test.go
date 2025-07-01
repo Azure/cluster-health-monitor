@@ -14,7 +14,7 @@ const (
 
 var (
 	// Note that podStartupCheckerName must match with the configmap in manifests/overlays/test.
-	podStartupCheckerNames = []string{"pod-startup-checker"}
+	podStartupCheckerNames = []string{"test-pod-startup-checker"}
 )
 
 var _ = Describe("Pod startup checker", Ordered, ContinueOnFailure, func() {
