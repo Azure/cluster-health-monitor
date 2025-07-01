@@ -52,13 +52,13 @@ var _ = Describe("Pod startup checker", Ordered, ContinueOnFailure, func() {
 	})
 
 	It("should report unhealthy status when pods cannot be scheduled", func() {
-		By("Removing required label from all nodes to prevent pod scheduling")
+		By("Removing required labels from all nodes to prevent pod scheduling")
 
 		removeLabelsFromAllNodes(clientset, requiredNodeLabelsForSchedulingSyntheticPods)
-		defer func() {
-			By("Removing the required label from all nodes")
+		DeferCleanup(func() {
+			By("Adding required labels back to all nodes")
 			addLabelsToAllNodes(clientset, requiredNodeLabelsForSchedulingSyntheticPods)
-		}()
+		})
 
 		By("Waiting for pod startup checker to report unhealthy status")
 		Eventually(func() bool {
@@ -71,7 +71,7 @@ var _ = Describe("Pod startup checker", Ordered, ContinueOnFailure, func() {
 			return true
 		}, "60s", "5s").Should(BeTrue(), "Pod startup checker did not report unhealthy status within the timeout period")
 
-		By("Adding required label to all nodes")
+		By("Adding required labels back to all nodes")
 		addLabelsToAllNodes(clientset, requiredNodeLabelsForSchedulingSyntheticPods)
 
 		By("Waiting for pod startup checker to report healthy status after adding label back")
