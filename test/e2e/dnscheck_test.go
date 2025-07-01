@@ -30,21 +30,13 @@ var _ = Describe("DNS checker metrics", Ordered, ContinueOnFailure, func() {
 	})
 
 	AfterAll(func() {
-		if session != nil {
-			session.Kill()
-		}
+		safeSessionKill(session)
 	})
 
 	It("should report healthy status for all DNS checkers", func() {
 		By("Waiting for DNS checker metrics to report healthy status")
 		Eventually(func() bool {
-			metricsData, err := getMetrics(localPort)
-			if err != nil {
-				GinkgoWriter.Printf("Failed to get metrics: %v\n", err)
-				return false
-			}
-
-			matched, foundCheckers := verifyCheckerResultMetrics(metricsData, dnsCheckerNames, checkerTypeDNS, metricsHealthyStatus, metricsHealthyErrorCode)
+			matched, foundCheckers := verifyCheckerResultMetrics(localPort, checkerResultMetricName, dnsCheckerNames, checkerTypeDNS, metricsHealthyStatus, metricsHealthyErrorCode)
 			if !matched {
 				GinkgoWriter.Printf("Expected DNS checkers to be healthy: %v, found: %v\n", dnsCheckerNames, foundCheckers)
 				return false
@@ -90,13 +82,7 @@ var _ = Describe("DNS checker metrics", Ordered, ContinueOnFailure, func() {
 
 		By("Waiting for DNS checker metrics to report unhealthy status with pods not ready")
 		Eventually(func() bool {
-			metricsData, err := getMetrics(localPort)
-			if err != nil {
-				GinkgoWriter.Printf("Failed to get metrics: %v\n", err)
-				return false
-			}
-
-			matched, foundCheckers := verifyCheckerResultMetrics(metricsData, dnsCheckerNames, checkerTypeDNS, metricsUnhealthyStatus, dnsPodsNotReadyErrorCode)
+			matched, foundCheckers := verifyCheckerResultMetrics(localPort, checkerResultMetricName, dnsCheckerNames, checkerTypeDNS, metricsUnhealthyStatus, dnsPodsNotReadyErrorCode)
 			if !matched {
 				GinkgoWriter.Printf("Expected DNS checkers to be unhealthy and pods not ready: %v, found: %v\n", dnsCheckerNames, foundCheckers)
 				return false
@@ -127,13 +113,7 @@ var _ = Describe("DNS checker metrics", Ordered, ContinueOnFailure, func() {
 
 		By("Waiting for DNS checker metrics to report unhealthy status with service timeout")
 		Eventually(func() bool {
-			metricsData, err := getMetrics(localPort)
-			if err != nil {
-				GinkgoWriter.Printf("Failed to get metrics: %v\n", err)
-				return false
-			}
-
-			matched, foundCheckers := verifyCheckerResultMetrics(metricsData, dnsCheckerNames, checkerTypeDNS, metricsUnhealthyStatus, dnsServiceTimeoutErrorCode)
+			matched, foundCheckers := verifyCheckerResultMetrics(localPort, checkerResultMetricName, dnsCheckerNames, checkerTypeDNS, metricsUnhealthyStatus, dnsServiceTimeoutErrorCode)
 			if !matched {
 				GinkgoWriter.Printf("Expected DNS checkers to be unhealthy and service timeout: %v, found: %v\n", dnsCheckerNames, foundCheckers)
 				return false

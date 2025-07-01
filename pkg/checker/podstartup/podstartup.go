@@ -33,7 +33,7 @@ type PodStartupChecker struct {
 var pollingInterval = 1 * time.Second // used for unit tests
 
 // The regular expression used to parse the image pull duration from a k8s event message for successfully pulling an image.
-var imagePullDurationRegex = regexp.MustCompile(`\(([a-zA-Z0-9]+) including waiting\)`)
+var imagePullDurationRegex = regexp.MustCompile(`\(([a-zA-Z0-9\.]+) including waiting\)`)
 
 func Register() {
 	checker.RegisterChecker(config.CheckTypePodStartup, BuildPodStartupChecker)

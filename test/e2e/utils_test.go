@@ -40,6 +40,13 @@ const (
 	metricsErrorCodeLabel   = "error_code"
 )
 
+// safeSessionKill is shorthand to kill the provided gexec.Session if it is not nil.
+func safeSessionKill(session *gexec.Session) {
+	if session != nil {
+		session.Kill()
+	}
+}
+
 // run executes the provided command in the Git root directory and returns its output.
 // It uses the current environment variables.
 func run(cmd *exec.Cmd) ([]byte, error) {
@@ -266,8 +273,14 @@ func restoreCoreDNSConfigMap(clientset *kubernetes.Clientset, originalCorefile s
 
 // verifyCheckerResultMetrics checks if all the checker result metrics match the expected type, status, and error code.
 // It returns true if all checker names match the criteria, false otherwise.
-func verifyCheckerResultMetrics(metricsData map[string]*dto.MetricFamily, expectedChkNames []string, expectedType, expectedStatus, expectedErrorCode string) (bool, map[string]struct{}) {
-	metricFamily, found := metricsData[checkerResultMetricName]
+func verifyCheckerResultMetrics(localPort int, metricName string, expectedChkNames []string, expectedType, expectedStatus, expectedErrorCode string) (bool, map[string]struct{}) {
+	metricsData, err := getMetrics(localPort)
+	if err != nil {
+		GinkgoWriter.Printf("Failed to get metrics: %v\n", err)
+		return false, nil
+	}
+
+	metricFamily, found := metricsData[metricName]
 	if !found {
 		return false, nil
 	}
@@ -300,4 +313,70 @@ func verifyCheckerResultMetrics(metricsData map[string]*dto.MetricFamily, expect
 	}
 
 	return true, foundCheckers
+}
+
+// taintAllNodes applies the given taints to all nodes in the cluster
+func taintAllNodes(clientset kubernetes.Interface, taints []corev1.Taint) {
+	nodeList, err := clientset.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
+	Expect(err).NotTo(HaveOccurred(), "Failed to list nodes")
+
+	// Add taints to all nodes
+	for _, node := range nodeList.Items {
+		node.Spec.Taints = append(node.Spec.Taints, taints...)
+		_, err := clientset.CoreV1().Nodes().Update(context.TODO(), &node, metav1.UpdateOptions{})
+		Expect(err).NotTo(HaveOccurred(), "Failed to add taints to node %s", node.Name)
+		for _, taint := range taints {
+			GinkgoWriter.Printf("Added taint %s=%s:%s to node %s\n", taint.Key, taint.Value, taint.Effect, node.Name)
+		}
+	}
+}
+
+// removeTaintsFromAllNodes removes the specified taints from all nodes in the cluster
+func removeTaintsFromAllNodes(clientset kubernetes.Interface, taintKeys []string) {
+	nodeList, err := clientset.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
+	Expect(err).NotTo(HaveOccurred(), "Failed to list nodes")
+
+	for _, node := range nodeList.Items {
+		// Remove the specified taints
+		var newTaints []corev1.Taint
+		for _, taint := range node.Spec.Taints {
+			shouldKeep := true
+			for _, keyToRemove := range taintKeys {
+				if taint.Key == keyToRemove {
+					shouldKeep = false
+					break
+				}
+			}
+			if shouldKeep {
+				newTaints = append(newTaints, taint)
+			}
+		}
+		node.Spec.Taints = newTaints
+		_, err := clientset.CoreV1().Nodes().Update(context.TODO(), &node, metav1.UpdateOptions{})
+		Expect(err).NotTo(HaveOccurred(), "Failed to remove taints from node %s", node.Name)
+		for _, key := range taintKeys {
+			GinkgoWriter.Printf("Removed taint %s from node %s\n", key, node.Name)
+		}
+	}
+}
+
+// addLabelsToAllNodes applies the given labels to all nodes in the cluster
+func addLabelsToAllNodes(clientset kubernetes.Interface, labels map[string]string) {
+	nodeList, err := clientset.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
+	Expect(err).NotTo(HaveOccurred(), "Failed to list nodes")
+
+	// Add labels to all nodes
+	for _, node := range nodeList.Items {
+		if node.Labels == nil {
+			node.Labels = make(map[string]string)
+		}
+		for key, value := range labels {
+			node.Labels[key] = value
+		}
+		_, err := clientset.CoreV1().Nodes().Update(context.TODO(), &node, metav1.UpdateOptions{})
+		Expect(err).NotTo(HaveOccurred(), "Failed to add labels to node %s", node.Name)
+		for key, value := range labels {
+			GinkgoWriter.Printf("Added label %s=%s to node %s\n", key, value, node.Name)
+		}
+	}
 }

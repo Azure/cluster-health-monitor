@@ -377,6 +377,14 @@ func TestPodStartupChecker_parseImagePullDuration(t *testing.T) {
 			},
 		},
 		{
+			name: "valid message - seconds with decimal",
+			msg:  "Successfully pulled image \"k8s.gcr.io/pause:3.2\" in 2.149s (2.149s including waiting). Image size: 299513 bytes.",
+			validateRes: func(g *WithT, duration time.Duration, err error) {
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(duration).To(Equal(2*time.Second + 149*time.Millisecond))
+			},
+		},
+		{
 			name: "invalid format",
 			msg:  "Successfully pulled image in foo (bar including waiting).",
 			validateRes: func(g *WithT, duration time.Duration, err error) {

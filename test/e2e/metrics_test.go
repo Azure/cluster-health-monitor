@@ -24,9 +24,7 @@ var _ = Describe("Metrics endpoint", func() {
 	})
 
 	AfterEach(func() {
-		if session != nil {
-			session.Kill()
-		}
+		safeSessionKill(session)
 	})
 
 	It("should provide metrics data", func() {
