@@ -273,14 +273,14 @@ func restoreCoreDNSConfigMap(clientset *kubernetes.Clientset, originalCorefile s
 
 // verifyCheckerResultMetrics checks if all the checker result metrics match the expected type, status, and error code.
 // It returns true if all checker names match the criteria, false otherwise.
-func verifyCheckerResultMetrics(localPort int, metricName string, expectedChkNames []string, expectedType, expectedStatus, expectedErrorCode string) (bool, map[string]struct{}) {
+func verifyCheckerResultMetrics(localPort int, expectedChkNames []string, expectedType, expectedStatus, expectedErrorCode string) (bool, map[string]struct{}) {
 	metricsData, err := getMetrics(localPort)
 	if err != nil {
 		GinkgoWriter.Printf("Failed to get metrics: %v\n", err)
 		return false, nil
 	}
 
-	metricFamily, found := metricsData[metricName]
+	metricFamily, found := metricsData[checkerResultMetricName]
 	if !found {
 		return false, nil
 	}
@@ -347,8 +347,6 @@ func addLabelsToAllNodes(clientset kubernetes.Interface, labels map[string]strin
 		}
 		_, err := clientset.CoreV1().Nodes().Update(context.TODO(), &node, metav1.UpdateOptions{})
 		Expect(err).NotTo(HaveOccurred(), "Failed to add labels to node %s", node.Name)
-		for key, value := range labels {
-			GinkgoWriter.Printf("Added label %s=%s to node %s\n", key, value, node.Name)
-		}
+		GinkgoWriter.Printf("Node %s: Added labels %v\n", node.Name, labels)
 	}
 }
