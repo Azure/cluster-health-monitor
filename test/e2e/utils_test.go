@@ -315,48 +315,20 @@ func verifyCheckerResultMetrics(localPort int, metricName string, expectedChkNam
 	return true, foundCheckers
 }
 
-// taintAllNodes applies the given taints to all nodes in the cluster
-func taintAllNodes(clientset kubernetes.Interface, taints []corev1.Taint) {
+func removeLabelsFromAllNodes(clientset kubernetes.Interface, labels map[string]string) {
 	nodeList, err := clientset.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
 	Expect(err).NotTo(HaveOccurred(), "Failed to list nodes")
 
-	// Add taints to all nodes
+	// Remove labels from all nodes
 	for _, node := range nodeList.Items {
-		node.Spec.Taints = append(node.Spec.Taints, taints...)
-		_, err := clientset.CoreV1().Nodes().Update(context.TODO(), &node, metav1.UpdateOptions{})
-		Expect(err).NotTo(HaveOccurred(), "Failed to add taints to node %s", node.Name)
-		for _, taint := range taints {
-			GinkgoWriter.Printf("Added taint %s=%s:%s to node %s\n", taint.Key, taint.Value, taint.Effect, node.Name)
-		}
-	}
-}
-
-// removeTaintsFromAllNodes removes the specified taints from all nodes in the cluster
-func removeTaintsFromAllNodes(clientset kubernetes.Interface, taintKeys []string) {
-	nodeList, err := clientset.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
-	Expect(err).NotTo(HaveOccurred(), "Failed to list nodes")
-
-	for _, node := range nodeList.Items {
-		// Remove the specified taints
-		var newTaints []corev1.Taint
-		for _, taint := range node.Spec.Taints {
-			shouldKeep := true
-			for _, keyToRemove := range taintKeys {
-				if taint.Key == keyToRemove {
-					shouldKeep = false
-					break
-				}
-			}
-			if shouldKeep {
-				newTaints = append(newTaints, taint)
+		for key := range labels {
+			if _, exists := node.Labels[key]; exists {
+				delete(node.Labels, key)
+				GinkgoWriter.Printf("Removed label %s from node %s\n", key, node.Name)
 			}
 		}
-		node.Spec.Taints = newTaints
 		_, err := clientset.CoreV1().Nodes().Update(context.TODO(), &node, metav1.UpdateOptions{})
-		Expect(err).NotTo(HaveOccurred(), "Failed to remove taints from node %s", node.Name)
-		for _, key := range taintKeys {
-			GinkgoWriter.Printf("Removed taint %s from node %s\n", key, node.Name)
-		}
+		Expect(err).NotTo(HaveOccurred(), "Failed to remove labels from node %s", node.Name)
 	}
 }
 

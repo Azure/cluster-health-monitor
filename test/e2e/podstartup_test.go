@@ -4,12 +4,13 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gexec"
-	corev1 "k8s.io/api/core/v1"
 )
 
 const (
-	checkerTypePodStartup                 = "podStartup"
-	podStartupPodCreationTimeoutErrorCode = "pod_creation_timeout"
+	checkerTypePodStartup               = "podStartup"
+	PodStartupDurationExceededErrorCode = "pod_startup_duration_exceeded"
+
+	kubernetesAzureClusterLabel = "kubernetes.azure.com/cluster"
 )
 
 var (
@@ -17,7 +18,7 @@ var (
 	podStartupCheckerNames = []string{"test-pod-startup-checker"}
 )
 
-var _ = Describe("Pod startup checker", Ordered, ContinueOnFailure, func() {
+var _ = Describe("Pod startup checker", Ordered, func() {
 	var (
 		session   *gexec.Session
 		localPort int
@@ -25,8 +26,8 @@ var _ = Describe("Pod startup checker", Ordered, ContinueOnFailure, func() {
 
 	BeforeEach(func() {
 		addLabelsToAllNodes(clientset, map[string]string{
-			"kubernetes.azure.com/cluster": "",
-			"kubernetes.azure.com/mode":    "system",
+			kubernetesAzureClusterLabel: "",
+			"kubernetes.azure.com/mode": "system",
 		})
 		session, localPort = setupMetricsPortforwarding(clientset)
 	})
@@ -49,22 +50,17 @@ var _ = Describe("Pod startup checker", Ordered, ContinueOnFailure, func() {
 	})
 
 	It("should report unhealthy status when pods cannot be scheduled", func() {
-		By("Adding a taint to all nodes to prevent pod scheduling")
+		By("Removing required label from all nodes to prevent pod scheduling")
 
-		noScheduleTaintKey := "chm-test-no-schedule"
-		noScheduleTaint := corev1.Taint{
-			Key:    noScheduleTaintKey,
-			Effect: corev1.TaintEffectNoSchedule,
-		}
-		taintAllNodes(clientset, []corev1.Taint{noScheduleTaint})
+		removeLabelsFromAllNodes(clientset, map[string]string{kubernetesAzureClusterLabel: ""})
 		defer func() {
-			By("Removing the taint from all nodes")
-			removeTaintsFromAllNodes(clientset, []string{noScheduleTaintKey})
+			By("Removing the required label from all nodes")
+			addLabelsToAllNodes(clientset, map[string]string{kubernetesAzureClusterLabel: ""})
 		}()
 
 		By("Waiting for pod startup checker to report unhealthy status")
 		Eventually(func() bool {
-			matched, foundCheckers := verifyCheckerResultMetrics(localPort, checkerResultMetricName, podStartupCheckerNames, checkerTypePodStartup, metricsUnhealthyStatus, podStartupPodCreationTimeoutErrorCode)
+			matched, foundCheckers := verifyCheckerResultMetrics(localPort, checkerResultMetricName, podStartupCheckerNames, checkerTypePodStartup, metricsUnhealthyStatus, PodStartupDurationExceededErrorCode)
 			if !matched {
 				GinkgoWriter.Printf("Expected pod startup checkers to be unhealthy and pods not ready: %v, found: %v\n", podStartupCheckerNames, foundCheckers)
 				return false
@@ -73,10 +69,10 @@ var _ = Describe("Pod startup checker", Ordered, ContinueOnFailure, func() {
 			return true
 		}, "60s", "5s").Should(BeTrue(), "Pod startup checker did not report unhealthy status within the timeout period")
 
-		By("Removing the taint from all nodes")
-		removeTaintsFromAllNodes(clientset, []string{noScheduleTaintKey})
+		By("Adding required label to all nodes")
+		addLabelsToAllNodes(clientset, map[string]string{kubernetesAzureClusterLabel: ""})
 
-		By("Waiting for pod startup checker to report healthy status after removing taint")
+		By("Waiting for pod startup checker to report healthy status after adding label back")
 		Eventually(func() bool {
 			matched, foundCheckers := verifyCheckerResultMetrics(localPort, checkerResultMetricName, podStartupCheckerNames, checkerTypePodStartup, metricsHealthyStatus, metricsHealthyErrorCode)
 			if !matched {
@@ -85,6 +81,6 @@ var _ = Describe("Pod startup checker", Ordered, ContinueOnFailure, func() {
 			}
 			GinkgoWriter.Printf("Found healthy pod startup checker metric for %v\n", foundCheckers)
 			return true
-		}, "60s", "5s").Should(BeTrue(), "Pod startup checker did not return to healthy status after taint removal within the timeout period")
+		}, "60s", "5s").Should(BeTrue(), "Pod startup checker did not return to healthy status after adding back label within the timeout period")
 	})
 })
