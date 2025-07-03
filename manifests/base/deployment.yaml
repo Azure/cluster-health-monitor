@@ -18,24 +18,24 @@ spec:
     spec:
       serviceAccountName: cluster-health-monitor
       containers:
-        - name: cluster-health-monitor
-          # TODO: Update the image to the latest version.
-          image: mcr.microsoft.com/aks/cluster-health-monitor/cluster-health-monitor:v0.0.3
-          imagePullPolicy: IfNotPresent
-          ports:
-            - containerPort: 9800
-              name: metrics
-          volumeMounts:
-            - name: config-volume
-              mountPath: /etc/cluster-health-monitor
-          resources:
-            requests:
-              cpu: 20m
-              memory: 64Mi
-            limits:
-              cpu: 100m
-              memory: 128Mi
-      volumes:
+      - name: cluster-health-monitor
+        # TODO: Update the image to the latest version.
+        image: mcr.microsoft.com/aks/cluster-health-monitor/cluster-health-monitor:v0.0.5
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 9800
+          name: metrics
+        volumeMounts:
         - name: config-volume
-          configMap:
-            name: cluster-health-monitor-config
+          mountPath: /etc/cluster-health-monitor
+        resources:
+          requests:
+            cpu: 20m
+            memory: 64Mi
+          limits:
+            cpu: 100m
+            memory: 128Mi
+      volumes:
+      - name: config-volume
+        configMap:
+          name: cluster-health-monitor-config
