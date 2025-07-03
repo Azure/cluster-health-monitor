@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os/signal"
 	"syscall"
 
 	"github.com/Azure/cluster-health-monitor/pkg/checker"
+	"github.com/Azure/cluster-health-monitor/pkg/checker/apiserver"
 	"github.com/Azure/cluster-health-monitor/pkg/checker/dnscheck"
 	"github.com/Azure/cluster-health-monitor/pkg/checker/podstartup"
 	"github.com/Azure/cluster-health-monitor/pkg/config"
@@ -86,6 +88,10 @@ func buildCheckerSchedule(cfg *config.Config) ([]scheduler.CheckerSchedule, erro
 	var schedules []scheduler.CheckerSchedule
 	for _, chkCfg := range cfg.Checkers {
 		chk, err := checker.Build(&chkCfg)
+		if errors.Is(err, checker.ErrSkipChecker) {
+			klog.ErrorS(err, "Skipped checker", "name", chkCfg.Name)
+			continue
+		}
 		if err != nil {
 			return nil, fmt.Errorf("failed to build checker %q: %w", chkCfg.Name, err)
 		}
@@ -101,4 +107,5 @@ func buildCheckerSchedule(cfg *config.Config) ([]scheduler.CheckerSchedule, erro
 func registerCheckers() {
 	dnscheck.Register()
 	podstartup.Register()
+	apiserver.Register()
 }

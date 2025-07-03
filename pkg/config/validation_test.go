@@ -173,3 +173,126 @@ func TestPodStartupConfig_Validate(t *testing.T) {
 		})
 	}
 }
+
+func TestAPIServerConfig_Validate(t *testing.T) {
+	tests := []struct {
+		name         string
+		mutateConfig func(cfg *CheckerConfig) *CheckerConfig
+		validateRes  func(g *WithT, err error)
+	}{
+		{
+			name: "valid config",
+			validateRes: func(g *WithT, err error) {
+				g.Expect(err).ToNot(HaveOccurred())
+			},
+		},
+		{
+			name: "nil apiServer config",
+			mutateConfig: func(cfg *CheckerConfig) *CheckerConfig {
+				cfg.APIServerConfig = nil
+				return cfg
+			},
+			validateRes: func(g *WithT, err error) {
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(err.Error()).To(ContainSubstring("API server checker config is required"))
+			},
+		},
+		{
+			name: "invalid config map namespace",
+			mutateConfig: func(cfg *CheckerConfig) *CheckerConfig {
+				cfg.APIServerConfig.ConfigMapNamespace = ""
+				return cfg
+			},
+			validateRes: func(g *WithT, err error) {
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(err.Error()).To(ContainSubstring("invalid config map namespace"))
+			},
+		},
+		{
+			name: "invalid config map label key",
+			mutateConfig: func(cfg *CheckerConfig) *CheckerConfig {
+				cfg.APIServerConfig.ConfigMapLabelKey = ""
+				return cfg
+			},
+			validateRes: func(g *WithT, err error) {
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(err.Error()).To(ContainSubstring("invalid config map label key"))
+			},
+		},
+		{
+			name: "timeout less than config map mutate timeout",
+			mutateConfig: func(cfg *CheckerConfig) *CheckerConfig {
+				cfg.Timeout = 3 * time.Second
+				cfg.APIServerConfig.ConfigMapMutateTimeout = 5 * time.Second
+				return cfg
+			},
+			validateRes: func(g *WithT, err error) {
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(err.Error()).To(ContainSubstring("checker timeout must be greater than config map mutate timeout"))
+			},
+		},
+		{
+			name: "timeout equal to config map mutate timeout",
+			mutateConfig: func(cfg *CheckerConfig) *CheckerConfig {
+				cfg.Timeout = 5 * time.Second
+				cfg.APIServerConfig.ConfigMapMutateTimeout = 5 * time.Second
+				return cfg
+			},
+			validateRes: func(g *WithT, err error) {
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(err.Error()).To(ContainSubstring("checker timeout must be greater than config map mutate timeout"))
+			},
+		},
+		{
+			name: "timeout less than config map read timeout",
+			mutateConfig: func(cfg *CheckerConfig) *CheckerConfig {
+				cfg.Timeout = 3 * time.Second
+				cfg.APIServerConfig.ConfigMapReadTimeout = 5 * time.Second
+				return cfg
+			},
+			validateRes: func(g *WithT, err error) {
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(err.Error()).To(ContainSubstring("checker timeout must be greater than config map read timeout"))
+			},
+		},
+		{
+			name: "timeout equal to config map read timeout",
+			mutateConfig: func(cfg *CheckerConfig) *CheckerConfig {
+				cfg.Timeout = 5 * time.Second
+				cfg.APIServerConfig.ConfigMapReadTimeout = 5 * time.Second
+				return cfg
+			},
+			validateRes: func(g *WithT, err error) {
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(err.Error()).To(ContainSubstring("checker timeout must be greater than config map read timeout"))
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			g := NewWithT(t)
+
+			chkCfg := &CheckerConfig{
+				Name:     "test-checker",
+				Type:     CheckTypeAPIServer,
+				Timeout:  10 * time.Second,
+				Interval: 30 * time.Second,
+				APIServerConfig: &APIServerConfig{
+					ConfigMapNamespace:     "config-map-namespace",
+					ConfigMapLabelKey:      "cluster-health-monitor/checker-name",
+					ConfigMapMutateTimeout: 5 * time.Second,
+					ConfigMapReadTimeout:   1 * time.Second,
+				},
+			}
+
+			if tt.mutateConfig != nil {
+				chkCfg = tt.mutateConfig(chkCfg)
+			}
+
+			err := chkCfg.validate()
+			tt.validateRes(g, err)
+		})
+	}
+}

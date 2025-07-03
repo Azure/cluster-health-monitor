@@ -7,6 +7,7 @@ type CheckerType string
 const (
 	CheckTypeDNS        CheckerType = "dns"
 	CheckTypePodStartup CheckerType = "podStartup"
+	CheckTypeAPIServer  CheckerType = "apiServer"
 )
 
 // Config represents the configuration for the health checkers.
@@ -46,12 +47,21 @@ type CheckerConfig struct {
 	// Optional.
 	// The configuration for the pod startup checker, this field is required if Type is CheckTypePodStartup.
 	PodStartupConfig *PodStartupConfig `yaml:"podStartupConfig,omitempty"`
+
+	// Optional.
+	// The configuration for the API server checker, this field is required if Type is CheckTypeAPIServer.
+	APIServerConfig *APIServerConfig `yaml:"apiServerConfig,omitempty"`
 }
 
 type DNSConfig struct {
 	// Required.
 	// The domain to check, used to determine the DNS records to query.
 	Domain string `yaml:"domain"`
+	// Optional.
+	// Whether to check LocalDNS instead of CoreDNS.
+	// If not specified or set to false, CoreDNS will be checked.
+	// If set to true, LocalDNS will be checked. Note that LocalDNS checks require LocalDNS to be enabled.
+	CheckLocalDNS bool `yaml:"checkLocalDNS,omitempty"`
 }
 
 type PodStartupConfig struct {
@@ -71,4 +81,19 @@ type PodStartupConfig struct {
 	// will not create any more synthetic pods until some of the existing ones are deleted. Instead, it will fail the run with an error.
 	// Reaching this limit effectively disables the checker.
 	MaxSyntheticPods int `yaml:"maxSyntheticPods,omitempty"`
+}
+
+type APIServerConfig struct {
+	// Required.
+	// The namespace in which the empty ConfigMap is created for checking API server operations.
+	ConfigMapNamespace string `yaml:"configMapNamespace"`
+	// Required.
+	// The Kubernetes label key used to identify the empty ConfigMap created by the checker.
+	ConfigMapLabelKey string `yaml:"configMapLabelKey"`
+	// Required.
+	// The maximum duration for which the checker will wait return healthy status for mutating API calls.
+	ConfigMapMutateTimeout time.Duration `yaml:"configMapMutateTimeout"`
+	// Required.
+	// The maximum duration for which the checker will wait return healthy status for read-only API calls.
+	ConfigMapReadTimeout time.Duration `yaml:"configMapReadTimeout"`
 }

@@ -10,6 +10,8 @@ const (
 	errCodePodTimeout      = "pod_timeout"
 	errCodeServiceError    = "service_error"
 	errCodePodError        = "pod_error"
+	errCodeLocalDNSTimeout = "local_dns_timeout"
+	errCodeLocalDNSError   = "local_dns_error"
 )
 
 // This is the error list used by the DNSChecker.

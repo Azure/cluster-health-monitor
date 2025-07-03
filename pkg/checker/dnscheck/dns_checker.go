@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/miekg/dns"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -23,8 +24,10 @@ func Register() {
 }
 
 const (
-	CoreDNSNamespace   = "kube-system"
-	CoreDNSServiceName = "kube-dns"
+	coreDNSNamespace   = "kube-system"
+	coreDNSServiceName = "kube-dns"
+	resolvConfPath     = "/etc/resolv.conf"
+	localDNSIP         = "169.254.10.11"
 )
 
 // DNSChecker implements the Checker interface for DNS checks.
@@ -36,6 +39,7 @@ type DNSChecker struct {
 }
 
 // BuildDNSChecker creates a new DNSChecker instance.
+// If the DNSType is LocalDNS, it checks if LocalDNS IP is enabled before creating the checker.
 func BuildDNSChecker(config *config.CheckerConfig) (checker.Checker, error) {
 	k8sConfig, err := rest.InClusterConfig()
 	if err != nil {
@@ -44,6 +48,19 @@ func BuildDNSChecker(config *config.CheckerConfig) (checker.Checker, error) {
 	client, err := kubernetes.NewForConfig(k8sConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kubernetes client: %w", err)
+	}
+
+	// If this is a LocalDNS checker, check if LocalDNS IP is enabled.
+	if config.DNSConfig.CheckLocalDNS {
+		enabled, err := isLocalDNSEnabled()
+		if err != nil {
+			klog.ErrorS(err, "Failed to check LocalDNS IP")
+			return nil, fmt.Errorf("failed to create LocalDNS checker: %w", err)
+		}
+		if !enabled {
+			klog.InfoS("LocalDNS is not enabled", "name", config.Name)
+			return nil, checker.ErrSkipChecker
+		}
 	}
 
 	chk := &DNSChecker{
@@ -68,12 +85,19 @@ func (c DNSChecker) Type() config.CheckerType {
 }
 
 // Run executes the DNS check.
-// It queries the CoreDNS service and pods for the configured domain.
-// If LocalDNS is configured, it should also query that.
-// If all queries succeed, the check is considered healthy.
+// It will check either CoreDNS or LocalDNS for the configured domain.
 func (c DNSChecker) Run(ctx context.Context) (*types.Result, error) {
-	domain := c.config.Domain
+	if c.config.CheckLocalDNS {
+		return c.checkLocalDNS(ctx)
+	} else {
+		return c.checkCoreDNS(ctx)
+	}
+}
 
+// checkCoreDNS queries CoreDNS service and pods.
+// If all queries succeed, the check is considered healthy.
+func (c DNSChecker) checkCoreDNS(ctx context.Context) (*types.Result, error) {
+	// Check CoreDNS service.
 	svcIP, err := getCoreDNSSvcIP(ctx, c.kubeClient)
 	if errors.Is(err, errServiceNotReady) {
 		return types.Unhealthy(errCodeServiceNotReady, "CoreDNS service is not ready"), nil
@@ -81,20 +105,24 @@ func (c DNSChecker) Run(ctx context.Context) (*types.Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := c.resolver.lookupHost(ctx, svcIP, domain); err != nil {
+	if _, err := c.resolver.lookupHost(ctx, svcIP, c.config.Domain); err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
 			return types.Unhealthy(errCodeServiceTimeout, "CoreDNS service query timed out"), nil
 		}
 		return types.Unhealthy(errCodeServiceError, fmt.Sprintf("CoreDNS service query error: %s", err)), nil
 	}
 
+	// Check CoreDNS pods.
 	podIPs, err := getCoreDNSPodIPs(ctx, c.kubeClient)
 	if errors.Is(err, errPodsNotReady) {
 		return types.Unhealthy(errCodePodsNotReady, "CoreDNS Pods are not ready"), nil
 	}
+	if err != nil {
+		return nil, err
+	}
 
 	for _, ip := range podIPs {
-		if _, err := c.resolver.lookupHost(ctx, ip, domain); err != nil {
+		if _, err := c.resolver.lookupHost(ctx, ip, c.config.Domain); err != nil {
 			if errors.Is(err, context.DeadlineExceeded) {
 				return types.Unhealthy(errCodePodTimeout, "CoreDNS pod query timed out"), nil
 			}
@@ -102,14 +130,25 @@ func (c DNSChecker) Run(ctx context.Context) (*types.Result, error) {
 		}
 	}
 
-	// TODO: Get LocalDNS IP.
+	return types.Healthy(), nil
+}
+
+// checkLocalDNS queries the LocalDNS server.
+// If the query succeeds, the check is considered healthy.
+func (c DNSChecker) checkLocalDNS(ctx context.Context) (*types.Result, error) {
+	if _, err := c.resolver.lookupHost(ctx, localDNSIP, c.config.Domain); err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return types.Unhealthy(errCodeLocalDNSTimeout, "LocalDNS query timed out"), nil
+		}
+		return types.Unhealthy(errCodeLocalDNSError, fmt.Sprintf("LocalDNS query error: %s", err)), nil
+	}
 
 	return types.Healthy(), nil
 }
 
 // getCoreDNSSvcIP returns the ClusterIP of the CoreDNS service in the cluster as a DNSTarget.
 func getCoreDNSSvcIP(ctx context.Context, kubeClient kubernetes.Interface) (string, error) {
-	svc, err := kubeClient.CoreV1().Services(CoreDNSNamespace).Get(ctx, CoreDNSServiceName, metav1.GetOptions{})
+	svc, err := kubeClient.CoreV1().Services(coreDNSNamespace).Get(ctx, coreDNSServiceName, metav1.GetOptions{})
 
 	if err != nil && apierrors.IsNotFound(err) {
 		return "", errServiceNotReady
@@ -127,8 +166,8 @@ func getCoreDNSSvcIP(ctx context.Context, kubeClient kubernetes.Interface) (stri
 
 // getCoreDNSPodIPs returns the IPs of all CoreDNS pods in the cluster as DNSTargets.
 func getCoreDNSPodIPs(ctx context.Context, kubeClient kubernetes.Interface) ([]string, error) {
-	endpointSliceList, err := kubeClient.DiscoveryV1().EndpointSlices(CoreDNSNamespace).List(ctx, metav1.ListOptions{
-		LabelSelector: discoveryv1.LabelServiceName + "=" + CoreDNSServiceName,
+	endpointSliceList, err := kubeClient.DiscoveryV1().EndpointSlices(coreDNSNamespace).List(ctx, metav1.ListOptions{
+		LabelSelector: discoveryv1.LabelServiceName + "=" + coreDNSServiceName,
 	})
 	if err != nil && apierrors.IsNotFound(err) {
 		return nil, errPodsNotReady
@@ -154,4 +193,20 @@ func getCoreDNSPodIPs(ctx context.Context, kubeClient kubernetes.Interface) ([]s
 	}
 
 	return podIPs, nil
+}
+
+// isLocalDNSEnabled reads /etc/resolv.conf and checks if the localDNSIP exists.
+func isLocalDNSEnabled() (bool, error) {
+	config, err := dns.ClientConfigFromFile(resolvConfPath)
+	if err != nil {
+		return false, fmt.Errorf("failed to parse %s: %w", resolvConfPath, err)
+	}
+
+	for _, server := range config.Servers {
+		if server == localDNSIP {
+			return true, nil
+		}
+	}
+
+	return false, nil
 }

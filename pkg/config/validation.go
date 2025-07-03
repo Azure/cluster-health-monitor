@@ -58,6 +58,10 @@ func (c *CheckerConfig) validate() error {
 		if err := c.PodStartupConfig.validate(c.Timeout); err != nil {
 			errs = append(errs, fmt.Errorf("checker config %q PodStartupConfig validation failed: %w", c.Name, err))
 		}
+	case CheckTypeAPIServer:
+		if err := c.APIServerConfig.validate(c.Timeout); err != nil {
+			errs = append(errs, fmt.Errorf("checker config %q APIServerConfig validation failed: %w", c.Name, err))
+		}
 	default:
 		errs = append(errs, fmt.Errorf("checker config %q has unsupported type: %s", c.Name, c.Type))
 	}
@@ -95,6 +99,32 @@ func (c *PodStartupConfig) validate(checkerConfigTimeout time.Duration) error {
 
 	if c.MaxSyntheticPods <= 0 {
 		errs = append(errs, fmt.Errorf("invalid max synthetic pods: value=%d, must be greater than 0", c.MaxSyntheticPods))
+	}
+
+	return errors.Join(errs...)
+}
+
+func (c *APIServerConfig) validate(checkerConfigTimeout time.Duration) error {
+	if c == nil {
+		return fmt.Errorf("API server checker config is required")
+	}
+
+	var errs []error
+	for _, nsErr := range apivalidation.ValidateNamespaceName(c.ConfigMapNamespace, false) {
+		errs = append(errs, fmt.Errorf("invalid config map namespace: value='%s', error='%s'", c.ConfigMapNamespace, nsErr))
+	}
+	for _, labelErr := range utilvalidation.IsQualifiedName(c.ConfigMapLabelKey) {
+		errs = append(errs, fmt.Errorf("invalid config map label key: value='%s', error='%s'", c.ConfigMapLabelKey, labelErr))
+	}
+
+	if checkerConfigTimeout <= c.ConfigMapMutateTimeout {
+		errs = append(errs, fmt.Errorf("checker timeout must be greater than config map mutate timeout: checker timeout='%s', config map mutate timeout='%s'",
+			checkerConfigTimeout, c.ConfigMapMutateTimeout))
+	}
+
+	if checkerConfigTimeout <= c.ConfigMapReadTimeout {
+		errs = append(errs, fmt.Errorf("checker timeout must be greater than config map read timeout: checker timeout='%s', config map read timeout='%s'",
+			checkerConfigTimeout, c.ConfigMapReadTimeout))
 	}
 
 	return errors.Join(errs...)

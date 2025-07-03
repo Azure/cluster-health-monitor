@@ -2,6 +2,7 @@ package dnscheck
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/Azure/cluster-health-monitor/pkg/config"
@@ -21,91 +22,152 @@ func (f *fakeResolver) lookupHost(ctx context.Context, ip, domain string) ([]str
 	return f.lookupHostFunc(ctx, ip, domain)
 }
 
-func TestDNSChecker_Healthy(t *testing.T) {
+func TestDNSChecker_Run(t *testing.T) {
 	t.Parallel()
-	g := NewWithT(t)
-	client := k8sfake.NewClientset(
-		makeCoreDNSService("10.0.0.10"),
-		makeCoreDNSEndpointSlice([]string{"10.0.0.11", "10.0.0.12"}),
-	)
-	chk := &DNSChecker{
-		name:       "dns-test",
-		config:     &config.DNSConfig{Domain: "example.com"},
-		kubeClient: client,
-		resolver: &fakeResolver{
-			lookupHostFunc: func(ctx context.Context, ip, domain string) ([]string, error) {
-				return []string{"1.2.3.4"}, nil
+	testCases := []struct {
+		name          string
+		client        *k8sfake.Clientset
+		mockResolver  resolver
+		checkLocalDNS bool
+		validateRes   func(g *WithT, res *types.Result, err error)
+	}{
+		{
+			name: "CoreDNS Healthy",
+			client: k8sfake.NewClientset(
+				makeCoreDNSService("10.0.0.10"),
+				makeCoreDNSEndpointSlice([]string{"10.0.0.11", "10.0.0.12"}),
+			),
+			mockResolver: &fakeResolver{
+				lookupHostFunc: func(ctx context.Context, ip, domain string) ([]string, error) {
+					return []string{"1.2.3.4"}, nil
+				},
+			},
+			validateRes: func(g *WithT, res *types.Result, err error) {
+				g.Expect(err).ToNot(HaveOccurred())
+				g.Expect(res.Status).To(Equal(types.StatusHealthy))
+			},
+		},
+		{
+			name:   "CoreDNS Service Not Ready",
+			client: k8sfake.NewClientset(), // No service.
+			mockResolver: &fakeResolver{
+				lookupHostFunc: func(ctx context.Context, ip, domain string) ([]string, error) {
+					return []string{"1.2.3.4"}, nil
+				},
+			},
+			validateRes: func(g *WithT, res *types.Result, err error) {
+				g.Expect(err).ToNot(HaveOccurred())
+				g.Expect(res.Status).To(Equal(types.StatusUnhealthy))
+				g.Expect(res.Detail.Code).To(Equal(errCodeServiceNotReady))
+			},
+		},
+		{
+			name: "CoreDNS Pods Not Ready",
+			client: k8sfake.NewClientset(
+				makeCoreDNSService("10.0.0.10"),
+			),
+			mockResolver: &fakeResolver{
+				lookupHostFunc: func(ctx context.Context, ip, domain string) ([]string, error) {
+					return []string{"1.2.3.4"}, nil
+				},
+			},
+			validateRes: func(g *WithT, res *types.Result, err error) {
+				g.Expect(err).ToNot(HaveOccurred())
+				g.Expect(res.Status).To(Equal(types.StatusUnhealthy))
+				g.Expect(res.Detail.Code).To(Equal(errCodePodsNotReady))
+			},
+		},
+		{
+			name: "CoreDNS Service Timeout",
+			client: k8sfake.NewClientset(
+				makeCoreDNSService("10.0.0.10"),
+				makeCoreDNSEndpointSlice([]string{"10.0.0.11"}),
+			),
+			mockResolver: &fakeResolver{
+				lookupHostFunc: func(ctx context.Context, ip, domain string) ([]string, error) {
+					return nil, context.DeadlineExceeded
+				},
+			},
+			validateRes: func(g *WithT, res *types.Result, err error) {
+				g.Expect(err).ToNot(HaveOccurred())
+				g.Expect(res.Status).To(Equal(types.StatusUnhealthy))
+				g.Expect(res.Detail.Code).To(Equal(errCodeServiceTimeout))
+			},
+		},
+		{
+			name:   "LocalDNS Healthy",
+			client: k8sfake.NewClientset(),
+			mockResolver: &fakeResolver{
+				lookupHostFunc: func(ctx context.Context, ip, domain string) ([]string, error) {
+					if ip != "169.254.10.11" {
+						return nil, fmt.Errorf("unexpected IP: %s", ip)
+					}
+					return []string{"1.2.3.4"}, nil
+				},
+			},
+			checkLocalDNS: true,
+			validateRes: func(g *WithT, res *types.Result, err error) {
+				g.Expect(err).ToNot(HaveOccurred())
+				g.Expect(res.Status).To(Equal(types.StatusHealthy))
+			},
+		},
+		{
+			name:   "LocalDNS Error",
+			client: k8sfake.NewClientset(),
+			mockResolver: &fakeResolver{
+				lookupHostFunc: func(ctx context.Context, ip, domain string) ([]string, error) {
+					if ip != "169.254.10.11" {
+						return []string{"1.2.3.4"}, nil
+					}
+					return nil, fmt.Errorf("local dns error")
+				},
+			},
+			checkLocalDNS: true,
+			validateRes: func(g *WithT, res *types.Result, err error) {
+				g.Expect(err).ToNot(HaveOccurred())
+				g.Expect(res.Status).To(Equal(types.StatusUnhealthy))
+				g.Expect(res.Detail.Code).To(Equal(errCodeLocalDNSError))
+			},
+		},
+		{
+			name:   "LocalDNS Timeout",
+			client: k8sfake.NewClientset(),
+			mockResolver: &fakeResolver{
+				lookupHostFunc: func(ctx context.Context, ip, domain string) ([]string, error) {
+					if ip != "169.254.10.11" {
+						return []string{"1.2.3.4"}, nil
+					}
+					return nil, context.DeadlineExceeded
+				},
+			},
+			checkLocalDNS: true,
+			validateRes: func(g *WithT, res *types.Result, err error) {
+				g.Expect(err).ToNot(HaveOccurred())
+				g.Expect(res.Status).To(Equal(types.StatusUnhealthy))
+				g.Expect(res.Detail.Code).To(Equal(errCodeLocalDNSTimeout))
 			},
 		},
 	}
-	res, err := chk.Run(context.Background())
-	g.Expect(err).ToNot(HaveOccurred())
-	g.Expect(res.Status).To(Equal(types.StatusHealthy))
-}
 
-func TestDNSChecker_ServiceNotReady(t *testing.T) {
-	t.Parallel()
-	g := NewWithT(t)
-	client := k8sfake.NewClientset() // no service
-	chk := &DNSChecker{
-		name:       "dns-test",
-		config:     &config.DNSConfig{Domain: "example.com"},
-		kubeClient: client,
-		resolver: &fakeResolver{
-			lookupHostFunc: func(ctx context.Context, ip, domain string) ([]string, error) {
-				return []string{"1.2.3.4"}, nil
-			},
-		},
-	}
-	res, err := chk.Run(context.Background())
-	g.Expect(err).ToNot(HaveOccurred())
-	g.Expect(res.Status).To(Equal(types.StatusUnhealthy))
-	g.Expect(res.Detail.Code).To(Equal(errCodeServiceNotReady))
-}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			g := NewWithT(t)
 
-func TestDNSChecker_PodsNotReady(t *testing.T) {
-	t.Parallel()
-	g := NewWithT(t)
-	client := k8sfake.NewClientset(
-		makeCoreDNSService("10.0.0.10"),
-	)
-	chk := &DNSChecker{
-		name:       "dns-test",
-		config:     &config.DNSConfig{Domain: "example.com"},
-		kubeClient: client,
-		resolver: &fakeResolver{
-			lookupHostFunc: func(ctx context.Context, ip, domain string) ([]string, error) {
-				return []string{"1.2.3.4"}, nil
-			},
-		},
-	}
-	res, err := chk.Run(context.Background())
-	g.Expect(err).ToNot(HaveOccurred())
-	g.Expect(res.Status).To(Equal(types.StatusUnhealthy))
-	g.Expect(res.Detail.Code).To(Equal(errCodePodsNotReady))
-}
+			chk := &DNSChecker{
+				name: "dns-test",
+				config: &config.DNSConfig{
+					Domain:        "example.com",
+					CheckLocalDNS: tc.checkLocalDNS,
+				},
+				kubeClient: tc.client,
+				resolver:   tc.mockResolver,
+			}
 
-func TestDNSChecker_Timeout(t *testing.T) {
-	t.Parallel()
-	g := NewWithT(t)
-	client := k8sfake.NewClientset(
-		makeCoreDNSService("10.0.0.10"),
-		makeCoreDNSEndpointSlice([]string{"10.0.0.11"}),
-	)
-	chk := &DNSChecker{
-		name:       "dns-test",
-		config:     &config.DNSConfig{Domain: "example.com"},
-		kubeClient: client,
-		resolver: &fakeResolver{
-			lookupHostFunc: func(ctx context.Context, ip, domain string) ([]string, error) {
-				return nil, context.DeadlineExceeded
-			},
-		},
+			res, err := chk.Run(context.Background())
+			tc.validateRes(g, res, err)
+		})
 	}
-	res, err := chk.Run(context.Background())
-	g.Expect(err).ToNot(HaveOccurred())
-	g.Expect(res.Status).To(Equal(types.StatusUnhealthy))
-	g.Expect(res.Detail.Code).To(Equal(errCodeServiceTimeout))
 }
 
 // --- helpers ---
@@ -113,8 +175,8 @@ func TestDNSChecker_Timeout(t *testing.T) {
 func makeCoreDNSService(ip string) *corev1.Service {
 	return &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
-			Namespace: CoreDNSNamespace,
-			Name:      CoreDNSServiceName,
+			Namespace: coreDNSNamespace,
+			Name:      coreDNSServiceName,
 		},
 		Spec: corev1.ServiceSpec{
 			ClusterIP: ip,
@@ -135,9 +197,9 @@ func makeCoreDNSEndpointSlice(ips []string) *discoveryv1.EndpointSlice {
 	}
 	return &discoveryv1.EndpointSlice{
 		ObjectMeta: metav1.ObjectMeta{
-			Namespace: CoreDNSNamespace,
+			Namespace: coreDNSNamespace,
 			Labels: map[string]string{
-				discoveryv1.LabelServiceName: CoreDNSServiceName,
+				discoveryv1.LabelServiceName: coreDNSServiceName,
 			},
 		},
 		Endpoints: endpoints,
