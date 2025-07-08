@@ -6,7 +6,6 @@ import (
 	"fmt"
 
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
 
 	"github.com/Azure/cluster-health-monitor/pkg/checker"
@@ -26,20 +25,11 @@ func Register() {
 }
 
 // buildAPIServerChecker creates a new APIServerChecker instance.
-func buildAPIServerChecker(config *config.CheckerConfig) (checker.Checker, error) {
-	k8sConfig, err := rest.InClusterConfig()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get in-cluster config: %w", err)
-	}
-	client, err := kubernetes.NewForConfig(k8sConfig)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Kubernetes client: %w", err)
-	}
-
+func buildAPIServerChecker(config *config.CheckerConfig, kubeClient kubernetes.Interface) (checker.Checker, error) {
 	chk := &APIServerChecker{
 		name:       config.Name,
 		config:     config.APIServerConfig,
-		kubeClient: client,
+		kubeClient: kubeClient,
 	}
 	klog.InfoS("Built APIServerChecker",
 		"name", chk.name,

@@ -11,7 +11,6 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
 
 	"github.com/Azure/cluster-health-monitor/pkg/checker"
@@ -40,16 +39,7 @@ type DNSChecker struct {
 
 // BuildDNSChecker creates a new DNSChecker instance.
 // If the DNSType is LocalDNS, it checks if LocalDNS IP is enabled before creating the checker.
-func BuildDNSChecker(config *config.CheckerConfig) (checker.Checker, error) {
-	k8sConfig, err := rest.InClusterConfig()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get in-cluster config: %w", err)
-	}
-	client, err := kubernetes.NewForConfig(k8sConfig)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Kubernetes client: %w", err)
-	}
-
+func BuildDNSChecker(config *config.CheckerConfig, kubeClient kubernetes.Interface) (checker.Checker, error) {
 	// If this is a LocalDNS checker, check if LocalDNS IP is enabled.
 	if config.DNSConfig.CheckLocalDNS {
 		enabled, err := isLocalDNSEnabled()
@@ -66,7 +56,7 @@ func BuildDNSChecker(config *config.CheckerConfig) (checker.Checker, error) {
 	chk := &DNSChecker{
 		name:       config.Name,
 		config:     config.DNSConfig,
-		kubeClient: client,
+		kubeClient: kubeClient,
 		resolver:   &defaultResolver{},
 	}
 	klog.InfoS("Built DNSChecker",

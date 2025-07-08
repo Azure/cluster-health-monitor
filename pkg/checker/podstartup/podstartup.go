@@ -14,7 +14,6 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
 
 	"github.com/Azure/cluster-health-monitor/pkg/checker"
@@ -40,21 +39,12 @@ func Register() {
 }
 
 // BuildPodStartupChecker creates a new PodStartupChecker instance.
-func BuildPodStartupChecker(config *config.CheckerConfig) (checker.Checker, error) {
-	k8sConfig, err := rest.InClusterConfig()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get in-cluster config: %w", err)
-	}
-	k8sClientset, err := kubernetes.NewForConfig(k8sConfig)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Kubernetes clientset: %w", err)
-	}
-
+func BuildPodStartupChecker(config *config.CheckerConfig, kubeClient kubernetes.Interface) (checker.Checker, error) {
 	chk := &PodStartupChecker{
 		name:         config.Name,
 		config:       config.PodStartupConfig,
 		timeout:      config.Timeout,
-		k8sClientset: k8sClientset,
+		k8sClientset: kubeClient,
 	}
 	klog.InfoS("Built PodStartupChecker",
 		"name", chk.name,

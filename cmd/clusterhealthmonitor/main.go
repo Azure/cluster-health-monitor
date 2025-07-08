@@ -15,6 +15,8 @@ import (
 	"github.com/Azure/cluster-health-monitor/pkg/config"
 	"github.com/Azure/cluster-health-monitor/pkg/metrics"
 	"github.com/Azure/cluster-health-monitor/pkg/scheduler"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
 )
 
@@ -64,8 +66,18 @@ func main() {
 		"path", *configPath,
 		"numCheckers", len(cfg.Checkers))
 
+	// Create Kubernetes client.
+	k8sConfig, err := rest.InClusterConfig()
+	if err != nil {
+		logErrorAndExit(err, "Failed to get in-cluster config")
+	}
+	kubeClient, err := kubernetes.NewForConfig(k8sConfig)
+	if err != nil {
+		logErrorAndExit(err, "Failed to create Kubernetes client")
+	}
+
 	// Build the checker schedule from the configuration.
-	cs, err := buildCheckerSchedule(cfg)
+	cs, err := buildCheckerSchedule(cfg, kubeClient)
 	if err != nil {
 		logErrorAndExit(err, "Failed to build checker schedule")
 	}
@@ -84,10 +96,10 @@ func main() {
 	klog.InfoS("Stopped Cluster Health Monitor due to context cancel")
 }
 
-func buildCheckerSchedule(cfg *config.Config) ([]scheduler.CheckerSchedule, error) {
+func buildCheckerSchedule(cfg *config.Config, kubeClient kubernetes.Interface) ([]scheduler.CheckerSchedule, error) {
 	var schedules []scheduler.CheckerSchedule
 	for _, chkCfg := range cfg.Checkers {
-		chk, err := checker.Build(&chkCfg)
+		chk, err := checker.Build(&chkCfg, kubeClient)
 		if errors.Is(err, checker.ErrSkipChecker) {
 			klog.ErrorS(err, "Skipped checker", "name", chkCfg.Name)
 			continue
