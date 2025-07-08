@@ -43,7 +43,7 @@ jobs:
           CLUSTER_HEALTH_MONITOR_IMAGE_VERSION: ${{ env.IMAGE_VERSION }}
           OUTPUT_TYPE: type=docker
       - name: Run Trivy vulnerability scanner for ${{ env.REGISTRY }}/${{ env.CLUSTER_HEALTH_MONITOR_IMAGE_NAME }}:${{ env.IMAGE_VERSION }}
-        uses: aquasecurity/trivy-action@v0.32.0
+        uses: aquasecurity/trivy-action@0.32.0
         with:
           image-ref: ${{ env.REGISTRY }}/${{ env.CLUSTER_HEALTH_MONITOR_IMAGE_NAME }}:${{ env.IMAGE_VERSION }}
           format: 'table'
