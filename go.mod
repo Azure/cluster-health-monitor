@@ -1,6 +1,6 @@
 module github.com/Azure/cluster-health-monitor
 
-go 1.24.0
+go 1.24.4
 
 require (
 	github.com/miekg/dns v1.1.66
