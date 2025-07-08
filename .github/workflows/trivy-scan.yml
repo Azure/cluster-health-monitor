@@ -45,6 +45,7 @@ jobs:
       - name: Run Trivy vulnerability scanner for ${{ env.REGISTRY }}/${{ env.CLUSTER_HEALTH_MONITOR_IMAGE_NAME }}:${{ env.IMAGE_VERSION }}
         uses: aquasecurity/trivy-action@0.32.0
         with:
+          scan-type: 'image'
           image-ref: ${{ env.REGISTRY }}/${{ env.CLUSTER_HEALTH_MONITOR_IMAGE_NAME }}:${{ env.IMAGE_VERSION }}
           format: 'table'
           exit-code: '1'
@@ -53,5 +54,16 @@ jobs:
           scanners: 'vuln,secret,license'
           severity: 'CRITICAL,HIGH,MEDIUM,LOW,UNKNOWN'
           timeout: '5m0s'
+        env:
+          TRIVY_DB_REPOSITORY: mcr.microsoft.com/mirror/ghcr/aquasecurity/trivy-db
+      - name: Run Trivy license scan on source code
+        uses: aquasecurity/trivy-action@0.32.0
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'table'
+          exit-code: '1'
+          scanners: 'license'
+          severity: 'CRITICAL,HIGH,MEDIUM,LOW,UNKNOWN'
         env:
           TRIVY_DB_REPOSITORY: mcr.microsoft.com/mirror/ghcr/aquasecurity/trivy-db
