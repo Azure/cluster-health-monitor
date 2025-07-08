@@ -60,7 +60,7 @@ jobs:
         uses: aquasecurity/trivy-action@0.32.0
         with:
           scan-type: 'fs'
-          scan-ref: '/github/workspace/'
+          scan-ref: '.'
           format: 'table'
           exit-code: '1'
           scanners: 'license'
