@@ -60,10 +60,17 @@ jobs:
         uses: aquasecurity/trivy-action@0.32.0
         with:
           scan-type: 'fs'
-          scan-ref: '.'
+          scan-ref: '${{ github.workspace }}'
           format: 'table'
           exit-code: '1'
           scanners: 'license'
           severity: 'CRITICAL,HIGH,MEDIUM,LOW,UNKNOWN'
         env:
           TRIVY_DB_REPOSITORY: mcr.microsoft.com/mirror/ghcr/aquasecurity/trivy-db
+      - name: Debug workspace directory
+        run: |
+          echo "Current working directory: $(pwd)"
+          echo "Contents of current directory:"
+          ls -la
+          echo "Contents of /github/workspace (if exists):"
+          ls -la /github/workspace || echo "/github/workspace does not exist"
