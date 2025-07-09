@@ -5,33 +5,33 @@
   path: /data/config.yaml
   value: |
     checkers:
-      - name: "test-internal-coredns-checker"
+      - name: "test-internal-coredns"
         type: "dns"
         interval: "5s"
         timeout: "3s"
         dnsConfig:
           domain: "kubernetes.default.svc.cluster.local"
-      - name: "test-external-coredns-checker"
+      - name: "test-external-coredns"
         type: "dns"
         interval: "5s"
         timeout: "3s"
         dnsConfig:
           domain: "mcr.microsoft.com"
-      - name: "test-internal-localdns-checker"
+      - name: "test-internal-localdns"
         type: "dns"
         interval: "5s"
         timeout: "3s"
         dnsConfig:
           domain: "kubernetes.default.svc.cluster.local"
           checkLocalDNS: true
-      - name: "test-external-localdns-checker"
+      - name: "test-external-localdns"
         type: "dns"
         interval: "5s"
         timeout: "3s"
         dnsConfig:
           domain: "mcr.microsoft.com"
           checkLocalDNS: true
-      - name: "test-pod-startup-checker"
+      - name: "test-pod-startup"
         type: "podStartup"
         interval: "10s"
         timeout: "10s"
