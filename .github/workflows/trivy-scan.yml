@@ -4,6 +4,9 @@ on:
     branches:
       - main
   pull_request:
+  create:
+    # Publish semver tags as releases.
+    tags: [ 'v*.*.*' ]
   workflow_dispatch:
 
 
@@ -16,7 +19,7 @@ env:
 
 jobs:
   export-registry:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     outputs:
       registry: ${{ steps.export.outputs.registry }}
     steps:
@@ -26,7 +29,7 @@ jobs:
           echo "registry=$(echo "${{ env.REGISTRY }}/${{ github.repository }}" | tr [:upper:] [:lower:])" >> $GITHUB_OUTPUT
   build-and-scan:
     needs: export-registry
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     env:
       REGISTRY: ${{ needs.export-registry.outputs.registry }}
     steps:
