@@ -332,38 +332,56 @@ func verifyCheckerResultMetrics(localPort int, expectedChkNames []string, expect
 	return true, foundCheckers
 }
 
+// removeLabelsFromAllNodes removes the given labels from all nodes in the cluster.
 func removeLabelsFromAllNodes(clientset kubernetes.Interface, labels map[string]string) {
-	nodeList, err := clientset.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
-	Expect(err).NotTo(HaveOccurred(), "Failed to list nodes")
+	Eventually(func() error {
+		nodeList, err := clientset.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to list nodes: %w", err)
+		}
 
-	// Remove labels from all nodes
-	for _, node := range nodeList.Items {
-		for key := range labels {
-			if _, exists := node.Labels[key]; exists {
-				delete(node.Labels, key)
-				GinkgoWriter.Printf("Removed label %s from node %s\n", key, node.Name)
+		// Remove labels from all nodes.
+		for _, node := range nodeList.Items {
+			for key := range labels {
+				if _, exists := node.Labels[key]; exists {
+					delete(node.Labels, key)
+					GinkgoWriter.Printf("Removed label %s from node %s\n", key, node.Name)
+				}
+			}
+			_, err := clientset.CoreV1().Nodes().Update(context.TODO(), &node, metav1.UpdateOptions{})
+			if err != nil {
+				return fmt.Errorf("failed to update node %s: %w", node.Name, err)
 			}
 		}
-		_, err := clientset.CoreV1().Nodes().Update(context.TODO(), &node, metav1.UpdateOptions{})
-		Expect(err).NotTo(HaveOccurred(), "Failed to remove labels from node %s", node.Name)
-	}
+
+		return nil
+	}, "30s", "2s").ShouldNot(HaveOccurred(), "Failed to remove labels from nodes")
 }
 
-// addLabelsToAllNodes applies the given labels to all nodes in the cluster
+// addLabelsToAllNodes applies the given labels to all nodes in the cluster.
 func addLabelsToAllNodes(clientset kubernetes.Interface, labels map[string]string) {
-	nodeList, err := clientset.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
-	Expect(err).NotTo(HaveOccurred(), "Failed to list nodes")
+	Eventually(func() error {
+		nodeList, err := clientset.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to list nodes: %w", err)
+		}
 
-	// Add labels to all nodes
-	for _, node := range nodeList.Items {
-		if node.Labels == nil {
-			node.Labels = make(map[string]string)
+		// Add labels to all nodes.
+		for _, node := range nodeList.Items {
+			if node.Labels == nil {
+				node.Labels = make(map[string]string)
+			}
+			for key, value := range labels {
+				node.Labels[key] = value
+			}
+
+			_, err := clientset.CoreV1().Nodes().Update(context.TODO(), &node, metav1.UpdateOptions{})
+			if err != nil {
+				return fmt.Errorf("failed to update node %s: %w", node.Name, err)
+			}
+			GinkgoWriter.Printf("Node %s: Added labels %v\n", node.Name, labels)
 		}
-		for key, value := range labels {
-			node.Labels[key] = value
-		}
-		_, err := clientset.CoreV1().Nodes().Update(context.TODO(), &node, metav1.UpdateOptions{})
-		Expect(err).NotTo(HaveOccurred(), "Failed to add labels to node %s", node.Name)
-		GinkgoWriter.Printf("Node %s: Added labels %v\n", node.Name, labels)
-	}
+
+		return nil
+	}, "30s", "2s").ShouldNot(HaveOccurred(), "Failed to add labels to nodes")
 }
