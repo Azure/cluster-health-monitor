@@ -21,7 +21,7 @@ import (
 
 func TestPodStartupChecker_Run(t *testing.T) {
 	timestamp := time.Now()
-	checkerName := "test-checker"
+	checkerName := "test"
 	syntheticPodNamespace := "test-namespace"
 	syntheticPodLabelKey := "cluster-health-monitor/checker-name"
 	maxSyntheticPods := 3
@@ -479,7 +479,7 @@ func TestGenerateSyntheticPod(t *testing.T) {
 	}{
 		{
 			name:        "generates valid synthetic pod",
-			checkerName: "test-checker",
+			checkerName: "test",
 		},
 		{
 			name:        "succesfully handles uppercase checker name",

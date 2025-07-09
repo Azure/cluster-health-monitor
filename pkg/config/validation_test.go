@@ -152,7 +152,7 @@ func TestPodStartupConfig_Validate(t *testing.T) {
 
 			// Valida chkCfg
 			chkCfg := &CheckerConfig{
-				Name:    "test-checker",
+				Name:    "test",
 				Type:    CheckTypePodStartup,
 				Timeout: 10 * time.Second,
 				PodStartupConfig: &PodStartupConfig{
@@ -275,7 +275,7 @@ func TestAPIServerConfig_Validate(t *testing.T) {
 			g := NewWithT(t)
 
 			chkCfg := &CheckerConfig{
-				Name:     "test-checker",
+				Name:     "test",
 				Type:     CheckTypeAPIServer,
 				Timeout:  10 * time.Second,
 				Interval: 30 * time.Second,
