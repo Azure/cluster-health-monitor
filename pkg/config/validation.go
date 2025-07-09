@@ -76,6 +76,9 @@ func (c *DNSConfig) validate() error {
 	if c.Domain == "" {
 		return fmt.Errorf("domain is required for DNSChecker")
 	}
+	if c.QueryTimeout < 0 {
+		return fmt.Errorf("queryTimeout must be greater than or equal to 0")
+	}
 	return nil
 }
 

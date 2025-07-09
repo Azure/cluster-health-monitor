@@ -62,6 +62,10 @@ type DNSConfig struct {
 	// If not specified or set to false, CoreDNS will be checked.
 	// If set to true, LocalDNS will be checked. Note that LocalDNS checks require LocalDNS to be enabled.
 	CheckLocalDNS bool `yaml:"checkLocalDNS,omitempty"`
+	// Optional.
+	// The timeout for DNS queries. The string format see https://pkg.go.dev/time#ParseDuration
+	// If not specified, defaults to 2s. It must be greater than 0.
+	QueryTimeout time.Duration `yaml:"queryTimeout,omitempty"`
 }
 
 type PodStartupConfig struct {

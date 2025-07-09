@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/Azure/cluster-health-monitor/pkg/config"
 	"github.com/Azure/cluster-health-monitor/pkg/types"
@@ -15,11 +16,11 @@ import (
 )
 
 type fakeResolver struct {
-	lookupHostFunc func(ctx context.Context, ip, domain string) ([]string, error)
+	lookupHostFunc func(ctx context.Context, ip, domain string, queryTimeout time.Duration) ([]string, error)
 }
 
-func (f *fakeResolver) lookupHost(ctx context.Context, ip, domain string) ([]string, error) {
-	return f.lookupHostFunc(ctx, ip, domain)
+func (f *fakeResolver) lookupHost(ctx context.Context, ip, domain string, queryTimeout time.Duration) ([]string, error) {
+	return f.lookupHostFunc(ctx, ip, domain, queryTimeout)
 }
 
 func TestDNSChecker_Run(t *testing.T) {
@@ -38,7 +39,7 @@ func TestDNSChecker_Run(t *testing.T) {
 				makeCoreDNSEndpointSlice([]string{"10.0.0.11", "10.0.0.12"}),
 			),
 			mockResolver: &fakeResolver{
-				lookupHostFunc: func(ctx context.Context, ip, domain string) ([]string, error) {
+				lookupHostFunc: func(ctx context.Context, ip, domain string, queryTimeout time.Duration) ([]string, error) {
 					return []string{"1.2.3.4"}, nil
 				},
 			},
@@ -51,7 +52,7 @@ func TestDNSChecker_Run(t *testing.T) {
 			name:   "CoreDNS Service Not Ready",
 			client: k8sfake.NewClientset(), // No service.
 			mockResolver: &fakeResolver{
-				lookupHostFunc: func(ctx context.Context, ip, domain string) ([]string, error) {
+				lookupHostFunc: func(ctx context.Context, ip, domain string, queryTimeout time.Duration) ([]string, error) {
 					return []string{"1.2.3.4"}, nil
 				},
 			},
@@ -67,7 +68,7 @@ func TestDNSChecker_Run(t *testing.T) {
 				makeCoreDNSService("10.0.0.10"),
 			),
 			mockResolver: &fakeResolver{
-				lookupHostFunc: func(ctx context.Context, ip, domain string) ([]string, error) {
+				lookupHostFunc: func(ctx context.Context, ip, domain string, queryTimeout time.Duration) ([]string, error) {
 					return []string{"1.2.3.4"}, nil
 				},
 			},
@@ -84,7 +85,7 @@ func TestDNSChecker_Run(t *testing.T) {
 				makeCoreDNSEndpointSlice([]string{"10.0.0.11"}),
 			),
 			mockResolver: &fakeResolver{
-				lookupHostFunc: func(ctx context.Context, ip, domain string) ([]string, error) {
+				lookupHostFunc: func(ctx context.Context, ip, domain string, queryTimeout time.Duration) ([]string, error) {
 					return nil, context.DeadlineExceeded
 				},
 			},
@@ -98,7 +99,7 @@ func TestDNSChecker_Run(t *testing.T) {
 			name:   "LocalDNS Healthy",
 			client: k8sfake.NewClientset(),
 			mockResolver: &fakeResolver{
-				lookupHostFunc: func(ctx context.Context, ip, domain string) ([]string, error) {
+				lookupHostFunc: func(ctx context.Context, ip, domain string, queryTimeout time.Duration) ([]string, error) {
 					if ip != "169.254.10.11" {
 						return nil, fmt.Errorf("unexpected IP: %s", ip)
 					}
@@ -115,7 +116,7 @@ func TestDNSChecker_Run(t *testing.T) {
 			name:   "LocalDNS Error",
 			client: k8sfake.NewClientset(),
 			mockResolver: &fakeResolver{
-				lookupHostFunc: func(ctx context.Context, ip, domain string) ([]string, error) {
+				lookupHostFunc: func(ctx context.Context, ip, domain string, queryTimeout time.Duration) ([]string, error) {
 					if ip != "169.254.10.11" {
 						return []string{"1.2.3.4"}, nil
 					}
@@ -133,7 +134,7 @@ func TestDNSChecker_Run(t *testing.T) {
 			name:   "LocalDNS Timeout",
 			client: k8sfake.NewClientset(),
 			mockResolver: &fakeResolver{
-				lookupHostFunc: func(ctx context.Context, ip, domain string) ([]string, error) {
+				lookupHostFunc: func(ctx context.Context, ip, domain string, queryTimeout time.Duration) ([]string, error) {
 					if ip != "169.254.10.11" {
 						return []string{"1.2.3.4"}, nil
 					}
@@ -159,15 +160,45 @@ func TestDNSChecker_Run(t *testing.T) {
 				config: &config.DNSConfig{
 					Domain:        "example.com",
 					CheckLocalDNS: tc.checkLocalDNS,
+					QueryTimeout:  2 * time.Second,
 				},
-				kubeClient: tc.client,
-				resolver:   tc.mockResolver,
+				kubeClient:   tc.client,
+				resolver:     tc.mockResolver,
+				queryTimeout: 2 * time.Second,
 			}
 
 			res, err := chk.Run(context.Background())
 			tc.validateRes(g, res, err)
 		})
 	}
+}
+
+func TestDNSChecker_QueryTimeout(t *testing.T) {
+	t.Parallel()
+	g := NewWithT(t)
+
+	var capturedTimeout time.Duration
+	mockResolver := &fakeResolver{
+		lookupHostFunc: func(ctx context.Context, ip, domain string, queryTimeout time.Duration) ([]string, error) {
+			capturedTimeout = queryTimeout
+			return []string{"1.2.3.4"}, nil
+		},
+	}
+
+	chk := &DNSChecker{
+		name: "dns-test",
+		config: &config.DNSConfig{
+			Domain:       "example.com",
+			QueryTimeout: 5 * time.Second,
+		},
+		kubeClient:   k8sfake.NewClientset(makeCoreDNSService("10.0.0.10"), makeCoreDNSEndpointSlice([]string{"10.0.0.11"})),
+		resolver:     mockResolver,
+		queryTimeout: 5 * time.Second,
+	}
+
+	_, err := chk.Run(context.Background())
+	g.Expect(err).ToNot(HaveOccurred())
+	g.Expect(capturedTimeout).To(Equal(5 * time.Second))
 }
 
 // --- helpers ---

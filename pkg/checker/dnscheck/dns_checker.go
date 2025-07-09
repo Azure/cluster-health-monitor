@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/miekg/dns"
 	discoveryv1 "k8s.io/api/discovery/v1"
@@ -31,10 +32,11 @@ const (
 
 // DNSChecker implements the Checker interface for DNS checks.
 type DNSChecker struct {
-	name       string
-	config     *config.DNSConfig
-	kubeClient kubernetes.Interface
-	resolver   resolver
+	name         string
+	config       *config.DNSConfig
+	kubeClient   kubernetes.Interface
+	resolver     resolver
+	queryTimeout time.Duration
 }
 
 // BuildDNSChecker creates a new DNSChecker instance.
@@ -53,15 +55,22 @@ func BuildDNSChecker(config *config.CheckerConfig, kubeClient kubernetes.Interfa
 		}
 	}
 
+	queryTimeout := config.DNSConfig.QueryTimeout
+	if queryTimeout <= 0 {
+		queryTimeout = 2 * time.Second // Default timeout
+	}
+
 	chk := &DNSChecker{
-		name:       config.Name,
-		config:     config.DNSConfig,
-		kubeClient: kubeClient,
-		resolver:   &defaultResolver{},
+		name:         config.Name,
+		config:       config.DNSConfig,
+		kubeClient:   kubeClient,
+		resolver:     &defaultResolver{},
+		queryTimeout: queryTimeout,
 	}
 	klog.InfoS("Built DNSChecker",
 		"name", chk.name,
 		"config", chk.config,
+		"queryTimeout", chk.queryTimeout,
 	)
 	return chk, nil
 }
@@ -95,7 +104,7 @@ func (c DNSChecker) checkCoreDNS(ctx context.Context) (*types.Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := c.resolver.lookupHost(ctx, svcIP, c.config.Domain); err != nil {
+	if _, err := c.resolver.lookupHost(ctx, svcIP, c.config.Domain, c.queryTimeout); err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
 			return types.Unhealthy(errCodeServiceTimeout, "CoreDNS service query timed out"), nil
 		}
@@ -112,7 +121,7 @@ func (c DNSChecker) checkCoreDNS(ctx context.Context) (*types.Result, error) {
 	}
 
 	for _, ip := range podIPs {
-		if _, err := c.resolver.lookupHost(ctx, ip, c.config.Domain); err != nil {
+		if _, err := c.resolver.lookupHost(ctx, ip, c.config.Domain, c.queryTimeout); err != nil {
 			if errors.Is(err, context.DeadlineExceeded) {
 				return types.Unhealthy(errCodePodTimeout, "CoreDNS pod query timed out"), nil
 			}
@@ -126,7 +135,7 @@ func (c DNSChecker) checkCoreDNS(ctx context.Context) (*types.Result, error) {
 // checkLocalDNS queries the LocalDNS server.
 // If the query succeeds, the check is considered healthy.
 func (c DNSChecker) checkLocalDNS(ctx context.Context) (*types.Result, error) {
-	if _, err := c.resolver.lookupHost(ctx, localDNSIP, c.config.Domain); err != nil {
+	if _, err := c.resolver.lookupHost(ctx, localDNSIP, c.config.Domain, c.queryTimeout); err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
 			return types.Unhealthy(errCodeLocalDNSTimeout, "LocalDNS query timed out"), nil
 		}

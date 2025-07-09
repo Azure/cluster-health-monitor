@@ -296,3 +296,71 @@ func TestAPIServerConfig_Validate(t *testing.T) {
 		})
 	}
 }
+
+func TestDNSConfig_Validate(t *testing.T) {
+	t.Parallel()
+	testCases := []struct {
+		name        string
+		dnsConfig   *DNSConfig
+		validateRes func(g *WithT, err error)
+	}{
+		{
+			name: "valid config",
+			dnsConfig: &DNSConfig{
+				Domain:       "example.com",
+				QueryTimeout: 2 * time.Second,
+			},
+			validateRes: func(g *WithT, err error) {
+				g.Expect(err).ToNot(HaveOccurred())
+			},
+		},
+		{
+			name: "valid config with default queryTimeout",
+			dnsConfig: &DNSConfig{
+				Domain: "example.com",
+			},
+			validateRes: func(g *WithT, err error) {
+				g.Expect(err).ToNot(HaveOccurred())
+			},
+		},
+		{
+			name:      "nil dns config",
+			dnsConfig: nil,
+			validateRes: func(g *WithT, err error) {
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(err.Error()).To(ContainSubstring("dnsConfig is required for DNSChecker"))
+			},
+		},
+		{
+			name: "missing domain",
+			dnsConfig: &DNSConfig{
+				QueryTimeout: 2 * time.Second,
+			},
+			validateRes: func(g *WithT, err error) {
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(err.Error()).To(ContainSubstring("domain is required for DNSChecker"))
+			},
+		},
+		{
+			name: "negative queryTimeout",
+			dnsConfig: &DNSConfig{
+				Domain:       "example.com",
+				QueryTimeout: -1 * time.Second,
+			},
+			validateRes: func(g *WithT, err error) {
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(err.Error()).To(ContainSubstring("queryTimeout must be greater than or equal to 0"))
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			g := NewWithT(t)
+
+			err := tc.dnsConfig.validate()
+			tc.validateRes(g, err)
+		})
+	}
+}
