@@ -1,0 +1,61 @@
+name: Trivy Vulnerability Scan
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  create:
+    # Publish semver tags as releases.
+    tags: [ 'v*.*.*' ]
+  workflow_dispatch:
+
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: ghcr.io
+  CLUSTER_HEALTH_MONITOR_IMAGE_NAME: cluster-health-monitor
+
+jobs:
+  export-registry:
+    runs-on: ubuntu-latest
+    outputs:
+      registry: ${{ steps.export.outputs.registry }}
+    steps:
+      - id: export
+        run: |
+          # registry must be in lowercase
+          echo "registry=$(echo "${{ env.REGISTRY }}/${{ github.repository }}" | tr [:upper:] [:lower:])" >> $GITHUB_OUTPUT
+  build-and-scan:
+    needs: export-registry
+    runs-on: ubuntu-latest
+    env:
+      REGISTRY: ${{ needs.export-registry.outputs.registry }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Generate image version
+        run: echo "IMAGE_VERSION=$(git rev-parse --short=7 HEAD)" >> $GITHUB_ENV
+      - name: Build image locally for scanning
+        run: |
+          make docker-build-cluster-health-monitor
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+          CLUSTER_HEALTH_MONITOR_IMAGE_NAME: ${{ env.CLUSTER_HEALTH_MONITOR_IMAGE_NAME }}
+          CLUSTER_HEALTH_MONITOR_IMAGE_VERSION: ${{ env.IMAGE_VERSION }}
+          OUTPUT_TYPE: type=docker
+      - name: Run Trivy vulnerability scanner for ${{ env.REGISTRY }}/${{ env.CLUSTER_HEALTH_MONITOR_IMAGE_NAME }}:${{ env.IMAGE_VERSION }}
+        uses: aquasecurity/trivy-action@0.32.0
+        with:
+          scan-type: 'image'
+          image-ref: ${{ env.REGISTRY }}/${{ env.CLUSTER_HEALTH_MONITOR_IMAGE_NAME }}:${{ env.IMAGE_VERSION }}
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          scanners: 'vuln,secret'
+          severity: 'CRITICAL,HIGH,MEDIUM,LOW,UNKNOWN'
+          timeout: '5m0s'
+        env:
+          TRIVY_DB_REPOSITORY: mcr.microsoft.com/mirror/ghcr/aquasecurity/trivy-db
