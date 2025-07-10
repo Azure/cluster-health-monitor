@@ -51,7 +51,7 @@ func (c *CheckerConfig) validate() error {
 
 	switch c.Type {
 	case CheckTypeDNS:
-		if err := c.DNSConfig.validate(); err != nil {
+		if err := c.DNSConfig.validate(c.Timeout); err != nil {
 			errs = append(errs, fmt.Errorf("checker config %q DNSConfig validation failed: %w", c.Name, err))
 		}
 	case CheckTypePodStartup:
@@ -69,17 +69,25 @@ func (c *CheckerConfig) validate() error {
 }
 
 // validate validates the DNSConfig.
-func (c *DNSConfig) validate() error {
+func (c *DNSConfig) validate(checkerConfigTimeout time.Duration) error {
 	if c == nil {
 		return fmt.Errorf("dnsConfig is required for DNSChecker")
 	}
+	
+	var errs []error
 	if c.Domain == "" {
-		return fmt.Errorf("domain is required for DNSChecker")
+		errs = append(errs, fmt.Errorf("domain is required for DNSChecker"))
 	}
 	if c.QueryTimeout <= 0 {
-		return fmt.Errorf("queryTimeout must be greater than 0")
+		errs = append(errs, fmt.Errorf("queryTimeout must be greater than 0"))
 	}
-	return nil
+	
+	if checkerConfigTimeout <= c.QueryTimeout {
+		errs = append(errs, fmt.Errorf("checker timeout must be greater than DNS query timeout: checker timeout='%s', DNS query timeout='%s'",
+			checkerConfigTimeout, c.QueryTimeout))
+	}
+	
+	return errors.Join(errs...)
 }
 
 func (c *PodStartupConfig) validate(checkerConfigTimeout time.Duration) error {

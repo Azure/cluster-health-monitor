@@ -13,7 +13,7 @@ checkers:
   - name: dns1
     type: dns
     interval: 10s
-    timeout: 2s
+    timeout: 5s
     dnsConfig:
       domain: example.com
       queryTimeout: 2s

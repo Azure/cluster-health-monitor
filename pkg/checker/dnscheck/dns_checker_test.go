@@ -162,9 +162,8 @@ func TestDNSChecker_Run(t *testing.T) {
 					CheckLocalDNS: tc.checkLocalDNS,
 					QueryTimeout:  2 * time.Second,
 				},
-				kubeClient:   tc.client,
-				resolver:     tc.mockResolver,
-				queryTimeout: 2 * time.Second,
+				kubeClient: tc.client,
+				resolver:   tc.mockResolver,
 			}
 
 			res, err := chk.Run(context.Background())
@@ -191,9 +190,8 @@ func TestDNSChecker_QueryTimeout(t *testing.T) {
 			Domain:       "example.com",
 			QueryTimeout: 5 * time.Second,
 		},
-		kubeClient:   k8sfake.NewClientset(makeCoreDNSService("10.0.0.10"), makeCoreDNSEndpointSlice([]string{"10.0.0.11"})),
-		resolver:     mockResolver,
-		queryTimeout: 5 * time.Second,
+		kubeClient: k8sfake.NewClientset(makeCoreDNSService("10.0.0.10"), makeCoreDNSEndpointSlice([]string{"10.0.0.11"})),
+		resolver:   mockResolver,
 	}
 
 	_, err := chk.Run(context.Background())
