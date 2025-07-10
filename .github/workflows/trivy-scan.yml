@@ -3,10 +3,9 @@ on:
   push:
     branches:
       - main
+    tags:
+      - 'v*.*.*'
   pull_request:
-  create:
-    # Publish semver tags as releases.
-    tags: [ 'v*.*.*' ]
   workflow_dispatch:
 
 
@@ -36,20 +35,24 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
       - name: Generate image version
-        run: echo "IMAGE_VERSION=$(git rev-parse --short=7 HEAD)" >> $GITHUB_ENV
+        id: version
+        run: |
+          IMAGE_VERSION=$(git rev-parse --short=7 HEAD)
+          echo "IMAGE_VERSION=$IMAGE_VERSION" >> $GITHUB_ENV
+          echo "version=$IMAGE_VERSION" >> $GITHUB_OUTPUT
       - name: Build image locally for scanning
         run: |
           make docker-build-cluster-health-monitor
         env:
           REGISTRY: ${{ env.REGISTRY }}
           CLUSTER_HEALTH_MONITOR_IMAGE_NAME: ${{ env.CLUSTER_HEALTH_MONITOR_IMAGE_NAME }}
-          CLUSTER_HEALTH_MONITOR_IMAGE_VERSION: ${{ env.IMAGE_VERSION }}
+          CLUSTER_HEALTH_MONITOR_IMAGE_VERSION: ${{ steps.version.outputs.version }}
           OUTPUT_TYPE: type=docker
-      - name: Run Trivy vulnerability scanner for ${{ env.REGISTRY }}/${{ env.CLUSTER_HEALTH_MONITOR_IMAGE_NAME }}:${{ env.IMAGE_VERSION }}
+      - name: Run Trivy vulnerability scanner for ${{ env.REGISTRY }}/${{ env.CLUSTER_HEALTH_MONITOR_IMAGE_NAME }}:${{ steps.version.outputs.version }}
         uses: aquasecurity/trivy-action@0.32.0
         with:
           scan-type: 'image'
-          image-ref: ${{ env.REGISTRY }}/${{ env.CLUSTER_HEALTH_MONITOR_IMAGE_NAME }}:${{ env.IMAGE_VERSION }}
+          image-ref: ${{ env.REGISTRY }}/${{ env.CLUSTER_HEALTH_MONITOR_IMAGE_NAME }}:${{ steps.version.outputs.version }}
           format: 'table'
           exit-code: '1'
           ignore-unfixed: true
