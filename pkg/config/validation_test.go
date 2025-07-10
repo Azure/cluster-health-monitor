@@ -16,7 +16,7 @@ func TestConfigValidate_Valid(t *testing.T) {
 				Type:      CheckTypeDNS,
 				Interval:  10 * time.Second,
 				Timeout:   2 * time.Second,
-				DNSConfig: &DNSConfig{Domain: "example.com"},
+				DNSConfig: &DNSConfig{Domain: "example.com", QueryTimeout: 2 * time.Second},
 			},
 			{
 				Name:     "podStartup1",
@@ -48,8 +48,8 @@ func TestConfigValidate_DuplicateNames(t *testing.T) {
 	g := NewWithT(t)
 	cfg := &Config{
 		Checkers: []CheckerConfig{
-			{Name: "foo", Type: CheckTypeDNS, Interval: 1, Timeout: 1, DNSConfig: &DNSConfig{Domain: "a"}},
-			{Name: "foo", Type: CheckTypeDNS, Interval: 1, Timeout: 1, DNSConfig: &DNSConfig{Domain: "b"}},
+			{Name: "foo", Type: CheckTypeDNS, Interval: 1, Timeout: 1, DNSConfig: &DNSConfig{Domain: "a", QueryTimeout: 1 * time.Second}},
+			{Name: "foo", Type: CheckTypeDNS, Interval: 1, Timeout: 1, DNSConfig: &DNSConfig{Domain: "b", QueryTimeout: 1 * time.Second}},
 		},
 	}
 	err := cfg.validate()
@@ -320,7 +320,8 @@ func TestDNSConfig_Validate(t *testing.T) {
 				Domain: "example.com",
 			},
 			validateRes: func(g *WithT, err error) {
-				g.Expect(err).ToNot(HaveOccurred())
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(err.Error()).To(ContainSubstring("queryTimeout must be greater than 0"))
 			},
 		},
 		{
@@ -342,6 +343,17 @@ func TestDNSConfig_Validate(t *testing.T) {
 			},
 		},
 		{
+			name: "zero queryTimeout",
+			dnsConfig: &DNSConfig{
+				Domain:       "example.com",
+				QueryTimeout: 0,
+			},
+			validateRes: func(g *WithT, err error) {
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(err.Error()).To(ContainSubstring("queryTimeout must be greater than 0"))
+			},
+		},
+		{
 			name: "negative queryTimeout",
 			dnsConfig: &DNSConfig{
 				Domain:       "example.com",
@@ -349,7 +361,7 @@ func TestDNSConfig_Validate(t *testing.T) {
 			},
 			validateRes: func(g *WithT, err error) {
 				g.Expect(err).To(HaveOccurred())
-				g.Expect(err.Error()).To(ContainSubstring("queryTimeout must be greater than or equal to 0"))
+				g.Expect(err.Error()).To(ContainSubstring("queryTimeout must be greater than 0"))
 			},
 		},
 	}

@@ -16,6 +16,7 @@ checkers:
     timeout: 2s
     dnsConfig:
       domain: example.com
+      queryTimeout: 2s
 `)
 	cfg, err := parseFromYAML(yamlData)
 	g.Expect(err).ToNot(HaveOccurred())
