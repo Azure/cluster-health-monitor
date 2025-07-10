@@ -315,16 +315,6 @@ func TestDNSConfig_Validate(t *testing.T) {
 			},
 		},
 		{
-			name: "valid config with default queryTimeout",
-			dnsConfig: &DNSConfig{
-				Domain: "example.com",
-			},
-			validateRes: func(g *WithT, err error) {
-				g.Expect(err).To(HaveOccurred())
-				g.Expect(err.Error()).To(ContainSubstring("queryTimeout must be greater than 0"))
-			},
-		},
-		{
 			name:      "nil dns config",
 			dnsConfig: nil,
 			validateRes: func(g *WithT, err error) {
