@@ -172,7 +172,7 @@ func TestDNSChecker_Run(t *testing.T) {
 	}
 }
 
-func TestDNSChecker_QueryTimeout(t *testing.T) {
+func TestDNSChecker_QueryTimeoutUsedByResolver(t *testing.T) {
 	t.Parallel()
 	g := NewWithT(t)
 
