@@ -7,21 +7,21 @@ metadata:
 data:
   config.yaml: |+
     checkers:
-      - name: "internal-coredns-checker"
+      - name: "internal-coredns"
         type: "dns"
         interval: "10s"
         timeout: "5s"
         dnsConfig:
           domain: "kubernetes.default.svc.cluster.local"
           queryTimeout: "2s"
-      - name: "external-coredns-checker"
+      - name: "external-coredns"
         type: "dns"
         interval: "10s"
         timeout: "5s"
         dnsConfig:
           domain: "mcr.microsoft.com"
           queryTimeout: "2s"
-      - name: "internal-localdns-checker"
+      - name: "internal-localdns"
         type: "dns"
         interval: "10s"
         timeout: "5s"
@@ -29,7 +29,7 @@ data:
           domain: "kubernetes.default.svc.cluster.local"
           checkLocalDNS: true
           queryTimeout: "2s"
-      - name: "external-localdns-checker"
+      - name: "external-localdns"
         type: "dns"
         interval: "10s"
         timeout: "5s"
@@ -37,7 +37,7 @@ data:
           domain: "mcr.microsoft.com"
           checkLocalDNS: true
           queryTimeout: "2s"
-      - name: "pod-startup-checker"
+      - name: "pod-startup"
         type: "podStartup"
         interval: "1m"
         timeout: "30s"
