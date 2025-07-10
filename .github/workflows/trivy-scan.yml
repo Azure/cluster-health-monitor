@@ -2,8 +2,10 @@ name: Trivy Vulnerability Scan
 
 on:
   push:
-    branches: [main]
-    tags: ['v*.*.*']
+    branches: 
+      - main
+    tags: 
+      - 'v*.*.*'
   pull_request:
   workflow_dispatch:
 
