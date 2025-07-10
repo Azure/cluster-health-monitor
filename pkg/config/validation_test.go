@@ -298,28 +298,23 @@ func TestAPIServerConfig_Validate(t *testing.T) {
 }
 
 func TestDNSConfig_Validate(t *testing.T) {
-	t.Parallel()
-	testCases := []struct {
-		name                 string
-		dnsConfig            *DNSConfig
-		checkerConfigTimeout time.Duration
-		validateRes          func(g *WithT, err error)
+	tests := []struct {
+		name         string
+		mutateConfig func(cfg *CheckerConfig) *CheckerConfig
+		validateRes  func(g *WithT, err error)
 	}{
 		{
 			name: "valid config",
-			dnsConfig: &DNSConfig{
-				Domain:       "example.com",
-				QueryTimeout: 2 * time.Second,
-			},
-			checkerConfigTimeout: 5 * time.Second,
 			validateRes: func(g *WithT, err error) {
 				g.Expect(err).ToNot(HaveOccurred())
 			},
 		},
 		{
-			name:                 "nil dns config",
-			dnsConfig:            nil,
-			checkerConfigTimeout: 5 * time.Second,
+			name: "nil dns config",
+			mutateConfig: func(cfg *CheckerConfig) *CheckerConfig {
+				cfg.DNSConfig = nil
+				return cfg
+			},
 			validateRes: func(g *WithT, err error) {
 				g.Expect(err).To(HaveOccurred())
 				g.Expect(err.Error()).To(ContainSubstring("dnsConfig is required for DNSChecker"))
@@ -327,10 +322,10 @@ func TestDNSConfig_Validate(t *testing.T) {
 		},
 		{
 			name: "missing domain",
-			dnsConfig: &DNSConfig{
-				QueryTimeout: 2 * time.Second,
+			mutateConfig: func(cfg *CheckerConfig) *CheckerConfig {
+				cfg.DNSConfig.Domain = ""
+				return cfg
 			},
-			checkerConfigTimeout: 5 * time.Second,
 			validateRes: func(g *WithT, err error) {
 				g.Expect(err).To(HaveOccurred())
 				g.Expect(err.Error()).To(ContainSubstring("domain is required for DNSChecker"))
@@ -338,11 +333,10 @@ func TestDNSConfig_Validate(t *testing.T) {
 		},
 		{
 			name: "zero queryTimeout",
-			dnsConfig: &DNSConfig{
-				Domain:       "example.com",
-				QueryTimeout: 0,
+			mutateConfig: func(cfg *CheckerConfig) *CheckerConfig {
+				cfg.DNSConfig.QueryTimeout = 0
+				return cfg
 			},
-			checkerConfigTimeout: 5 * time.Second,
 			validateRes: func(g *WithT, err error) {
 				g.Expect(err).To(HaveOccurred())
 				g.Expect(err.Error()).To(ContainSubstring("queryTimeout must be greater than 0"))
@@ -350,11 +344,10 @@ func TestDNSConfig_Validate(t *testing.T) {
 		},
 		{
 			name: "negative queryTimeout",
-			dnsConfig: &DNSConfig{
-				Domain:       "example.com",
-				QueryTimeout: -1 * time.Second,
+			mutateConfig: func(cfg *CheckerConfig) *CheckerConfig {
+				cfg.DNSConfig.QueryTimeout = -1 * time.Second
+				return cfg
 			},
-			checkerConfigTimeout: 5 * time.Second,
 			validateRes: func(g *WithT, err error) {
 				g.Expect(err).To(HaveOccurred())
 				g.Expect(err.Error()).To(ContainSubstring("queryTimeout must be greater than 0"))
@@ -362,11 +355,11 @@ func TestDNSConfig_Validate(t *testing.T) {
 		},
 		{
 			name: "checker timeout less than query timeout",
-			dnsConfig: &DNSConfig{
-				Domain:       "example.com",
-				QueryTimeout: 5 * time.Second,
+			mutateConfig: func(cfg *CheckerConfig) *CheckerConfig {
+				cfg.Timeout = 3 * time.Second
+				cfg.DNSConfig.QueryTimeout = 5 * time.Second
+				return cfg
 			},
-			checkerConfigTimeout: 3 * time.Second,
 			validateRes: func(g *WithT, err error) {
 				g.Expect(err).To(HaveOccurred())
 				g.Expect(err.Error()).To(ContainSubstring("checker timeout must be greater than DNS query timeout"))
@@ -374,11 +367,11 @@ func TestDNSConfig_Validate(t *testing.T) {
 		},
 		{
 			name: "checker timeout equal to query timeout",
-			dnsConfig: &DNSConfig{
-				Domain:       "example.com",
-				QueryTimeout: 5 * time.Second,
+			mutateConfig: func(cfg *CheckerConfig) *CheckerConfig {
+				cfg.Timeout = 5 * time.Second
+				cfg.DNSConfig.QueryTimeout = 5 * time.Second
+				return cfg
 			},
-			checkerConfigTimeout: 5 * time.Second,
 			validateRes: func(g *WithT, err error) {
 				g.Expect(err).To(HaveOccurred())
 				g.Expect(err.Error()).To(ContainSubstring("checker timeout must be greater than DNS query timeout"))
@@ -386,13 +379,28 @@ func TestDNSConfig_Validate(t *testing.T) {
 		},
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			g := NewWithT(t)
 
-			err := tc.dnsConfig.validate(tc.checkerConfigTimeout)
-			tc.validateRes(g, err)
+			chkCfg := &CheckerConfig{
+				Name:     "test-checker",
+				Type:     CheckTypeDNS,
+				Timeout:  10 * time.Second,
+				Interval: 30 * time.Second,
+				DNSConfig: &DNSConfig{
+					Domain:       "example.com",
+					QueryTimeout: 2 * time.Second,
+				},
+			}
+
+			if tt.mutateConfig != nil {
+				chkCfg = tt.mutateConfig(chkCfg)
+			}
+
+			err := chkCfg.validate()
+			tt.validateRes(g, err)
 		})
 	}
 }
