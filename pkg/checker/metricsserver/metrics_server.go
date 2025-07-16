@@ -14,11 +14,6 @@ import (
 	"github.com/Azure/cluster-health-monitor/pkg/types"
 )
 
-const (
-	metricsServerNamespace      = "kube-system"
-	metricsServerDeploymentName = "metrics-server"
-)
-
 // MetricsServerChecker implements the Checker interface for metrics server checks.
 type MetricsServerChecker struct {
 	name       string
