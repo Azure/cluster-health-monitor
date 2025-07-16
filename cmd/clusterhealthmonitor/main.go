@@ -11,6 +11,7 @@ import (
 	"github.com/Azure/cluster-health-monitor/pkg/checker"
 	"github.com/Azure/cluster-health-monitor/pkg/checker/apiserver"
 	"github.com/Azure/cluster-health-monitor/pkg/checker/dnscheck"
+	"github.com/Azure/cluster-health-monitor/pkg/checker/metricsserver"
 	"github.com/Azure/cluster-health-monitor/pkg/checker/podstartup"
 	"github.com/Azure/cluster-health-monitor/pkg/config"
 	"github.com/Azure/cluster-health-monitor/pkg/metrics"
@@ -120,4 +121,5 @@ func registerCheckers() {
 	dnscheck.Register()
 	podstartup.Register()
 	apiserver.Register()
+	metricsserver.Register()
 }

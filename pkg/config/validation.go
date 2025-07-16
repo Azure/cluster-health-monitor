@@ -62,6 +62,10 @@ func (c *CheckerConfig) validate() error {
 		if err := c.APIServerConfig.validate(c.Timeout); err != nil {
 			errs = append(errs, fmt.Errorf("checker config %q APIServerConfig validation failed: %w", c.Name, err))
 		}
+	case CheckTypeMetricsServer:
+		if err := c.MetricsServerConfig.validate(); err != nil {
+			errs = append(errs, fmt.Errorf("checker config %q MetricsServerConfig validation failed: %w", c.Name, err))
+		}
 	default:
 		errs = append(errs, fmt.Errorf("checker config %q has unsupported type: %s", c.Name, c.Type))
 	}
@@ -73,7 +77,7 @@ func (c *DNSConfig) validate(checkerConfigTimeout time.Duration) error {
 	if c == nil {
 		return fmt.Errorf("dnsConfig is required for DNSChecker")
 	}
-	
+
 	var errs []error
 	if c.Domain == "" {
 		errs = append(errs, fmt.Errorf("domain is required for DNSChecker"))
@@ -81,12 +85,12 @@ func (c *DNSConfig) validate(checkerConfigTimeout time.Duration) error {
 	if c.QueryTimeout <= 0 {
 		errs = append(errs, fmt.Errorf("queryTimeout must be greater than 0"))
 	}
-	
+
 	if checkerConfigTimeout <= c.QueryTimeout {
 		errs = append(errs, fmt.Errorf("checker timeout must be greater than DNS query timeout: checker timeout='%s', DNS query timeout='%s'",
 			checkerConfigTimeout, c.QueryTimeout))
 	}
-	
+
 	return errors.Join(errs...)
 }
 
@@ -143,4 +147,12 @@ func (c *APIServerConfig) validate(checkerConfigTimeout time.Duration) error {
 	}
 
 	return errors.Join(errs...)
+}
+
+func (c *MetricsServerConfig) validate() error {
+	if c == nil {
+		return fmt.Errorf("metrics server checker config is required")
+	}
+
+	return nil
 }

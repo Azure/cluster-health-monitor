@@ -5,9 +5,10 @@ import "time"
 type CheckerType string
 
 const (
-	CheckTypeDNS        CheckerType = "dns"
-	CheckTypePodStartup CheckerType = "podStartup"
-	CheckTypeAPIServer  CheckerType = "apiServer"
+	CheckTypeDNS           CheckerType = "dns"
+	CheckTypePodStartup    CheckerType = "podStartup"
+	CheckTypeAPIServer     CheckerType = "apiServer"
+	CheckTypeMetricsServer CheckerType = "metricsServer"
 )
 
 // Config represents the configuration for the health checkers.
@@ -51,6 +52,10 @@ type CheckerConfig struct {
 	// Optional.
 	// The configuration for the API server checker, this field is required if Type is CheckTypeAPIServer.
 	APIServerConfig *APIServerConfig `yaml:"apiServerConfig,omitempty"`
+
+	// Optional.
+	// The configuration for the metrics server checker, this field is required if Type is CheckTypeMetricsServer.
+	MetricsServerConfig *MetricsServerConfig `yaml:"metricsServerConfig,omitempty"`
 }
 
 type DNSConfig struct {
@@ -105,4 +110,7 @@ type APIServerConfig struct {
 	// will not create any more objects until some of the existing ones are deleted. Instead, it will fail the run with an error.
 	// Reaching this limit effectively disables the checker.
 	MaxObjects int `yaml:"maxObjects,omitempty"`
+}
+
+type MetricsServerConfig struct {
 }

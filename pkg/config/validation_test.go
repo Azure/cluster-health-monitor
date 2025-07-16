@@ -416,3 +416,51 @@ func TestDNSConfig_Validate(t *testing.T) {
 		})
 	}
 }
+
+func TestMetricsServerConfig_Validate(t *testing.T) {
+	tests := []struct {
+		name         string
+		mutateConfig func(cfg *CheckerConfig) *CheckerConfig
+		validateRes  func(g *WithT, err error)
+	}{
+		{
+			name: "valid config",
+			validateRes: func(g *WithT, err error) {
+				g.Expect(err).ToNot(HaveOccurred())
+			},
+		},
+		{
+			name: "nil metrics server config",
+			mutateConfig: func(cfg *CheckerConfig) *CheckerConfig {
+				cfg.MetricsServerConfig = nil
+				return cfg
+			},
+			validateRes: func(g *WithT, err error) {
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(err.Error()).To(ContainSubstring("metrics server checker config is required"))
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			g := NewWithT(t)
+
+			chkCfg := &CheckerConfig{
+				Name:                "test",
+				Type:                CheckTypeMetricsServer,
+				Timeout:             10 * time.Second,
+				Interval:            30 * time.Second,
+				MetricsServerConfig: &MetricsServerConfig{},
+			}
+
+			if tt.mutateConfig != nil {
+				chkCfg = tt.mutateConfig(chkCfg)
+			}
+
+			err := chkCfg.validate()
+			tt.validateRes(g, err)
+		})
+	}
+}
