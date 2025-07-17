@@ -21,7 +21,6 @@ import (
 // MetricsServerChecker implements the Checker interface for metrics server checks.
 type MetricsServerChecker struct {
 	name          string
-	config        *config.MetricsServerConfig
 	timeout       time.Duration
 	kubeClient    kubernetes.Interface
 	metricsClient metricsclientset.Interface
@@ -47,14 +46,12 @@ func BuildMetricsServerChecker(config *config.CheckerConfig, kubeClient kubernet
 
 	chk := &MetricsServerChecker{
 		name:          config.Name,
-		config:        config.MetricsServerConfig,
 		timeout:       config.Timeout,
 		kubeClient:    kubeClient,
 		metricsClient: metricsClient,
 	}
 	klog.InfoS("Built MetricsServerChecker",
 		"name", chk.name,
-		"config", chk.config,
 		"timeout", chk.timeout.String(),
 	)
 	return chk, nil

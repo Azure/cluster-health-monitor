@@ -429,17 +429,6 @@ func TestMetricsServerConfig_Validate(t *testing.T) {
 				g.Expect(err).ToNot(HaveOccurred())
 			},
 		},
-		{
-			name: "nil metrics server config",
-			mutateConfig: func(cfg *CheckerConfig) *CheckerConfig {
-				cfg.MetricsServerConfig = nil
-				return cfg
-			},
-			validateRes: func(g *WithT, err error) {
-				g.Expect(err).To(HaveOccurred())
-				g.Expect(err.Error()).To(ContainSubstring("metrics server checker config is required"))
-			},
-		},
 	}
 
 	for _, tt := range tests {
@@ -448,11 +437,10 @@ func TestMetricsServerConfig_Validate(t *testing.T) {
 			g := NewWithT(t)
 
 			chkCfg := &CheckerConfig{
-				Name:                "test",
-				Type:                CheckTypeMetricsServer,
-				Timeout:             10 * time.Second,
-				Interval:            30 * time.Second,
-				MetricsServerConfig: &MetricsServerConfig{},
+				Name:     "test",
+				Type:     CheckTypeMetricsServer,
+				Timeout:  10 * time.Second,
+				Interval: 30 * time.Second,
 			}
 
 			if tt.mutateConfig != nil {

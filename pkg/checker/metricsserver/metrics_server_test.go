@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Azure/cluster-health-monitor/pkg/config"
 	"github.com/Azure/cluster-health-monitor/pkg/types"
 	. "github.com/onsi/gomega"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -79,7 +78,6 @@ func TestMetricsServerChecker_Run(t *testing.T) {
 
 			checker := &MetricsServerChecker{
 				name:          "test-metrics-server",
-				config:        &config.MetricsServerConfig{},
 				timeout:       1 * time.Second,
 				kubeClient:    k8sfake.NewSimpleClientset(),
 				metricsClient: tc.client,
