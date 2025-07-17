@@ -71,11 +71,7 @@ func (c *MetricsServerChecker) Type() config.CheckerType {
 // Run executes the metrics server check.
 // It attempts to call the metrics server API to verify it's available and responding.
 func (c *MetricsServerChecker) Run(ctx context.Context) (*types.Result, error) {
-	// Create a context with timeout for the metrics server API call
-	callCtx, cancel := context.WithTimeout(ctx, c.timeout)
-	defer cancel()
-
-	err := c.checkMetricsServerAPI(callCtx)
+	err := c.checkMetricsServerAPI(ctx)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
 			return types.Unhealthy(errCodeMetricsServerTimeout, "timed out while calling metrics server API"), nil
