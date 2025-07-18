@@ -55,3 +55,7 @@
           mutateTimeout: "1s"
           readTimeout: "1s"
           maxObjects: 10
+      - name: "test-metrics-server"
+        type: "metricsServer"
+        interval: "5s"
+        timeout: "5s"

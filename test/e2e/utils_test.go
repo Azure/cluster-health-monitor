@@ -385,3 +385,24 @@ func addLabelsToAllNodes(clientset kubernetes.Interface, labels map[string]strin
 		return nil
 	}, "30s", "2s").ShouldNot(HaveOccurred(), "Failed to add labels to nodes")
 }
+
+// getMetricsServerDeployment gets the metrics server deployment from the kube-system namespace.
+func getMetricsServerDeployment(clientset *kubernetes.Clientset) (*appsv1.Deployment, error) {
+	return clientset.AppsV1().Deployments("kube-system").Get(context.TODO(), "metrics-server", metav1.GetOptions{})
+}
+
+// updateMetricsServerDeploymentReplicas updates the replica count of the metrics server deployment.
+func updateMetricsServerDeploymentReplicas(clientset *kubernetes.Clientset, replicas int32) error {
+	deployment, err := getMetricsServerDeployment(clientset)
+	if err != nil {
+		return fmt.Errorf("failed to get metrics server deployment: %w", err)
+	}
+
+	deployment.Spec.Replicas = &replicas
+	_, err = clientset.AppsV1().Deployments("kube-system").Update(context.TODO(), deployment, metav1.UpdateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to update metrics server deployment replicas: %w", err)
+	}
+
+	return nil
+}

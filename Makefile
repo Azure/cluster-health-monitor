@@ -114,7 +114,15 @@ kind-disable-localdns-mock: kind-export-kubeconfig
 	kubectl delete -f ${GIT_ROOT}/manifests/overlays/test/dnsmasq.yaml
 
 .PHONY: kind-setup-e2e
-kind-setup-e2e: kind-create-cluster kind-load-image
+kind-setup-e2e: kind-create-cluster kind-deploy-metrics-server kind-load-image
+
+.PHONY: kind-deploy-metrics-server
+kind-deploy-metrics-server: kind-export-kubeconfig
+	@echo "Deploying metrics-server to Kind cluster"
+	kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+	kubectl patch deployment metrics-server -n kube-system --type='json' -p='[{"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value": "--kubelet-insecure-tls"}]'
+	@echo "Waiting for metrics-server to be ready"
+	kubectl wait --for=condition=available --timeout=120s deployment/metrics-server -n kube-system
 
 .PHONY: kind-test-local
 kind-test-local: kind-setup-e2e kind-apply-manifests
