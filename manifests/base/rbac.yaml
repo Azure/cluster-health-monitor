@@ -12,13 +12,13 @@ metadata:
   name: cluster-health-monitor-kubedns-reader
   namespace: kube-system
 rules:
-  - apiGroups: [""]
-    resources: ["services"]
-    resourceNames: ["kube-dns"]
-    verbs: ["get"]
-  - apiGroups: ["discovery.k8s.io"]
-    resources: ["endpointslices"]
-    verbs: ["list"]
+  - apiGroups: [ "" ]
+    resources: [ "services" ]
+    resourceNames: [ "kube-dns" ]
+    verbs: [ "get" ]
+  - apiGroups: [ "discovery.k8s.io" ]
+    resources: [ "endpointslices" ]
+    verbs: [ "list" ]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -41,12 +41,12 @@ metadata:
   name: cluster-health-monitor-synth-pod-manager
   namespace: kube-system
 rules:
-  - apiGroups: [""]
-    resources: ["pods"]
-    verbs: ["get", "create", "list", "delete"]
-  - apiGroups: [""]
-    resources: ["events"]
-    verbs: ["get", "list"]
+  - apiGroups: [ "" ]
+    resources: [ "pods" ]
+    verbs: [ "get", "create", "list", "delete" ]
+  - apiGroups: [ "" ]
+    resources: [ "events" ]
+    verbs: [ "get", "list" ]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -69,9 +69,9 @@ metadata:
   name: cluster-health-monitor-configmap-manager
   namespace: kube-system
 rules:
-  - apiGroups: [""]
-    resources: ["configmaps"]
-    verbs: ["get", "create", "list", "delete"]
+  - apiGroups: [ "" ]
+    resources: [ "configmaps" ]
+    verbs: [ "get", "create", "list", "delete" ]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -85,4 +85,27 @@ subjects:
 roleRef:
   kind: Role
   name: cluster-health-monitor-configmap-manager
+  apiGroup: rbac.authorization.k8s.io
+---
+# ClusterRole for accessing metrics server API
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cluster-health-monitor-metrics-server-reader
+rules:
+  - apiGroups: [ "metrics.k8s.io" ]
+    resources: [ "nodes", "pods" ]
+    verbs: [ "get", "list" ]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: cluster-health-monitor-metrics-server-reader
+subjects:
+  - kind: ServiceAccount
+    name: cluster-health-monitor
+    namespace: kube-system
+roleRef:
+  kind: ClusterRole
+  name: cluster-health-monitor-metrics-server-reader
   apiGroup: rbac.authorization.k8s.io
