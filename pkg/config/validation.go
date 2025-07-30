@@ -62,6 +62,8 @@ func (c *CheckerConfig) validate() error {
 		if err := c.APIServerConfig.validate(c.Timeout); err != nil {
 			errs = append(errs, fmt.Errorf("checker config %q APIServerConfig validation failed: %w", c.Name, err))
 		}
+	case CheckTypeAzurePolicy:
+		// There is no specific validation for AzurePolicyConfig as it does not have additional fields.
 	case CheckTypeMetricsServer:
 		// There is no specific validation for MetricsServerConfig as it does not have additional fields.
 	default:

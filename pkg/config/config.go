@@ -11,6 +11,7 @@ const (
 	CheckTypePodStartup    CheckerType = "podStartup"
 	CheckTypeAPIServer     CheckerType = "apiServer"
 	CheckTypeMetricsServer CheckerType = "metricsServer"
+	CheckTypeAzurePolicy   CheckerType = "azurePolicy"
 )
 
 // Config represents the configuration for the health checkers.
