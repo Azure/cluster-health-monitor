@@ -51,31 +51,3 @@ func TestAzurePolicyChecker_Run(t *testing.T) {
 		})
 	}
 }
-
-func TestAzurePolicyChecker_containsAzurePolicyWarning(t *testing.T) {
-	tests := []struct {
-		name     string
-		err      error
-		expected bool
-	}{
-		{
-			name:     "TODO: implement tests for Azure Policy warning detection",
-			err:      nil,
-			expected: false,
-		},
-	}
-
-	checker := &AzurePolicyChecker{}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			g := NewWithT(t)
-
-			if tt.err != nil {
-				result := checker.containsAzurePolicyWarning(tt.err)
-				g.Expect(result).To(Equal(tt.expected))
-			}
-		})
-	}
-}
