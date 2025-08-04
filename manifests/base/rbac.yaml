@@ -87,6 +87,34 @@ roleRef:
   name: cluster-health-monitor-configmap-manager
   apiGroup: rbac.authorization.k8s.io
 ---
+# Role for managing pods in default namespace. At time of writing, this is used by the azure policy checker. This role exists because the
+# default configuration of azure-policy is not evaluated in the kube-system namespace. However, pod creation requests are rejected by the 
+# API server before azure policy can be evaluated if this permission is not present. All modifying requests in the default namespace should
+# be dry-run only.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: cluster-health-monitor-default-pod-manager
+  namespace: default
+rules:
+  - apiGroups: [ "" ]
+    resources: [ "pods" ]
+    verbs: [ "get", "create", "list", "delete" ]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cluster-health-monitor-default-pod-manager
+  namespace: default
+subjects:
+  - kind: ServiceAccount
+    name: cluster-health-monitor
+    namespace: kube-system
+roleRef:
+  kind: Role
+  name: cluster-health-monitor-default-pod-manager
+  apiGroup: rbac.authorization.k8s.io
+---
 # ClusterRole for accessing metrics server API
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
