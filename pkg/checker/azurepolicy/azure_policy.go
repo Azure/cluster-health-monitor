@@ -3,6 +3,7 @@ package azurepolicy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -17,6 +18,8 @@ import (
 	"github.com/Azure/cluster-health-monitor/pkg/config"
 	"github.com/Azure/cluster-health-monitor/pkg/types"
 )
+
+const syntheticPodImage = "mcr.microsoft.com/azurelinux/base/nginx:1.25.4-4-azl3.0.20250702"
 
 // AzurePolicyChecker implements the Checker interface for Azure Policy checks.
 type AzurePolicyChecker struct {
@@ -73,7 +76,8 @@ func (c AzurePolicyChecker) Type() config.CheckerType {
 }
 
 // Run executes the Azure Policy check by doing a dry run creation a test pod that violates default AKS Deployment Safeguards policies.
-// If azure policy is running, we are expecting a warning in the response.
+// If azure policy is running, we are expecting a warning in the response. This warning is expected to be present regardless of if the
+// policy is in "Audit" or "Deny" mode and regardless of whether the request returns an error.
 func (c AzurePolicyChecker) Run(ctx context.Context) (*types.Result, error) {
 	// Create client with warning capture
 	warningTransport := &warningCapturingTransport{
@@ -83,10 +87,9 @@ func (c AzurePolicyChecker) Run(ctx context.Context) (*types.Result, error) {
 
 	client, err := c.createWarningCaptureClient(warningTransport)
 	if err != nil {
-		return types.Unhealthy(errCodeAzurePolicyUnexpected, fmt.Sprintf("failed to create client: %v", err)), nil
+		return nil, fmt.Errorf("failed to create Kubernetes client: %w", err)
 	}
 
-	// Create context with timeout
 	timeoutCtx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
@@ -96,17 +99,10 @@ func (c AzurePolicyChecker) Run(ctx context.Context) (*types.Result, error) {
 		DryRun: []string{metav1.DryRunAll}, // TODOcarlosalv unit test ensure dry runs only
 	})
 
-	// TODO carlosalv
-	// a) test azure policy with enforce mode set to strict. Do we still see warning or just error?
-	// b) if necessary, modify to be resilient across both cases
-	// c) if there is an error but warning is present, do we want to return success (I think so) but like is this scenario possible?
-
-	// TODO carlosalv
-	// a) figure out if we want a timeout specific error code (or just generic fail)
-	// b) maybe remove the timeout specific check/logic
-	// Check for timeout specifically to provide better error categorization
-	if err != nil && timeoutCtx.Err() == context.DeadlineExceeded {
-		return types.Unhealthy(errCodeAzurePolicyDryRunTimeout, "dry-run creation timed out"), nil
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return types.Unhealthy(errCodeAzurePolicyTimeout, "timed out pod creation request"), nil
+		}
 	}
 
 	if c.hasAzurePolicyWarnings(warningTransport.warnings) {
@@ -119,17 +115,19 @@ func (c AzurePolicyChecker) Run(ctx context.Context) (*types.Result, error) {
 func (c AzurePolicyChecker) createTestPod() *corev1.Pod {
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      fmt.Sprintf("%s-test-pod-%d", c.name, time.Now().Unix()),
-			Namespace: "default", // TODOcarlosalv unit test should verify default namespace
+			Name: fmt.Sprintf("%s-test-pod-%d", c.name, time.Now().Unix()),
+			// The default configuration of azure-policy is not evaluated in the "kube-system" namespace. However, pod creation requests are
+			// rejected by the API server before azure policy can be evaluated if attempting to perform an operation without the necessary
+			// permission. There is a role to create pods in the "default" namespace which is why we are using it.
+			Namespace: "default",
 		},
 		Spec: corev1.PodSpec{
 			RestartPolicy: corev1.RestartPolicyNever,
 			Containers: []corev1.Container{
 				{
-					// TODO carlosalv Might as well use the hardcoded nginx pod from podStartup?
-					Name:  "pause-pod",
-					Image: "mcr.microsoft.com/oss/kubernetes/pause:3.6", // TODO carlosalv unit test should verify mcr source for image
-					// Intentionally no liveness or readiness probes to trigger Azure Policy warnings // TODO carlosalv unit test for lack of probes
+					Name:  "synthetic",
+					Image: syntheticPodImage,
+					// Intentionally no liveness or readiness probes to trigger Azure Policy warnings
 				},
 			},
 		},
@@ -148,17 +146,18 @@ func (c AzurePolicyChecker) createWarningCaptureClient(warningTransport *warning
 }
 
 // hasAzurePolicyWarnings checks if any of the warnings are from Azure Policy
+// TODO carlosalv: Do we want to change matchers or use regex?
 func (c AzurePolicyChecker) hasAzurePolicyWarnings(warnings []string) bool {
-	// TODO carlosalv. Verify the warning message and ensure these are correct/comprehensive enough
-	azurePolicyPatterns := []string{
+	// Sample warning:
+	// Warning: [azurepolicy-k8sazurev2containerenforceprob-74321cbd58a88a12c510] Container <pause> in your Pod <pause> has no <livenessProbe>. Required probes: ["readinessProbe", "livenessProbe"]
+	azurePolicyMatchers := []string{
 		"azurepolicy-k8sazurev2containerenforceprob",
 		"has no <livenessProbe>",
 		"has no <readinessProbe>",
-		"Required probes:",
 	}
 
 	for _, warning := range warnings {
-		for _, pattern := range azurePolicyPatterns {
+		for _, pattern := range azurePolicyMatchers {
 			if strings.Contains(warning, pattern) {
 				return true
 			}

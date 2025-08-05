@@ -51,3 +51,29 @@ func TestAzurePolicyChecker_Run(t *testing.T) {
 		})
 	}
 }
+
+func TestAzurePolicyChecker_createTestPod(t *testing.T) {
+	g := NewWithT(t)
+
+	checker := &AzurePolicyChecker{
+		name:    "azure-policy",
+		timeout: 5 * time.Second,
+	}
+
+	pod := checker.createTestPod()
+	g.Expect(pod).ToNot(BeNil())
+
+	// Has expected prefix
+	g.Expect(pod.ObjectMeta.Name).To(HavePrefix("azure-policy-test-pod-"))
+
+	// Namespace should be default
+	g.Expect(pod.ObjectMeta.Namespace).To(Equal("default"))
+
+	// Pod does not have readiness or liveness probes so it can trigger policy violations
+	g.Expect(pod.Spec.Containers).To(HaveLen(1))
+	g.Expect(pod.Spec.Containers[0].ReadinessProbe).To(BeNil())
+	g.Expect(pod.Spec.Containers[0].LivenessProbe).To(BeNil())
+
+	// Image should be sourced from MCR
+	g.Expect(pod.Spec.Containers[0].Image).To(HavePrefix("mcr.microsoft.com/"))
+}
