@@ -170,7 +170,6 @@ func (c AzurePolicyChecker) createTestPod() *corev1.Pod {
 }
 
 // hasAzurePolicyViolation checks if a string contains Azure Policy violation patterns
-// This is a common helper used by both warning and error checking functions
 func (c AzurePolicyChecker) hasAzurePolicyViolation(message string) bool {
 	// Sample warning:
 	// Warning: [azurepolicy-k8sazurev2containerenforceprob-74321cbd58a88a12c510] Container <pause> in your Pod <pause> has no <livenessProbe>. Required probes: ["readinessProbe", "livenessProbe"]
