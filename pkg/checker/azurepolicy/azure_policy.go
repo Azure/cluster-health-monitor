@@ -19,13 +19,9 @@ import (
 	"github.com/Azure/cluster-health-monitor/pkg/types"
 )
 
-const syntheticPodImage = "mcr.microsoft.com/azurelinux/base/nginx:1.25.4-4-azl3.0.20250702"
-
-// AzurePolicyChecker implements the Checker interface for Azure Policy checks.
-type AzurePolicyChecker struct {
-	name       string
-	timeout    time.Duration
-	restConfig *rest.Config // used to create a Kubernetes client with warning capture transport.
+// WarningCapture provides access to captured warning headers
+type WarningCapture interface {
+	GetWarnings() []string
 }
 
 // warningCapturingTransport wraps an HTTP transport to capture warning headers
@@ -46,6 +42,47 @@ func (w *warningCapturingTransport) RoundTrip(req *http.Request) (*http.Response
 	return resp, err
 }
 
+// GetWarnings returns all captured warning headers
+func (w *warningCapturingTransport) GetWarnings() []string {
+	return w.warnings
+}
+
+// ClientWithWarningCaptureFactory creates Kubernetes clients with warning capture capability
+type ClientWithWarningCaptureFactory interface {
+	CreateClientWithWarningCapture(restConfig *rest.Config) (kubernetes.Interface, WarningCapture, error)
+}
+
+// defaultClientFactory implements ClientWithWarningCaptureFactory
+type defaultClientFactory struct{}
+
+func (f *defaultClientFactory) CreateClientWithWarningCapture(restConfig *rest.Config) (kubernetes.Interface, WarningCapture, error) {
+	warningTransport := &warningCapturingTransport{
+		base:     http.DefaultTransport,
+		warnings: []string{},
+	}
+
+	config := rest.CopyConfig(restConfig)
+	config.WrapTransport = func(rt http.RoundTripper) http.RoundTripper {
+		warningTransport.base = rt
+		return warningTransport
+	}
+
+	client, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return client, warningTransport, nil
+}
+
+// AzurePolicyChecker implements the Checker interface for Azure Policy checks.
+type AzurePolicyChecker struct {
+	name          string
+	timeout       time.Duration
+	restConfig    *rest.Config // used to create a Kubernetes client with warning capture transport.
+	clientFactory ClientWithWarningCaptureFactory
+}
+
 func Register() {
 	checker.RegisterChecker(config.CheckTypeAzurePolicy, buildAzurePolicyChecker)
 }
@@ -58,9 +95,10 @@ func buildAzurePolicyChecker(config *config.CheckerConfig, kubeClient kubernetes
 	}
 
 	return &AzurePolicyChecker{
-		name:       config.Name,
-		timeout:    config.Timeout,
-		restConfig: restConfig,
+		name:          config.Name,
+		timeout:       config.Timeout,
+		restConfig:    restConfig,
+		clientFactory: &defaultClientFactory{},
 	}, nil
 }
 
@@ -80,12 +118,7 @@ func (c AzurePolicyChecker) Type() config.CheckerType {
 // both an error and warning headers in the response.
 func (c AzurePolicyChecker) Run(ctx context.Context) (*types.Result, error) {
 	// Create client with warning capture
-	warningTransport := &warningCapturingTransport{
-		base:     http.DefaultTransport,
-		warnings: []string{},
-	}
-
-	client, err := c.createWarningCaptureClient(warningTransport)
+	client, warningCapture, err := c.clientFactory.CreateClientWithWarningCapture(c.restConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kubernetes client: %w", err)
 	}
@@ -93,11 +126,8 @@ func (c AzurePolicyChecker) Run(ctx context.Context) (*types.Result, error) {
 	timeoutCtx, cancel := context.WithTimeout(ctx, c.timeout)
 	defer cancel()
 
-	// Perform dry-run creation to trigger Azure Policy validation
-	testPod := c.createTestPod()
-	_, err = client.CoreV1().Pods("default").Create(timeoutCtx, testPod, metav1.CreateOptions{
-		DryRun: []string{metav1.DryRunAll}, // TODOcarlosalv unit test ensure dry runs only
-	})
+	// Perform dry-run creation to trigger Azure Policy validation. We do not actually want to create the pod, just validate the policy.
+	_, err = client.CoreV1().Pods("default").Create(timeoutCtx, c.createTestPod(), metav1.CreateOptions{DryRun: []string{metav1.DryRunAll}})
 
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
@@ -108,7 +138,7 @@ func (c AzurePolicyChecker) Run(ctx context.Context) (*types.Result, error) {
 		}
 	}
 
-	for _, warning := range warningTransport.warnings {
+	for _, warning := range warningCapture.GetWarnings() {
 		if c.hasAzurePolicyViolation(warning) {
 			return types.Healthy(), nil
 		}
@@ -131,23 +161,12 @@ func (c AzurePolicyChecker) createTestPod() *corev1.Pod {
 			Containers: []corev1.Container{
 				{
 					Name:  "synthetic",
-					Image: syntheticPodImage,
+					Image: "mcr.microsoft.com/azurelinux/base/nginx:1.25.4-4-azl3.0.20250702",
 					// Intentionally no liveness or readiness probes to trigger Azure Policy warnings
 				},
 			},
 		},
 	}
-}
-
-// createWarningCaptureClient creates a Kubernetes client with warning capture transport
-func (c AzurePolicyChecker) createWarningCaptureClient(warningTransport *warningCapturingTransport) (kubernetes.Interface, error) {
-	restConfig := rest.CopyConfig(c.restConfig)
-	restConfig.WrapTransport = func(rt http.RoundTripper) http.RoundTripper {
-		warningTransport.base = rt
-		return warningTransport
-	}
-
-	return kubernetes.NewForConfig(restConfig)
 }
 
 // hasAzurePolicyViolation checks if a string contains Azure Policy violation patterns

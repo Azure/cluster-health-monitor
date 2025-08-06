@@ -2,32 +2,156 @@ package azurepolicy
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/Azure/cluster-health-monitor/pkg/types"
 	. "github.com/onsi/gomega"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/rest"
+	k8stesting "k8s.io/client-go/testing"
 )
+
+// mockWarningCapture implements WarningCapture for testing
+type mockWarningCapture struct {
+	warnings []string
+}
+
+func (m *mockWarningCapture) GetWarnings() []string {
+	return m.warnings
+}
+
+// mockClientFactory implements ClientFactory for testing
+type mockClientFactory struct {
+	client         kubernetes.Interface
+	warningCapture WarningCapture
+	err            error
+}
+
+func (m *mockClientFactory) CreateClientWithWarningCapture(restConfig *rest.Config) (kubernetes.Interface, WarningCapture, error) {
+	if m.err != nil {
+		return nil, nil, m.err
+	}
+	return m.client, m.warningCapture, nil
+}
 
 func TestAzurePolicyChecker_Run(t *testing.T) {
 	checkerName := "test-azure-policy-checker"
 
 	tests := []struct {
 		name           string
-		client         *k8sfake.Clientset
+		setupMocks     func() (*mockClientFactory, *k8sfake.Clientset, *mockWarningCapture)
 		validateResult func(g *WithT, result *types.Result, err error)
 	}{
 		{
-			name: "TODO: implement test cases for Azure Policy checker",
-			client: func() *k8sfake.Clientset {
-				return k8sfake.NewSimpleClientset()
-			}(),
+			name: "healthy result - Azure Policy violation detected in error message",
+			setupMocks: func() (*mockClientFactory, *k8sfake.Clientset, *mockWarningCapture) {
+				client := k8sfake.NewClientset()
+				client.PrependReactor("create", "pods", func(action k8stesting.Action) (bool, runtime.Object, error) {
+					// Verify that the pod creation is a dry run
+					createAction := action.(k8stesting.CreateActionImpl)
+					if createAction.GetCreateOptions().DryRun[0] != metav1.DryRunAll {
+						return true, nil, errors.New("Expected dry run but got actual pod creation")
+					}
+					return true, nil, errors.New("Error from server (Forbidden): admission webhook \"validation.gatekeeper.sh\" denied the request: [azurepolicy-k8sazurev2containerenforceprob-39c2336da6b53f16b908] Container <synthetic> in your Pod <test-pod> has no <livenessProbe>")
+				})
+				warningCapture := &mockWarningCapture{warnings: []string{}}
+				factory := &mockClientFactory{client: client, warningCapture: warningCapture}
+				return factory, client, warningCapture
+			},
 			validateResult: func(g *WithT, result *types.Result, err error) {
-				// TODO: Implement proper test validation
+				g.Expect(err).ToNot(HaveOccurred())
+				g.Expect(result).ToNot(BeNil())
+				g.Expect(result.Status).To(Equal(types.StatusHealthy))
+			},
+		},
+		{
+			name: "healthy result - Azure Policy violation detected in warning",
+			setupMocks: func() (*mockClientFactory, *k8sfake.Clientset, *mockWarningCapture) {
+				client := k8sfake.NewClientset()
+				client.PrependReactor("create", "pods", func(action k8stesting.Action) (bool, runtime.Object, error) {
+					return true, nil, nil
+				})
+				warningCapture := &mockWarningCapture{
+					warnings: []string{"Warning: [azurepolicy-k8sazurev2containerenforceprob-74321cbd58a88a12c510] Container <synthetic> in your Pod <test-pod> has no <readinessProbe>. Required probes: [\"readinessProbe\", \"livenessProbe\"]"},
+				}
+				factory := &mockClientFactory{client: client, warningCapture: warningCapture}
+				return factory, client, warningCapture
+			},
+			validateResult: func(g *WithT, result *types.Result, err error) {
+				g.Expect(err).ToNot(HaveOccurred())
+				g.Expect(result).ToNot(BeNil())
+				g.Expect(result.Status).To(Equal(types.StatusHealthy))
+			},
+		},
+		{
+			name: "unhealthy result - error and no Azure Policy violation detected",
+			setupMocks: func() (*mockClientFactory, *k8sfake.Clientset, *mockWarningCapture) {
+				client := k8sfake.NewClientset()
+				client.PrependReactor("create", "pods", func(action k8stesting.Action) (bool, runtime.Object, error) {
+					return true, nil, errors.New("unrelated error")
+				})
+				warningCapture := &mockWarningCapture{warnings: []string{}}
+				factory := &mockClientFactory{client: client, warningCapture: warningCapture}
+				return factory, client, warningCapture
+			},
+			validateResult: func(g *WithT, result *types.Result, err error) {
 				g.Expect(err).ToNot(HaveOccurred())
 				g.Expect(result).ToNot(BeNil())
 				g.Expect(result.Status).To(Equal(types.StatusUnhealthy))
+				g.Expect(result.Detail.Code).To(Equal(errCodeAzurePolicyNoViolation))
+			},
+		},
+		{
+			name: "unhealthy result - no error or warnings and no Azure Policy violation detected",
+			setupMocks: func() (*mockClientFactory, *k8sfake.Clientset, *mockWarningCapture) {
+				client := k8sfake.NewClientset()
+				client.PrependReactor("create", "pods", func(action k8stesting.Action) (bool, runtime.Object, error) {
+					return true, nil, nil
+				})
+				warningCapture := &mockWarningCapture{warnings: []string{}}
+				factory := &mockClientFactory{client: client, warningCapture: warningCapture}
+				return factory, client, warningCapture
+			},
+			validateResult: func(g *WithT, result *types.Result, err error) {
+				g.Expect(err).ToNot(HaveOccurred())
+				g.Expect(result).ToNot(BeNil())
+				g.Expect(result.Status).To(Equal(types.StatusUnhealthy))
+				g.Expect(result.Detail.Code).To(Equal(errCodeAzurePolicyNoViolation))
+			},
+		},
+		{
+			name: "unhealthy result - pod creation times out",
+			setupMocks: func() (*mockClientFactory, *k8sfake.Clientset, *mockWarningCapture) {
+				client := k8sfake.NewClientset()
+				client.PrependReactor("create", "pods", func(action k8stesting.Action) (bool, runtime.Object, error) {
+					return true, nil, context.DeadlineExceeded
+				})
+				warningCapture := &mockWarningCapture{warnings: []string{}}
+				factory := &mockClientFactory{client: client, warningCapture: warningCapture}
+				return factory, client, warningCapture
+			},
+			validateResult: func(g *WithT, result *types.Result, err error) {
+				g.Expect(err).ToNot(HaveOccurred())
+				g.Expect(result).ToNot(BeNil())
+				g.Expect(result.Status).To(Equal(types.StatusUnhealthy))
+				g.Expect(result.Detail.Code).To(Equal(errCodeAzurePolicyTimeout))
+			},
+		},
+		{
+			name: "error creating client with warning capture",
+			setupMocks: func() (*mockClientFactory, *k8sfake.Clientset, *mockWarningCapture) {
+				factory := &mockClientFactory{err: errors.New("failed to create client")}
+				return factory, nil, nil
+			},
+			validateResult: func(g *WithT, result *types.Result, err error) {
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(err.Error()).To(ContainSubstring("failed to create Kubernetes client"))
+				g.Expect(result).To(BeNil())
 			},
 		},
 	}
@@ -37,9 +161,13 @@ func TestAzurePolicyChecker_Run(t *testing.T) {
 			t.Parallel()
 			g := NewWithT(t)
 
+			factory, _, _ := tt.setupMocks()
+
 			azurePolicyChecker := &AzurePolicyChecker{
-				name:    checkerName,
-				timeout: 5 * time.Second,
+				name:          checkerName,
+				timeout:       1 * time.Second,
+				restConfig:    &rest.Config{},
+				clientFactory: factory,
 			}
 
 			ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
@@ -68,7 +196,7 @@ func TestAzurePolicyChecker_createTestPod(t *testing.T) {
 	// Namespace should be default
 	g.Expect(pod.ObjectMeta.Namespace).To(Equal("default"))
 
-	// Pod does not have readiness or liveness probes so it can trigger policy violations
+	// Pod does not have readiness or liveness probes so that it triggers policy violations
 	g.Expect(pod.Spec.Containers).To(HaveLen(1))
 	g.Expect(pod.Spec.Containers[0].ReadinessProbe).To(BeNil())
 	g.Expect(pod.Spec.Containers[0].LivenessProbe).To(BeNil())
