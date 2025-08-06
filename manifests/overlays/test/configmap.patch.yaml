@@ -59,3 +59,7 @@
         type: "metricsServer"
         interval: "5s"
         timeout: "5s"
+      - name: "test-azure-policy"
+        type: "azurePolicy"
+        interval: "10s"
+        timeout: "5s"
