@@ -67,5 +67,3 @@ jobs:
         platforms: linux/amd64,linux/arm64
         push: true
         tags: ${{ env.REGISTRY }}/${{ env.CLUSTER_HEALTH_MONITOR_IMAGE_NAME}}:${{ env.CLUSTER_HEALTH_MONITOR_IMAGE_VERSION }}
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
