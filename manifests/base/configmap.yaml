@@ -63,5 +63,5 @@ data:
         timeout: "10s"
       - name: "azure-policy"
         type: "azurePolicy"
-        interval: "10s"
-        timeout: "5s"
+        interval: "1m"
+        timeout: "10s"
