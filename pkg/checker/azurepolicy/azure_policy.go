@@ -25,8 +25,7 @@ const syntheticPodImage = "mcr.microsoft.com/azurelinux/base/nginx:1.25.4-4-azl3
 type AzurePolicyChecker struct {
 	name       string
 	timeout    time.Duration
-	kubeClient kubernetes.Interface
-	restConfig *rest.Config
+	restConfig *rest.Config // used to create a Kubernetes client with warning capture transport.
 }
 
 // warningCapturingTransport wraps an HTTP transport to capture warning headers
@@ -41,7 +40,6 @@ func (w *warningCapturingTransport) RoundTrip(req *http.Request) (*http.Response
 		return resp, err
 	}
 
-	// Capture warning headers from the response
 	warnings := resp.Header.Values("Warning")
 	w.warnings = append(w.warnings, warnings...)
 
@@ -62,7 +60,6 @@ func buildAzurePolicyChecker(config *config.CheckerConfig, kubeClient kubernetes
 	return &AzurePolicyChecker{
 		name:       config.Name,
 		timeout:    config.Timeout,
-		kubeClient: kubeClient,
 		restConfig: restConfig,
 	}, nil
 }
@@ -76,8 +73,11 @@ func (c AzurePolicyChecker) Type() config.CheckerType {
 }
 
 // Run executes the Azure Policy check by doing a dry run creation a test pod that violates default AKS Deployment Safeguards policies.
-// If azure policy is running, we are expecting a warning in the response. This warning is expected to be present regardless of if the
-// policy is in "Audit" or "Deny" mode and regardless of whether the request returns an error.
+// Currently, it is specifically trying to violate the "Ensure cluster containers have readiness or liveness probes configured" policy.
+// If azure policy is running, we are expecting a response with warning headers or an error indicating the policy violations. The headers
+// are mainly expected to be present when the policy enforcement is set to "Audit". The errors are mainly expected to be present when the
+// policy enforcement is set to "Deny". That said, if a policy has recently had its enforcement mode changed, it is possible to receive
+// both an error and warning headers in the response.
 func (c AzurePolicyChecker) Run(ctx context.Context) (*types.Result, error) {
 	// Create client with warning capture
 	warningTransport := &warningCapturingTransport{
@@ -103,12 +103,17 @@ func (c AzurePolicyChecker) Run(ctx context.Context) (*types.Result, error) {
 		if errors.Is(err, context.DeadlineExceeded) {
 			return types.Unhealthy(errCodeAzurePolicyTimeout, "timed out pod creation request"), nil
 		}
+		if c.hasAzurePolicyViolation(err.Error()) {
+			return types.Healthy(), nil
+		}
 	}
 
-	if c.hasAzurePolicyWarnings(warningTransport.warnings) {
-		return types.Healthy(), nil
+	for _, warning := range warningTransport.warnings {
+		if c.hasAzurePolicyViolation(warning) {
+			return types.Healthy(), nil
+		}
 	}
-	return types.Unhealthy(errCodeAzurePolicyNoWarning, "no Azure Policy warnings detected"), nil
+	return types.Unhealthy(errCodeAzurePolicyNoViolation, "no Azure Policy violations detected"), nil
 }
 
 // createTestPod creates a test pod without probes to trigger Azure Policy warnings
@@ -145,24 +150,24 @@ func (c AzurePolicyChecker) createWarningCaptureClient(warningTransport *warning
 	return kubernetes.NewForConfig(restConfig)
 }
 
-// hasAzurePolicyWarnings checks if any of the warnings are from Azure Policy
-// TODO carlosalv: Do we want to change matchers or use regex?
-func (c AzurePolicyChecker) hasAzurePolicyWarnings(warnings []string) bool {
+// hasAzurePolicyViolation checks if a string contains Azure Policy violation patterns
+// This is a common helper used by both warning and error checking functions
+func (c AzurePolicyChecker) hasAzurePolicyViolation(message string) bool {
 	// Sample warning:
 	// Warning: [azurepolicy-k8sazurev2containerenforceprob-74321cbd58a88a12c510] Container <pause> in your Pod <pause> has no <livenessProbe>. Required probes: ["readinessProbe", "livenessProbe"]
+	//
+	// Sample error:
+	// Error from server (Forbidden): admission webhook "validation.gatekeeper.sh" denied the request: [azurepolicy-k8sazurev2containerenforceprob-39c2336da6b53f16b908] Container <pause> in your Pod <pause> has no <livenessProbe>. Required probes: ["readinessProbe", "livenessProbe"]
 	azurePolicyMatchers := []string{
 		"azurepolicy-k8sazurev2containerenforceprob",
 		"has no <livenessProbe>",
 		"has no <readinessProbe>",
 	}
 
-	for _, warning := range warnings {
-		for _, pattern := range azurePolicyMatchers {
-			if strings.Contains(warning, pattern) {
-				return true
-			}
+	for _, matcher := range azurePolicyMatchers {
+		if strings.Contains(message, matcher) {
+			return true
 		}
 	}
-
 	return false
 }

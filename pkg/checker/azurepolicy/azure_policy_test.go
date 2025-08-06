@@ -38,9 +38,8 @@ func TestAzurePolicyChecker_Run(t *testing.T) {
 			g := NewWithT(t)
 
 			azurePolicyChecker := &AzurePolicyChecker{
-				name:       checkerName,
-				timeout:    5 * time.Second,
-				kubeClient: tt.client,
+				name:    checkerName,
+				timeout: 5 * time.Second,
 			}
 
 			ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
@@ -76,4 +75,51 @@ func TestAzurePolicyChecker_createTestPod(t *testing.T) {
 
 	// Image should be sourced from MCR
 	g.Expect(pod.Spec.Containers[0].Image).To(HavePrefix("mcr.microsoft.com/"))
+}
+
+func TestAzurePolicyChecker_hasAzurePolicyViolation(t *testing.T) {
+	checker := &AzurePolicyChecker{}
+
+	tests := []struct {
+		name        string
+		message     string
+		validateRes func(g *WithT, result bool)
+	}{
+		{
+			name:    "Azure Policy violation - realistic warning",
+			message: "Warning: [azurepolicy-k8sazurev2containerenforceprob-74321cbd58a88a12c510] Container <synthetic> in your Pod <test-pod> has no <livenessProbe>. Required probes: [\"readinessProbe\", \"livenessProbe\"]",
+			validateRes: func(g *WithT, result bool) {
+				g.Expect(result).To(BeTrue())
+			},
+		},
+		{
+			name:    "Azure Policy violation - realistic error",
+			message: "Error from server (Forbidden): admission webhook \"validation.gatekeeper.sh\" denied the request: [azurepolicy-k8sazurev2containerenforceprob-39c2336da6b53f16b908] Container <synthetic> in your Pod <test-pod> has no <livenessProbe>",
+			validateRes: func(g *WithT, result bool) {
+				g.Expect(result).To(BeTrue())
+			},
+		},
+		{
+			name:    "empty message",
+			message: "",
+			validateRes: func(g *WithT, result bool) {
+				g.Expect(result).To(BeFalse())
+			},
+		},
+		{
+			name:    "unrelated message",
+			message: "some unrelated message",
+			validateRes: func(g *WithT, result bool) {
+				g.Expect(result).To(BeFalse())
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+			result := checker.hasAzurePolicyViolation(tt.message)
+			tt.validateRes(g, result)
+		})
+	}
 }
