@@ -47,13 +47,25 @@ jobs:
     - uses: actions/checkout@v4
       with:
         ref: ${{ needs.prepare-variables.outputs.release_tag }}
+    
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@v3
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+      with:
+        driver-opts: image=mcr.microsoft.com/oss/v2/moby/buildkit:v0.18.1
+    
     - name: 'Login the ACR'
       run: |
         az login --identity 
         az acr login -n ${{ secrets.AZURE_REGISTRY }}
+    
     - name: Build and publish cluster-health-monitor
-      run: |
-        make docker-build-cluster-health-monitor
-      env:
-        CLUSTER_HEALTH_MONITOR_IMAGE_VERSION: ${{ needs.prepare-variables.outputs.release_tag }}
-        REGISTRY: ${{ secrets.AZURE_REGISTRY }}/${{ env.REGISTRY_REPO}}
+      uses: docker/build-push-action@v6
+      with:
+        context: .
+        file: docker/cluster-health-monitor.Dockerfile
+        platforms: linux/amd64,linux/arm64
+        push: true
+        tags: ${{ secrets.AZURE_REGISTRY }}/${{ env.REGISTRY_REPO}}:${{ needs.prepare-variables.outputs.release_tag }}
