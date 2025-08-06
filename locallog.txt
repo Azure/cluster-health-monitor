@@ -1,0 +1,390 @@
+
+Cannot load builder desktop-linux: protocol not available
+img-builder*       docker-container                                        
+ \_ img-builder0    \_ unix:///var/run/docker.sock   inactive              
+docker buildx build \
+	--file docker/cluster-health-monitor.Dockerfile \
+	--output=type=registry \
+	--platform="linux/amd64,linux/arm64" \
+	--pull \
+	--no-cache \
+	--tag ghcr.io/cluster-health-monitor:6570ba7 .
+#0 building with "img-builder" instance using docker-container driver
+
+#1 [internal] booting buildkit
+#1 pulling image mcr.microsoft.com/oss/v2/moby/buildkit:v0.18.1
+#1 pulling image mcr.microsoft.com/oss/v2/moby/buildkit:v0.18.1 35.9s done
+#1 creating container buildx_buildkit_img-builder0
+#1 creating container buildx_buildkit_img-builder0 7.5s done
+#1 DONE 43.4s
+
+#2 [internal] load build definition from cluster-health-monitor.Dockerfile
+#2 transferring dockerfile:
+#2 transferring dockerfile: 1.16kB 0.1s done
+#2 DONE 0.3s
+
+#3 [linux/amd64 internal] load metadata for mcr.microsoft.com/oss/go/microsoft/golang:1.24.4
+#3 ...
+
+#4 [linux/amd64 internal] load metadata for mcr.microsoft.com/azurelinux/distroless/base:3.0
+#4 DONE 2.4s
+
+#3 [linux/amd64 internal] load metadata for mcr.microsoft.com/oss/go/microsoft/golang:1.24.4
+#3 DONE 2.5s
+
+#5 [linux/arm64 internal] load metadata for mcr.microsoft.com/azurelinux/distroless/base:3.0
+#5 DONE 2.5s
+
+#6 [internal] load .dockerignore
+#6 transferring context:
+#6 transferring context: 2B 0.0s done
+#6 DONE 0.1s
+
+#7 [linux/arm64 internal] load metadata for mcr.microsoft.com/oss/go/microsoft/golang:1.24.4
+#7 DONE 2.7s
+
+#8 [internal] load build context
+#8 DONE 0.0s
+
+#9 [linux/amd64 builder 1/8] FROM mcr.microsoft.com/oss/go/microsoft/golang:1.24.4@sha256:94b1688200aa17ae535f0435bfad4dc692498a942a0be2abf74434487b0ea4f4
+#9 resolve mcr.microsoft.com/oss/go/microsoft/golang:1.24.4@sha256:94b1688200aa17ae535f0435bfad4dc692498a942a0be2abf74434487b0ea4f4
+#9 ...
+
+#10 [linux/arm64 stage-1 1/3] FROM mcr.microsoft.com/azurelinux/distroless/base:3.0@sha256:6097c2b0d420745023cd0fc75303ae1cf290f5c0242a9219619ab9afdc44ccd0
+#10 resolve mcr.microsoft.com/azurelinux/distroless/base:3.0@sha256:6097c2b0d420745023cd0fc75303ae1cf290f5c0242a9219619ab9afdc44ccd0 0.2s done
+#10 DONE 0.4s
+
+#9 [linux/amd64 builder 1/8] FROM mcr.microsoft.com/oss/go/microsoft/golang:1.24.4@sha256:94b1688200aa17ae535f0435bfad4dc692498a942a0be2abf74434487b0ea4f4
+#9 resolve mcr.microsoft.com/oss/go/microsoft/golang:1.24.4@sha256:94b1688200aa17ae535f0435bfad4dc692498a942a0be2abf74434487b0ea4f4 0.3s done
+#9 ...
+
+#11 [linux/amd64 stage-1 1/3] FROM mcr.microsoft.com/azurelinux/distroless/base:3.0@sha256:6097c2b0d420745023cd0fc75303ae1cf290f5c0242a9219619ab9afdc44ccd0
+#11 resolve mcr.microsoft.com/azurelinux/distroless/base:3.0@sha256:6097c2b0d420745023cd0fc75303ae1cf290f5c0242a9219619ab9afdc44ccd0 0.2s done
+#11 DONE 0.5s
+
+#8 [internal] load build context
+#8 transferring context: 142.57kB 0.0s done
+#8 DONE 0.4s
+
+#11 [linux/amd64 stage-1 1/3] FROM mcr.microsoft.com/azurelinux/distroless/base:3.0@sha256:6097c2b0d420745023cd0fc75303ae1cf290f5c0242a9219619ab9afdc44ccd0
+#11 sha256:12680e915f0f575cf344f6f29589f35016efd6b2ce2a2c360d55ebe123654ba5 0B / 14.19MB 0.2s
+#11 ...
+
+#12 [linux/arm64 builder 1/8] FROM mcr.microsoft.com/oss/go/microsoft/golang:1.24.4@sha256:94b1688200aa17ae535f0435bfad4dc692498a942a0be2abf74434487b0ea4f4
+#12 resolve mcr.microsoft.com/oss/go/microsoft/golang:1.24.4@sha256:94b1688200aa17ae535f0435bfad4dc692498a942a0be2abf74434487b0ea4f4 0.2s done
+#12 DONE 0.9s
+
+#12 [linux/arm64 builder 1/8] FROM mcr.microsoft.com/oss/go/microsoft/golang:1.24.4@sha256:94b1688200aa17ae535f0435bfad4dc692498a942a0be2abf74434487b0ea4f4
+#12 sha256:4f4fb700ef54461cfa02571ae0db9a0dc1e0cdb5577484a6d75e68dc38e8acc1 32B / 32B 0.1s done
+#12 sha256:fa1216d676f645c84d6c9c0ec028dea5310d0ab3a317bf374d22b319c336eb7e 0B / 146B 0.2s
+#12 sha256:2df799bdf42f1780bc4214634a2fe419d8bcaa93e0611df14d4eaec71c2325fc 0B / 75.40MB 0.2s
+#12 sha256:fa1216d676f645c84d6c9c0ec028dea5310d0ab3a317bf374d22b319c336eb7e 146B / 146B 0.4s done
+#12 sha256:50576d4ab5594d253146038a2683a477a2aa2ee84c377048c55be9c0779f5171 0B / 86.64MB 0.2s
+#12 sha256:88f9cdd730a2c32e544c8de28ddcb3800bc8b143e551c286d3ccb2704444d69f 0B / 64.36MB 0.2s
+#12 sha256:2df799bdf42f1780bc4214634a2fe419d8bcaa93e0611df14d4eaec71c2325fc 4.19MB / 75.40MB 1.7s
+#12 sha256:50576d4ab5594d253146038a2683a477a2aa2ee84c377048c55be9c0779f5171 5.24MB / 86.64MB 1.7s
+#12 sha256:7be9cdb9167a8712f78cfe8da9fdf771134a84b1ee0fdab42bace39b895aaa9d 0B / 23.56MB 0.2s
+#12 sha256:2df799bdf42f1780bc4214634a2fe419d8bcaa93e0611df14d4eaec71c2325fc 8.39MB / 75.40MB 2.1s
+#12 sha256:50576d4ab5594d253146038a2683a477a2aa2ee84c377048c55be9c0779f5171 10.49MB / 86.64MB 3.0s
+#12 sha256:88f9cdd730a2c32e544c8de28ddcb3800bc8b143e551c286d3ccb2704444d69f 4.19MB / 64.36MB 2.1s
+#12 sha256:2df799bdf42f1780bc4214634a2fe419d8bcaa93e0611df14d4eaec71c2325fc 12.58MB / 75.40MB 3.5s
+#12 sha256:7be9cdb9167a8712f78cfe8da9fdf771134a84b1ee0fdab42bace39b895aaa9d 2.10MB / 23.56MB 2.0s
+#12 ...
+
+#10 [linux/arm64 stage-1 1/3] FROM mcr.microsoft.com/azurelinux/distroless/base:3.0@sha256:6097c2b0d420745023cd0fc75303ae1cf290f5c0242a9219619ab9afdc44ccd0
+#10 sha256:0073b1c4e17b1b3dfdf8d30597a2ea530d1881301a37dfe88b8616d229ed6a45 13.89MB / 13.89MB 1.8s done
+#10 extracting sha256:0073b1c4e17b1b3dfdf8d30597a2ea530d1881301a37dfe88b8616d229ed6a45 2.5s done
+#10 DONE 4.7s
+
+#12 [linux/arm64 builder 1/8] FROM mcr.microsoft.com/oss/go/microsoft/golang:1.24.4@sha256:94b1688200aa17ae535f0435bfad4dc692498a942a0be2abf74434487b0ea4f4
+#12 ...
+
+#11 [linux/amd64 stage-1 1/3] FROM mcr.microsoft.com/azurelinux/distroless/base:3.0@sha256:6097c2b0d420745023cd0fc75303ae1cf290f5c0242a9219619ab9afdc44ccd0
+#11 sha256:12680e915f0f575cf344f6f29589f35016efd6b2ce2a2c360d55ebe123654ba5 14.19MB / 14.19MB 2.1s done
+#11 extracting sha256:12680e915f0f575cf344f6f29589f35016efd6b2ce2a2c360d55ebe123654ba5 2.4s done
+#11 DONE 5.1s
+
+#12 [linux/arm64 builder 1/8] FROM mcr.microsoft.com/oss/go/microsoft/golang:1.24.4@sha256:94b1688200aa17ae535f0435bfad4dc692498a942a0be2abf74434487b0ea4f4
+#12 sha256:50576d4ab5594d253146038a2683a477a2aa2ee84c377048c55be9c0779f5171 15.73MB / 86.64MB 4.1s
+#12 sha256:88f9cdd730a2c32e544c8de28ddcb3800bc8b143e551c286d3ccb2704444d69f 8.39MB / 64.36MB 3.0s
+#12 sha256:7be9cdb9167a8712f78cfe8da9fdf771134a84b1ee0fdab42bace39b895aaa9d 4.19MB / 23.56MB 2.6s
+#12 sha256:7be9cdb9167a8712f78cfe8da9fdf771134a84b1ee0fdab42bace39b895aaa9d 6.29MB / 23.56MB 2.9s
+#12 sha256:88f9cdd730a2c32e544c8de28ddcb3800bc8b143e551c286d3ccb2704444d69f 12.58MB / 64.36MB 3.5s
+#12 sha256:50576d4ab5594d253146038a2683a477a2aa2ee84c377048c55be9c0779f5171 20.97MB / 86.64MB 4.8s
+#12 sha256:7be9cdb9167a8712f78cfe8da9fdf771134a84b1ee0fdab42bace39b895aaa9d 8.39MB / 23.56MB 3.3s
+#12 sha256:88f9cdd730a2c32e544c8de28ddcb3800bc8b143e551c286d3ccb2704444d69f 16.78MB / 64.36MB 4.1s
+#12 sha256:2df799bdf42f1780bc4214634a2fe419d8bcaa93e0611df14d4eaec71c2325fc 16.78MB / 75.40MB 5.4s
+#12 sha256:50576d4ab5594d253146038a2683a477a2aa2ee84c377048c55be9c0779f5171 26.21MB / 86.64MB 5.3s
+#12 sha256:7be9cdb9167a8712f78cfe8da9fdf771134a84b1ee0fdab42bace39b895aaa9d 10.49MB / 23.56MB 3.8s
+#12 sha256:7be9cdb9167a8712f78cfe8da9fdf771134a84b1ee0fdab42bace39b895aaa9d 12.58MB / 23.56MB 4.2s
+#12 sha256:88f9cdd730a2c32e544c8de28ddcb3800bc8b143e551c286d3ccb2704444d69f 20.97MB / 64.36MB 4.8s
+#12 sha256:50576d4ab5594d253146038a2683a477a2aa2ee84c377048c55be9c0779f5171 31.46MB / 86.64MB 6.0s
+#12 sha256:88f9cdd730a2c32e544c8de28ddcb3800bc8b143e551c286d3ccb2704444d69f 24.69MB / 64.36MB 5.3s
+#12 sha256:7be9cdb9167a8712f78cfe8da9fdf771134a84b1ee0fdab42bace39b895aaa9d 14.68MB / 23.56MB 4.8s
+#12 sha256:2df799bdf42f1780bc4214634a2fe419d8bcaa93e0611df14d4eaec71c2325fc 20.97MB / 75.40MB 6.6s
+#12 sha256:7be9cdb9167a8712f78cfe8da9fdf771134a84b1ee0fdab42bace39b895aaa9d 16.78MB / 23.56MB 5.3s
+#12 sha256:50576d4ab5594d253146038a2683a477a2aa2ee84c377048c55be9c0779f5171 37.75MB / 86.64MB 6.9s
+#12 sha256:88f9cdd730a2c32e544c8de28ddcb3800bc8b143e551c286d3ccb2704444d69f 28.31MB / 64.36MB 5.9s
+#12 sha256:7be9cdb9167a8712f78cfe8da9fdf771134a84b1ee0fdab42bace39b895aaa9d 18.87MB / 23.56MB 5.9s
+#12 sha256:2df799bdf42f1780bc4214634a2fe419d8bcaa93e0611df14d4eaec71c2325fc 25.17MB / 75.40MB 7.7s
+#12 sha256:88f9cdd730a2c32e544c8de28ddcb3800bc8b143e551c286d3ccb2704444d69f 32.51MB / 64.36MB 6.5s
+#12 sha256:50576d4ab5594d253146038a2683a477a2aa2ee84c377048c55be9c0779f5171 44.04MB / 86.64MB 7.7s
+#12 sha256:7be9cdb9167a8712f78cfe8da9fdf771134a84b1ee0fdab42bace39b895aaa9d 20.97MB / 23.56MB 6.3s
+#12 sha256:88f9cdd730a2c32e544c8de28ddcb3800bc8b143e551c286d3ccb2704444d69f 36.70MB / 64.36MB 6.9s
+#12 sha256:50576d4ab5594d253146038a2683a477a2aa2ee84c377048c55be9c0779f5171 49.28MB / 86.64MB 8.3s
+#12 sha256:7be9cdb9167a8712f78cfe8da9fdf771134a84b1ee0fdab42bace39b895aaa9d 23.56MB / 23.56MB 6.9s done
+#12 sha256:2df799bdf42f1780bc4214634a2fe419d8bcaa93e0611df14d4eaec71c2325fc 29.36MB / 75.40MB 8.7s
+#12 sha256:88f9cdd730a2c32e544c8de28ddcb3800bc8b143e551c286d3ccb2704444d69f 40.89MB / 64.36MB 7.5s
+#12 sha256:d1f079207a43c718468ea382f4fae87378159dea9e7ffb1bd0fc435e5ac6cc70 0B / 49.61MB 0.2s
+#12 sha256:50576d4ab5594d253146038a2683a477a2aa2ee84c377048c55be9c0779f5171 55.57MB / 86.64MB 9.2s
+#12 sha256:88f9cdd730a2c32e544c8de28ddcb3800bc8b143e551c286d3ccb2704444d69f 46.14MB / 64.36MB 8.3s
+#12 sha256:2df799bdf42f1780bc4214634a2fe419d8bcaa93e0611df14d4eaec71c2325fc 33.55MB / 75.40MB 9.6s
+#12 sha256:d1f079207a43c718468ea382f4fae87378159dea9e7ffb1bd0fc435e5ac6cc70 2.58MB / 49.61MB 1.1s
+#12 sha256:50576d4ab5594d253146038a2683a477a2aa2ee84c377048c55be9c0779f5171 61.87MB / 86.64MB 9.9s
+#12 sha256:88f9cdd730a2c32e544c8de28ddcb3800bc8b143e551c286d3ccb2704444d69f 50.33MB / 64.36MB 8.9s
+#12 ...
+
+#9 [linux/amd64 builder 1/8] FROM mcr.microsoft.com/oss/go/microsoft/golang:1.24.4@sha256:94b1688200aa17ae535f0435bfad4dc692498a942a0be2abf74434487b0ea4f4
+#9 ...
+
+#12 [linux/arm64 builder 1/8] FROM mcr.microsoft.com/oss/go/microsoft/golang:1.24.4@sha256:94b1688200aa17ae535f0435bfad4dc692498a942a0be2abf74434487b0ea4f4
+#12 sha256:d1f079207a43c718468ea382f4fae87378159dea9e7ffb1bd0fc435e5ac6cc70 5.24MB / 49.61MB 1.7s
+#12 sha256:88f9cdd730a2c32e544c8de28ddcb3800bc8b143e551c286d3ccb2704444d69f 54.53MB / 64.36MB 12.0s
+#12 sha256:2df799bdf42f1780bc4214634a2fe419d8bcaa93e0611df14d4eaec71c2325fc 37.75MB / 75.40MB 13.4s
+#12 sha256:50576d4ab5594d253146038a2683a477a2aa2ee84c377048c55be9c0779f5171 67.11MB / 86.64MB 13.4s
+#12 sha256:88f9cdd730a2c32e544c8de28ddcb3800bc8b143e551c286d3ccb2704444d69f 58.72MB / 64.36MB 12.5s
+#12 sha256:d1f079207a43c718468ea382f4fae87378159dea9e7ffb1bd0fc435e5ac6cc70 8.39MB / 49.61MB 5.1s
+#12 sha256:88f9cdd730a2c32e544c8de28ddcb3800bc8b143e551c286d3ccb2704444d69f 64.36MB / 64.36MB 13.2s done
+#12 sha256:d1f079207a43c718468ea382f4fae87378159dea9e7ffb1bd0fc435e5ac6cc70 11.53MB / 49.61MB 5.7s
+#12 sha256:2df799bdf42f1780bc4214634a2fe419d8bcaa93e0611df14d4eaec71c2325fc 41.94MB / 75.40MB 14.4s
+#12 sha256:50576d4ab5594d253146038a2683a477a2aa2ee84c377048c55be9c0779f5171 73.40MB / 86.64MB 14.1s
+#12 sha256:d1f079207a43c718468ea382f4fae87378159dea9e7ffb1bd0fc435e5ac6cc70 14.68MB / 49.61MB 6.2s
+#12 sha256:2df799bdf42f1780bc4214634a2fe419d8bcaa93e0611df14d4eaec71c2325fc 46.14MB / 75.40MB 14.9s
+#12 sha256:50576d4ab5594d253146038a2683a477a2aa2ee84c377048c55be9c0779f5171 79.69MB / 86.64MB 14.7s
+#12 sha256:50576d4ab5594d253146038a2683a477a2aa2ee84c377048c55be9c0779f5171 84.93MB / 86.64MB 15.5s
+#12 sha256:d1f079207a43c718468ea382f4fae87378159dea9e7ffb1bd0fc435e5ac6cc70 17.83MB / 49.61MB 7.1s
+#12 sha256:2df799bdf42f1780bc4214634a2fe419d8bcaa93e0611df14d4eaec71c2325fc 50.33MB / 75.40MB 15.9s
+#12 sha256:50576d4ab5594d253146038a2683a477a2aa2ee84c377048c55be9c0779f5171 86.64MB / 86.64MB 15.7s done
+#12 sha256:d1f079207a43c718468ea382f4fae87378159dea9e7ffb1bd0fc435e5ac6cc70 20.97MB / 49.61MB 7.8s
+#12 sha256:2df799bdf42f1780bc4214634a2fe419d8bcaa93e0611df14d4eaec71c2325fc 54.53MB / 75.40MB 17.0s
+#12 sha256:d1f079207a43c718468ea382f4fae87378159dea9e7ffb1bd0fc435e5ac6cc70 24.12MB / 49.61MB 8.6s
+#12 sha256:d1f079207a43c718468ea382f4fae87378159dea9e7ffb1bd0fc435e5ac6cc70 27.26MB / 49.61MB 9.3s
+#12 sha256:2df799bdf42f1780bc4214634a2fe419d8bcaa93e0611df14d4eaec71c2325fc 58.72MB / 75.40MB 17.9s
+#12 sha256:d1f079207a43c718468ea382f4fae87378159dea9e7ffb1bd0fc435e5ac6cc70 30.41MB / 49.61MB 10.2s
+#12 sha256:2df799bdf42f1780bc4214634a2fe419d8bcaa93e0611df14d4eaec71c2325fc 62.91MB / 75.40MB 18.8s
+#12 sha256:d1f079207a43c718468ea382f4fae87378159dea9e7ffb1bd0fc435e5ac6cc70 33.55MB / 49.61MB 10.7s
+#12 sha256:2df799bdf42f1780bc4214634a2fe419d8bcaa93e0611df14d4eaec71c2325fc 67.11MB / 75.40MB 19.7s
+#12 sha256:d1f079207a43c718468ea382f4fae87378159dea9e7ffb1bd0fc435e5ac6cc70 36.70MB / 49.61MB 11.3s
+#12 sha256:d1f079207a43c718468ea382f4fae87378159dea9e7ffb1bd0fc435e5ac6cc70 39.85MB / 49.61MB 12.0s
+#12 sha256:2df799bdf42f1780bc4214634a2fe419d8bcaa93e0611df14d4eaec71c2325fc 71.30MB / 75.40MB 20.7s
+#12 sha256:d1f079207a43c718468ea382f4fae87378159dea9e7ffb1bd0fc435e5ac6cc70 42.99MB / 49.61MB 12.8s
+#12 sha256:2df799bdf42f1780bc4214634a2fe419d8bcaa93e0611df14d4eaec71c2325fc 75.40MB / 75.40MB 21.7s done
+#12 sha256:d1f079207a43c718468ea382f4fae87378159dea9e7ffb1bd0fc435e5ac6cc70 46.14MB / 49.61MB 13.4s
+#12 sha256:d1f079207a43c718468ea382f4fae87378159dea9e7ffb1bd0fc435e5ac6cc70 49.28MB / 49.61MB 14.0s
+#12 sha256:d1f079207a43c718468ea382f4fae87378159dea9e7ffb1bd0fc435e5ac6cc70 49.61MB / 49.61MB 14.1s done
+#12 extracting sha256:d1f079207a43c718468ea382f4fae87378159dea9e7ffb1bd0fc435e5ac6cc70
+#12 ...
+
+#9 [linux/amd64 builder 1/8] FROM mcr.microsoft.com/oss/go/microsoft/golang:1.24.4@sha256:94b1688200aa17ae535f0435bfad4dc692498a942a0be2abf74434487b0ea4f4
+#9 sha256:59b4e5b4750ec1b7f1501675021c49ff08f4cef489293a0a54b4d39acc0ddb85 124B / 124B 0.3s done
+#9 sha256:ef7792878a0ecc31c8dd258b60ddd107c5cda611574fd4ea713c4bd99b041af7 68.16MB / 92.36MB 9.3s
+#9 sha256:900e2c02f17f686733f4f957ddfb07b3342d1957d87b56254634d4fbb2abb81d 61.87MB / 64.40MB 8.0s
+#9 sha256:7bbf972c6c2f5b7313ae3cb74e63888ab70931bcd9aefd960f9a38c540dbf2ca 11.53MB / 24.02MB 2.3s
+#9 sha256:d0034faf7acce9bbe2e8952f4e2f47c46c28c2c4ca8bc56f96b9269d14ea3549 3.15MB / 49.59MB 1.2s
+#9 sha256:900e2c02f17f686733f4f957ddfb07b3342d1957d87b56254634d4fbb2abb81d 64.40MB / 64.40MB 8.4s done
+#9 sha256:145cefbe41694c420d761230fe35ce15ed147061a6c41fc0314edb00c56d690b 0B / 79.17MB 0.2s
+#9 sha256:ef7792878a0ecc31c8dd258b60ddd107c5cda611574fd4ea713c4bd99b041af7 74.45MB / 92.36MB 10.1s
+#9 sha256:d0034faf7acce9bbe2e8952f4e2f47c46c28c2c4ca8bc56f96b9269d14ea3549 6.29MB / 49.59MB 2.0s
+#9 sha256:7bbf972c6c2f5b7313ae3cb74e63888ab70931bcd9aefd960f9a38c540dbf2ca 13.63MB / 24.02MB 3.2s
+#9 sha256:ef7792878a0ecc31c8dd258b60ddd107c5cda611574fd4ea713c4bd99b041af7 79.69MB / 92.36MB 11.0s
+#9 sha256:7bbf972c6c2f5b7313ae3cb74e63888ab70931bcd9aefd960f9a38c540dbf2ca 15.73MB / 24.02MB 3.8s
+#9 sha256:d0034faf7acce9bbe2e8952f4e2f47c46c28c2c4ca8bc56f96b9269d14ea3549 9.44MB / 49.59MB 3.0s
+#9 sha256:145cefbe41694c420d761230fe35ce15ed147061a6c41fc0314edb00c56d690b 4.19MB / 79.17MB 1.2s
+#9 sha256:7bbf972c6c2f5b7313ae3cb74e63888ab70931bcd9aefd960f9a38c540dbf2ca 17.83MB / 24.02MB 4.4s
+#9 sha256:145cefbe41694c420d761230fe35ce15ed147061a6c41fc0314edb00c56d690b 8.39MB / 79.17MB 1.8s
+#9 sha256:ef7792878a0ecc31c8dd258b60ddd107c5cda611574fd4ea713c4bd99b041af7 84.93MB / 92.36MB 11.7s
+#9 sha256:7bbf972c6c2f5b7313ae3cb74e63888ab70931bcd9aefd960f9a38c540dbf2ca 19.92MB / 24.02MB 4.7s
+#9 sha256:d0034faf7acce9bbe2e8952f4e2f47c46c28c2c4ca8bc56f96b9269d14ea3549 12.58MB / 49.59MB 3.9s
+#9 sha256:145cefbe41694c420d761230fe35ce15ed147061a6c41fc0314edb00c56d690b 12.58MB / 79.17MB 2.4s
+#9 sha256:ef7792878a0ecc31c8dd258b60ddd107c5cda611574fd4ea713c4bd99b041af7 90.18MB / 92.36MB 12.3s
+#9 sha256:7bbf972c6c2f5b7313ae3cb74e63888ab70931bcd9aefd960f9a38c540dbf2ca 22.02MB / 24.02MB 5.4s
+#9 sha256:d0034faf7acce9bbe2e8952f4e2f47c46c28c2c4ca8bc56f96b9269d14ea3549 15.73MB / 49.59MB 4.5s
+#9 sha256:ef7792878a0ecc31c8dd258b60ddd107c5cda611574fd4ea713c4bd99b041af7 92.36MB / 92.36MB 12.6s done
+#9 sha256:145cefbe41694c420d761230fe35ce15ed147061a6c41fc0314edb00c56d690b 16.78MB / 79.17MB 3.0s
+#9 sha256:7bbf972c6c2f5b7313ae3cb74e63888ab70931bcd9aefd960f9a38c540dbf2ca 24.02MB / 24.02MB 5.7s done
+#9 sha256:d0034faf7acce9bbe2e8952f4e2f47c46c28c2c4ca8bc56f96b9269d14ea3549 19.92MB / 49.59MB 5.1s
+#9 sha256:145cefbe41694c420d761230fe35ce15ed147061a6c41fc0314edb00c56d690b 20.97MB / 79.17MB 3.5s
+#9 sha256:d0034faf7acce9bbe2e8952f4e2f47c46c28c2c4ca8bc56f96b9269d14ea3549 23.07MB / 49.59MB 5.4s
+#9 sha256:d0034faf7acce9bbe2e8952f4e2f47c46c28c2c4ca8bc56f96b9269d14ea3549 28.31MB / 49.59MB 5.7s
+#9 sha256:145cefbe41694c420d761230fe35ce15ed147061a6c41fc0314edb00c56d690b 25.17MB / 79.17MB 3.9s
+#9 sha256:d0034faf7acce9bbe2e8952f4e2f47c46c28c2c4ca8bc56f96b9269d14ea3549 32.51MB / 49.59MB 6.0s
+#9 sha256:145cefbe41694c420d761230fe35ce15ed147061a6c41fc0314edb00c56d690b 29.36MB / 79.17MB 4.4s
+#9 sha256:d0034faf7acce9bbe2e8952f4e2f47c46c28c2c4ca8bc56f96b9269d14ea3549 35.65MB / 49.59MB 6.3s
+#9 ...
+
+#12 [linux/arm64 builder 1/8] FROM mcr.microsoft.com/oss/go/microsoft/golang:1.24.4@sha256:94b1688200aa17ae535f0435bfad4dc692498a942a0be2abf74434487b0ea4f4
+#12 extracting sha256:d1f079207a43c718468ea382f4fae87378159dea9e7ffb1bd0fc435e5ac6cc70 6.2s done
+#12 extracting sha256:7be9cdb9167a8712f78cfe8da9fdf771134a84b1ee0fdab42bace39b895aaa9d
+#12 extracting sha256:7be9cdb9167a8712f78cfe8da9fdf771134a84b1ee0fdab42bace39b895aaa9d 1.6s done
+#12 extracting sha256:88f9cdd730a2c32e544c8de28ddcb3800bc8b143e551c286d3ccb2704444d69f
+#12 ...
+
+#9 [linux/amd64 builder 1/8] FROM mcr.microsoft.com/oss/go/microsoft/golang:1.24.4@sha256:94b1688200aa17ae535f0435bfad4dc692498a942a0be2abf74434487b0ea4f4
+#9 sha256:d0034faf7acce9bbe2e8952f4e2f47c46c28c2c4ca8bc56f96b9269d14ea3549 49.59MB / 49.59MB 7.3s done
+#9 sha256:145cefbe41694c420d761230fe35ce15ed147061a6c41fc0314edb00c56d690b 79.17MB / 79.17MB 8.1s done
+#9 extracting sha256:d0034faf7acce9bbe2e8952f4e2f47c46c28c2c4ca8bc56f96b9269d14ea3549 3.4s done
+#9 DONE 34.4s
+
+#9 [linux/amd64 builder 1/8] FROM mcr.microsoft.com/oss/go/microsoft/golang:1.24.4@sha256:94b1688200aa17ae535f0435bfad4dc692498a942a0be2abf74434487b0ea4f4
+#9 extracting sha256:7bbf972c6c2f5b7313ae3cb74e63888ab70931bcd9aefd960f9a38c540dbf2ca
+#9 extracting sha256:7bbf972c6c2f5b7313ae3cb74e63888ab70931bcd9aefd960f9a38c540dbf2ca 0.9s done
+#9 DONE 35.2s
+
+#12 [linux/arm64 builder 1/8] FROM mcr.microsoft.com/oss/go/microsoft/golang:1.24.4@sha256:94b1688200aa17ae535f0435bfad4dc692498a942a0be2abf74434487b0ea4f4
+#12 ...
+
+#9 [linux/amd64 builder 1/8] FROM mcr.microsoft.com/oss/go/microsoft/golang:1.24.4@sha256:94b1688200aa17ae535f0435bfad4dc692498a942a0be2abf74434487b0ea4f4
+#9 extracting sha256:900e2c02f17f686733f4f957ddfb07b3342d1957d87b56254634d4fbb2abb81d
+#9 ...
+
+#12 [linux/arm64 builder 1/8] FROM mcr.microsoft.com/oss/go/microsoft/golang:1.24.4@sha256:94b1688200aa17ae535f0435bfad4dc692498a942a0be2abf74434487b0ea4f4
+#12 extracting sha256:88f9cdd730a2c32e544c8de28ddcb3800bc8b143e551c286d3ccb2704444d69f 4.0s done
+#12 DONE 35.4s
+
+#12 [linux/arm64 builder 1/8] FROM mcr.microsoft.com/oss/go/microsoft/golang:1.24.4@sha256:94b1688200aa17ae535f0435bfad4dc692498a942a0be2abf74434487b0ea4f4
+#12 extracting sha256:50576d4ab5594d253146038a2683a477a2aa2ee84c377048c55be9c0779f5171
+#12 ...
+
+#9 [linux/amd64 builder 1/8] FROM mcr.microsoft.com/oss/go/microsoft/golang:1.24.4@sha256:94b1688200aa17ae535f0435bfad4dc692498a942a0be2abf74434487b0ea4f4
+#9 extracting sha256:900e2c02f17f686733f4f957ddfb07b3342d1957d87b56254634d4fbb2abb81d 3.0s done
+#9 DONE 38.2s
+
+#12 [linux/arm64 builder 1/8] FROM mcr.microsoft.com/oss/go/microsoft/golang:1.24.4@sha256:94b1688200aa17ae535f0435bfad4dc692498a942a0be2abf74434487b0ea4f4
+#12 extracting sha256:50576d4ab5594d253146038a2683a477a2aa2ee84c377048c55be9c0779f5171 2.9s done
+#12 DONE 38.3s
+
+#9 [linux/amd64 builder 1/8] FROM mcr.microsoft.com/oss/go/microsoft/golang:1.24.4@sha256:94b1688200aa17ae535f0435bfad4dc692498a942a0be2abf74434487b0ea4f4
+#9 extracting sha256:ef7792878a0ecc31c8dd258b60ddd107c5cda611574fd4ea713c4bd99b041af7
+#9 extracting sha256:ef7792878a0ecc31c8dd258b60ddd107c5cda611574fd4ea713c4bd99b041af7 2.9s done
+#9 DONE 41.1s
+
+#12 [linux/arm64 builder 1/8] FROM mcr.microsoft.com/oss/go/microsoft/golang:1.24.4@sha256:94b1688200aa17ae535f0435bfad4dc692498a942a0be2abf74434487b0ea4f4
+#12 extracting sha256:2df799bdf42f1780bc4214634a2fe419d8bcaa93e0611df14d4eaec71c2325fc
+#12 extracting sha256:2df799bdf42f1780bc4214634a2fe419d8bcaa93e0611df14d4eaec71c2325fc 9.2s done
+#12 DONE 47.6s
+
+#9 [linux/amd64 builder 1/8] FROM mcr.microsoft.com/oss/go/microsoft/golang:1.24.4@sha256:94b1688200aa17ae535f0435bfad4dc692498a942a0be2abf74434487b0ea4f4
+#9 extracting sha256:145cefbe41694c420d761230fe35ce15ed147061a6c41fc0314edb00c56d690b
+#9 ...
+
+#12 [linux/arm64 builder 1/8] FROM mcr.microsoft.com/oss/go/microsoft/golang:1.24.4@sha256:94b1688200aa17ae535f0435bfad4dc692498a942a0be2abf74434487b0ea4f4
+#12 extracting sha256:fa1216d676f645c84d6c9c0ec028dea5310d0ab3a317bf374d22b319c336eb7e 0.0s done
+#12 extracting sha256:4f4fb700ef54461cfa02571ae0db9a0dc1e0cdb5577484a6d75e68dc38e8acc1 0.0s done
+#12 DONE 47.7s
+
+#13 [linux/arm64 builder 2/8] WORKDIR /workspace
+#13 DONE 3.8s
+
+#9 [linux/amd64 builder 1/8] FROM mcr.microsoft.com/oss/go/microsoft/golang:1.24.4@sha256:94b1688200aa17ae535f0435bfad4dc692498a942a0be2abf74434487b0ea4f4
+#9 ...
+
+#14 [linux/arm64 builder 3/8] COPY go.mod go.mod
+#14 DONE 0.1s
+
+#15 [linux/arm64 builder 4/8] COPY go.sum go.sum
+#15 DONE 0.1s
+
+#9 [linux/amd64 builder 1/8] FROM mcr.microsoft.com/oss/go/microsoft/golang:1.24.4@sha256:94b1688200aa17ae535f0435bfad4dc692498a942a0be2abf74434487b0ea4f4
+#9 ...
+
+#16 [linux/arm64 builder 5/8] RUN go mod download
+#16 ...
+
+#9 [linux/amd64 builder 1/8] FROM mcr.microsoft.com/oss/go/microsoft/golang:1.24.4@sha256:94b1688200aa17ae535f0435bfad4dc692498a942a0be2abf74434487b0ea4f4
+#9 extracting sha256:145cefbe41694c420d761230fe35ce15ed147061a6c41fc0314edb00c56d690b 11.7s done
+#9 DONE 52.8s
+
+#9 [linux/amd64 builder 1/8] FROM mcr.microsoft.com/oss/go/microsoft/golang:1.24.4@sha256:94b1688200aa17ae535f0435bfad4dc692498a942a0be2abf74434487b0ea4f4
+#9 extracting sha256:59b4e5b4750ec1b7f1501675021c49ff08f4cef489293a0a54b4d39acc0ddb85 0.0s done
+#9 extracting sha256:4f4fb700ef54461cfa02571ae0db9a0dc1e0cdb5577484a6d75e68dc38e8acc1 0.0s done
+#9 DONE 52.9s
+
+#17 [linux/amd64 builder 2/8] WORKDIR /workspace
+#17 DONE 0.1s
+
+#16 [linux/arm64 builder 5/8] RUN go mod download
+#16 ...
+
+#18 [linux/amd64 builder 3/8] COPY go.mod go.mod
+#18 DONE 0.1s
+
+#19 [linux/amd64 builder 4/8] COPY go.sum go.sum
+#19 DONE 0.1s
+
+#20 [linux/amd64 builder 5/8] RUN go mod download
+#20 DONE 10.6s
+
+#16 [linux/arm64 builder 5/8] RUN go mod download
+#16 ...
+
+#21 [linux/amd64 builder 6/8] COPY cmd/clusterhealthmonitor/ cmd/clusterhealthmonitor/
+#21 DONE 0.6s
+
+#16 [linux/arm64 builder 5/8] RUN go mod download
+#16 ...
+
+#22 [linux/amd64 builder 7/8] COPY pkg/ pkg/
+#22 DONE 0.3s
+
+#16 [linux/arm64 builder 5/8] RUN go mod download
+#16 ...
+
+#23 [linux/amd64 builder 8/8] RUN CGO_ENABLED=1 GOEXPERIMENT=systemcrypto go build -o clusterhealthmonitor cmd/clusterhealthmonitor/main.go
+#23 ...
+
+#16 [linux/arm64 builder 5/8] RUN go mod download
+#16 DONE 55.3s
+
+#24 [linux/arm64 builder 6/8] COPY cmd/clusterhealthmonitor/ cmd/clusterhealthmonitor/
+#24 DONE 0.3s
+
+#23 [linux/amd64 builder 8/8] RUN CGO_ENABLED=1 GOEXPERIMENT=systemcrypto go build -o clusterhealthmonitor cmd/clusterhealthmonitor/main.go
+#23 ...
+
+#25 [linux/arm64 builder 7/8] COPY pkg/ pkg/
+#25 DONE 0.1s
+
+#26 [linux/arm64 builder 8/8] RUN CGO_ENABLED=1 GOEXPERIMENT=systemcrypto go build -o clusterhealthmonitor cmd/clusterhealthmonitor/main.go
+#26 ...
+
+#23 [linux/amd64 builder 8/8] RUN CGO_ENABLED=1 GOEXPERIMENT=systemcrypto go build -o clusterhealthmonitor cmd/clusterhealthmonitor/main.go
+#23 DONE 129.1s
+
+#27 [linux/amd64 stage-1 2/3] COPY --from=builder /workspace/clusterhealthmonitor .
+#27 DONE 0.3s
+
+#26 [linux/arm64 builder 8/8] RUN CGO_ENABLED=1 GOEXPERIMENT=systemcrypto go build -o clusterhealthmonitor cmd/clusterhealthmonitor/main.go
+#26 DONE 1325.8s
+
+#28 [linux/arm64 stage-1 2/3] COPY --from=builder /workspace/clusterhealthmonitor .
+#28 DONE 0.2s
+
+#29 exporting to image
+#29 exporting layers
+#29 exporting layers 4.0s done
+#29 exporting manifest sha256:3fb0c616fdc63b889ae62f0998caba33d1012c5ba3f5940d42780bcdfef7c7ea 0.0s done
+#29 exporting config sha256:48743e11d93117435ebc5162d80fc5cb6f8e4980a5cc413cb35efd46f4580a98 0.0s done
+#29 exporting attestation manifest sha256:008fbb888c33736d05ec4b587836d50b471f66c1847e4670b2a9ffa6c259e019 0.1s done
+#29 exporting manifest sha256:010b9eee85c40406a7565174dd917604e6f58f798941e307babd61eb07682ae4 0.0s done
+#29 exporting config sha256:ec931d6a263120d4accad270f199376a7e69565d18dcef0a132e3a8c33bfb832 0.0s done
+#29 exporting attestation manifest sha256:a67381bf4f5fa388ecb63edaa61b06a1cc72bca501e4b4e624afcb7ee8b847ec 0.0s done
+#29 exporting manifest list sha256:bb4ca783f91a516d755803a81c7b8211b7b45e40ce9021ef788f0b0c458b373d
+#29 exporting manifest list sha256:bb4ca783f91a516d755803a81c7b8211b7b45e40ce9021ef788f0b0c458b373d 0.0s done
+#29 pushing layers
+#29 pushing layers 0.6s done
+#29 ERROR: failed to push ghcr.io/cluster-health-monitor:6570ba7: failed to authorize: failed to fetch anonymous token: unexpected status from GET request to https://ghcr.io/token?scope=repository%3Acluster-health-monitor%3Apull%2Cpush&service=ghcr.io: 403 Forbidden
+------
+ > exporting to image:
+------
+ERROR: failed to build: failed to solve: failed to push ghcr.io/cluster-health-monitor:6570ba7: failed to authorize: failed to fetch anonymous token: unexpected status from GET request to https://ghcr.io/token?scope=repository%3Acluster-health-monitor%3Apull%2Cpush&service=ghcr.io: 403 Forbidden
+make: *** [Makefile:45: docker-build-cluster-health-monitor] Error 1
