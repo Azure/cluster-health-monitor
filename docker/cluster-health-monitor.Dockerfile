@@ -13,14 +13,35 @@ RUN go mod download
 COPY cmd/clusterhealthmonitor/ cmd/clusterhealthmonitor/
 COPY pkg/ pkg/
 
-
+# Install build dependencies for cross-compilation
 RUN apt-get update && apt-get install -y \
     gcc \
+    gcc-aarch64-linux-gnu \
     libssl-dev \
+    libssl-dev:arm64 \
     pkg-config
 
 # Build
-RUN CGO_ENABLED=1 GOEXPERIMENT=systemcrypto go build -o clusterhealthmonitor cmd/clusterhealthmonitor/main.go
+ARG TARGETPLATFORM
+RUN case "$TARGETPLATFORM" in \
+    "linux/arm64") \
+        CC=aarch64-linux-gnu-gcc \
+        PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig \
+        CGO_ENABLED=1 \
+        GOOS=linux \
+        GOARCH=arm64 \
+        GOEXPERIMENT=systemcrypto \
+        go build -o clusterhealthmonitor cmd/clusterhealthmonitor/main.go \
+        ;; \
+    "linux/amd64"|*) \
+        CC=gcc \
+        CGO_ENABLED=1 \
+        GOOS=linux \
+        GOARCH=amd64 \
+        GOEXPERIMENT=systemcrypto \
+        go build -o clusterhealthmonitor cmd/clusterhealthmonitor/main.go \
+        ;; \
+    esac
 
 # Use distroless as minimal base image to package the clusterhealthmonitor binary
 # Using distroless/base instead of distroless/minimal because it comes with SymCrypt and SymCrypt-OpenSSL which are required FIPS/Azure compliance
