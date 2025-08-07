@@ -16,6 +16,7 @@ permissions:
 env:
   # `public` indicates images to MCR wil be publicly available, and will be removed in the final MCR images
   REGISTRY_REPO: public/aks/cluster-health-monitor
+  CLUSTER_HEALTH_MONITOR_IMAGE_NAME: cluster-health-monitor
 jobs:
   prepare-variables:
     runs-on: ubuntu-latest
@@ -68,4 +69,4 @@ jobs:
         file: docker/cluster-health-monitor.Dockerfile
         platforms: linux/amd64,linux/arm64
         push: true
-        tags: ${{ secrets.AZURE_REGISTRY }}/${{ env.REGISTRY_REPO}}:${{ needs.prepare-variables.outputs.release_tag }}
+        tags: ${{ secrets.AZURE_REGISTRY }}/${{ env.REGISTRY_REPO}}/${{ env.CLUSTER_HEALTH_MONITOR_IMAGE_NAME }}:${{ needs.prepare-variables.outputs.release_tag }}
