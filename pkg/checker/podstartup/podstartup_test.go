@@ -15,9 +15,13 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/validation"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	dynamicfake "k8s.io/client-go/dynamic/fake"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
+	karpenter "sigs.k8s.io/karpenter/pkg/apis/v1"
+	karpenterv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 )
 
 // =============================================================================
@@ -229,6 +233,38 @@ func TestPodStartupChecker_Run(t *testing.T) {
 				return true, fakePod, nil
 			})
 
+			nodepool := &unstructured.Unstructured{}
+
+			nodepool.SetUnstructuredContent(map[string]interface{}{
+				"kind":       "NodePool",
+				"apiVersion": "karpenter.sh/v1",
+				"metadata": map[string]interface{}{
+					"name": "test-nodepool",
+				},
+			})
+
+			nodepoolObj := &karpenter.NodePool{
+				TypeMeta: metav1.TypeMeta{
+					Kind:       "NodePool",
+					APIVersion: "karpenter.sh/v1",
+				},
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "nodePoolName",
+				},
+				Spec: karpenter.NodePoolSpec{},
+			}
+
+			scheme := runtime.NewScheme()
+			scheme.AddKnownTypes(NodePoolGVR.GroupVersion(), nodepoolObj)
+
+			dynamicClient := dynamicfake.NewSimpleDynamicClient(scheme, nodepoolObj)
+			dynamicClient.PrependReactor("create", "nodepools", func(action k8stesting.Action) (bool, runtime.Object, error) {
+				return true, &karpenterv1.NodePool{}, nil
+			})
+			dynamicClient.PrependReactor("delete", "nodepools", func(action k8stesting.Action) (bool, runtime.Object, error) {
+				return true, &karpenterv1.NodePool{}, nil
+			})
+
 			podStartupChecker := &PodStartupChecker{
 				name: checkerName,
 				config: &config.PodStartupConfig{
@@ -236,10 +272,12 @@ func TestPodStartupChecker_Run(t *testing.T) {
 					SyntheticPodLabelKey:       syntheticPodLabelKey,
 					SyntheticPodStartupTimeout: 5 * time.Second,
 					MaxSyntheticPods:           maxSyntheticPods,
+					EnableNodeProvisioningTest: true,
 				},
-				timeout:      5 * time.Second,
-				k8sClientset: client,
-				dialer:       scenario.dialer,
+				timeout:       5 * time.Second,
+				k8sClientset:  client,
+				dialer:        scenario.dialer,
+				dynamicClient: dynamicClient,
 			}
 
 			ctx, cancel := context.WithTimeout(context.Background(), podStartupChecker.timeout)
@@ -360,9 +398,11 @@ func TestPodStartupChecker_garbageCollect(t *testing.T) {
 					SyntheticPodLabelKey:       syntheticPodLabelKey,
 					SyntheticPodStartupTimeout: 3 * time.Second,
 					MaxSyntheticPods:           5,
+					EnableNodeProvisioningTest: false,
 				},
-				timeout:      checkerTimeout,
-				k8sClientset: tt.client,
+				timeout:       checkerTimeout,
+				k8sClientset:  tt.client,
+				dynamicClient: dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), &karpenter.NodePool{}),
 			}
 
 			// Run garbage collect
@@ -445,6 +485,7 @@ func TestPodStartupChecker_pollPodCreationToContainerRunningDuration(t *testing.
 					SyntheticPodStartupTimeout: 5 * time.Second,
 					MaxSyntheticPods:           3,
 				},
+				dynamicClient: dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), &karpenter.NodePool{}),
 			}
 
 			ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
@@ -601,7 +642,7 @@ func TestGenerateSyntheticPod(t *testing.T) {
 				},
 			}
 
-			pod := checker.generateSyntheticPod()
+			pod := checker.generateSyntheticPod(fmt.Sprintf("%d", time.Now().UnixNano()))
 			g.Expect(pod).ToNot(BeNil())
 
 			// Verify pod name is k8s compliant (DNS subdomain format)

@@ -13,10 +13,16 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
+	"k8s.io/kubectl/pkg/scheme"
+	karpenter "sigs.k8s.io/karpenter/pkg/apis/v1"
 
 	"github.com/Azure/cluster-health-monitor/pkg/checker"
 	"github.com/Azure/cluster-health-monitor/pkg/config"
@@ -37,11 +43,12 @@ const (
 )
 
 type PodStartupChecker struct {
-	name         string
-	config       *config.PodStartupConfig
-	timeout      time.Duration
-	k8sClientset kubernetes.Interface
-	dialer       Dialer
+	name          string
+	config        *config.PodStartupConfig
+	timeout       time.Duration
+	k8sClientset  kubernetes.Interface
+	dialer        Dialer
+	dynamicClient dynamic.Interface // to interact with Karpenter's custom resources
 }
 
 // How often to poll the pod status to check if the container is running.
@@ -49,6 +56,12 @@ var pollingInterval = 1 * time.Second // used for unit tests
 
 // The regular expression used to parse the image pull duration from a k8s event message for successfully pulling an image.
 var imagePullDurationRegex = regexp.MustCompile(`\(([a-zA-Z0-9\.]+) including waiting\)`)
+
+var NodePoolGVR = schema.GroupVersionResource{
+	Group:    "karpenter.sh",
+	Version:  "v1",
+	Resource: "nodepool",
+}
 
 func Register() {
 	checker.RegisterChecker(config.CheckTypePodStartup, BuildPodStartupChecker)
@@ -70,6 +83,20 @@ func BuildPodStartupChecker(config *config.CheckerConfig, kubeClient kubernetes.
 		"config", chk.config,
 		"timeout", chk.timeout.String(),
 	)
+
+	restConfig, err := rest.InClusterConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get in-cluster config: %w", err)
+	}
+
+	// create a dynamic client to interact with Karpenter's custom resources
+	dynamicClient, err := dynamic.NewForConfig(restConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create dynamic client: %w", err)
+	}
+
+	chk.dynamicClient = dynamicClient
+
 	return chk, nil
 }
 
@@ -104,8 +131,58 @@ func (c *PodStartupChecker) Run(ctx context.Context) (*types.Result, error) {
 			len(pods.Items), c.config.MaxSyntheticPods)
 	}
 
+	timeStampStr := fmt.Sprintf("%d", time.Now().UnixNano())
+	nodePoolName := fmt.Sprintf("%s-nodepool-%s", c.name, timeStampStr)
+
+	if c.config.EnableNodeProvisioningTest {
+		// If node provisioning test is enabled, we will create a NodePool first, then create synthetic pods on a new node from the node pool.
+		nodepool := &karpenter.NodePool{
+			TypeMeta: metav1.TypeMeta{
+				Kind:       "NodePool",
+				APIVersion: "karpenter.sh/v1",
+			},
+			ObjectMeta: metav1.ObjectMeta{
+				Name: nodePoolName,
+			},
+			Spec: karpenter.NodePoolSpec{
+				Template: karpenter.NodeClaimTemplate{
+					Spec: karpenter.NodeClaimTemplateSpec{
+						NodeClassRef: &karpenter.NodeClassReference{
+							Group: "karpenter.azure.com",
+							Kind:  "AKSNodeClass",
+							Name:  "default",
+						},
+						Requirements: []karpenter.NodeSelectorRequirementWithMinValues{
+							{
+								NodeSelectorRequirement: corev1.NodeSelectorRequirement{
+									Key:      "nodeprovisioningtest",
+									Operator: corev1.NodeSelectorOpIn,
+									Values:   []string{timeStampStr},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+
+		unstructuredNodePool := &unstructured.Unstructured{}
+		scheme.Scheme.AddKnownTypes(NodePoolGVR.GroupVersion(), nodepool)
+
+		err = scheme.Scheme.Convert(nodepool, unstructuredNodePool, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to convert NodePool to unstructured: %w", err)
+		}
+
+		// Create the NodePool resource.
+		_, err = c.dynamicClient.Resource(NodePoolGVR).Namespace(c.config.SyntheticPodNamespace).Create(ctx, unstructuredNodePool, metav1.CreateOptions{})
+		if err != nil {
+			return nil, fmt.Errorf("failed to create NodePool: %w", err)
+		}
+	}
+
 	// Create a synthetic pod to measure the startup time.
-	synthPod, err := c.k8sClientset.CoreV1().Pods(c.config.SyntheticPodNamespace).Create(ctx, c.generateSyntheticPod(), metav1.CreateOptions{})
+	synthPod, err := c.k8sClientset.CoreV1().Pods(c.config.SyntheticPodNamespace).Create(ctx, c.generateSyntheticPod(timeStampStr), metav1.CreateOptions{})
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
 			return types.Unhealthy(errCodePodCreationTimeout, "timed out creating synthetic pod"), nil
@@ -117,6 +194,14 @@ func (c *PodStartupChecker) Run(ctx context.Context) (*types.Result, error) {
 		if err != nil && !apierrors.IsNotFound(err) {
 			// Logging instead of returning an error here to avoid failing the checker run.
 			klog.ErrorS(err, "Failed to delete synthetic pod", "name", synthPod.Name)
+		}
+
+		if c.config.EnableNodeProvisioningTest {
+			// Clean up the NodePool after the checker run.
+			err := c.dynamicClient.Resource(NodePoolGVR).Delete(ctx, nodePoolName, metav1.DeleteOptions{})
+			if err != nil && !apierrors.IsNotFound(err) {
+				klog.ErrorS(err, "Failed to delete NodePool", "name", nodePoolName)
+			}
 		}
 	}()
 
@@ -248,8 +333,8 @@ func (c *PodStartupChecker) syntheticPodNamePrefix() string {
 	return strings.ToLower(fmt.Sprintf("%s-synthetic-", c.name))
 }
 
-func (c *PodStartupChecker) generateSyntheticPod() *corev1.Pod {
-	podName := fmt.Sprintf("%s%d", c.syntheticPodNamePrefix(), time.Now().UnixNano())
+func (c *PodStartupChecker) generateSyntheticPod(timestampStr string) *corev1.Pod {
+	podName := fmt.Sprintf("%s%s", c.syntheticPodNamePrefix(), timestampStr)
 
 	podSpec := corev1.PodSpec{
 		Containers: []corev1.Container{
@@ -306,6 +391,13 @@ func (c *PodStartupChecker) generateSyntheticPod() *corev1.Pod {
 			},
 		},
 		// TODOcarlosalv: Add pod cpu/memory requests and/or limits.
+	}
+
+	if c.config.EnableNodeProvisioningTest {
+		// If node provisioning test is enabled, we will add a node selector to ensure the synthetic pod is scheduled on a node from the NodePool created by the checker.
+		podSpec.NodeSelector = map[string]string{
+			"nodeprovisioningtest": timestampStr,
+		}
 	}
 
 	return &corev1.Pod{
