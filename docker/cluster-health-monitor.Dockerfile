@@ -13,6 +13,12 @@ RUN go mod download
 COPY cmd/clusterhealthmonitor/ cmd/clusterhealthmonitor/
 COPY pkg/ pkg/
 
+
+RUN apt-get update && apt-get install -y \
+    gcc \
+    libssl-dev \
+    pkg-config
+
 # Build
 RUN CGO_ENABLED=1 GOEXPERIMENT=systemcrypto go build -o clusterhealthmonitor cmd/clusterhealthmonitor/main.go
 
