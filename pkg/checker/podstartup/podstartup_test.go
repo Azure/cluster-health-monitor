@@ -20,7 +20,6 @@ import (
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
-	karpenter "sigs.k8s.io/karpenter/pkg/apis/v1"
 	karpenterv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 )
 
@@ -470,7 +469,7 @@ func TestPodStartupChecker_pollPodCreationToContainerRunningDuration(t *testing.
 					SyntheticPodStartupTimeout: 5 * time.Second,
 					MaxSyntheticPods:           3,
 				},
-				dynamicClient: dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), &karpenter.NodePool{}),
+				dynamicClient: dynamicfake.NewSimpleDynamicClient(runtime.NewScheme()),
 			}
 
 			ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
