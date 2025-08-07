@@ -243,21 +243,7 @@ func TestPodStartupChecker_Run(t *testing.T) {
 				},
 			})
 
-			nodepoolObj := &karpenter.NodePool{
-				TypeMeta: metav1.TypeMeta{
-					Kind:       "NodePool",
-					APIVersion: "karpenter.sh/v1",
-				},
-				ObjectMeta: metav1.ObjectMeta{
-					Name: "nodePoolName",
-				},
-				Spec: karpenter.NodePoolSpec{},
-			}
-
-			scheme := runtime.NewScheme()
-			scheme.AddKnownTypes(NodePoolGVR.GroupVersion(), nodepoolObj)
-
-			dynamicClient := dynamicfake.NewSimpleDynamicClient(scheme, nodepoolObj)
+			dynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
 			dynamicClient.PrependReactor("create", "nodepools", func(action k8stesting.Action) (bool, runtime.Object, error) {
 				return true, &karpenterv1.NodePool{}, nil
 			})
@@ -390,7 +376,6 @@ func TestPodStartupChecker_garbageCollect(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			g := NewWithT(t)
-
 			checker := &PodStartupChecker{
 				name: checkerName,
 				config: &config.PodStartupConfig{
@@ -402,7 +387,7 @@ func TestPodStartupChecker_garbageCollect(t *testing.T) {
 				},
 				timeout:       checkerTimeout,
 				k8sClientset:  tt.client,
-				dynamicClient: dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), &karpenter.NodePool{}),
+				dynamicClient: dynamicfake.NewSimpleDynamicClient(runtime.NewScheme()),
 			}
 
 			// Run garbage collect
