@@ -136,46 +136,19 @@ func (c *PodStartupChecker) Run(ctx context.Context) (*types.Result, error) {
 
 	if c.config.EnableNodeProvisioningTest {
 		// If node provisioning test is enabled, we will create a NodePool first, then create synthetic pods on a new node from the node pool.
-		nodepool := &karpenter.NodePool{
-			TypeMeta: metav1.TypeMeta{
-				Kind:       "NodePool",
-				APIVersion: "karpenter.sh/v1",
-			},
-			ObjectMeta: metav1.ObjectMeta{
-				Name: nodePoolName,
-			},
-			Spec: karpenter.NodePoolSpec{
-				Template: karpenter.NodeClaimTemplate{
-					Spec: karpenter.NodeClaimTemplateSpec{
-						NodeClassRef: &karpenter.NodeClassReference{
-							Group: "karpenter.azure.com",
-							Kind:  "AKSNodeClass",
-							Name:  "default",
-						},
-						Requirements: []karpenter.NodeSelectorRequirementWithMinValues{
-							{
-								NodeSelectorRequirement: corev1.NodeSelectorRequirement{
-									Key:      "nodeprovisioningtest",
-									Operator: corev1.NodeSelectorOpIn,
-									Values:   []string{timeStampStr},
-								},
-							},
-						},
-					},
-				},
-			},
-		}
-
 		unstructuredNodePool := &unstructured.Unstructured{}
-		scheme.Scheme.AddKnownTypes(NodePoolGVR.GroupVersion(), nodepool)
+		nodepool := c.generateKarpenterNodePool(nodePoolName, timeStampStr)
 
+		scheme.Scheme.AddKnownTypes(NodePoolGVR.GroupVersion(), nodepool)
 		err = scheme.Scheme.Convert(nodepool, unstructuredNodePool, nil)
 		if err != nil {
 			return nil, fmt.Errorf("failed to convert NodePool to unstructured: %w", err)
 		}
 
+		nodepoolClient := c.dynamicClient.Resource(NodePoolGVR).Namespace(c.config.SyntheticPodNamespace)
+
 		// Create the NodePool resource.
-		_, err = c.dynamicClient.Resource(NodePoolGVR).Namespace(c.config.SyntheticPodNamespace).Create(ctx, unstructuredNodePool, metav1.CreateOptions{})
+		_, err = nodepoolClient.Create(ctx, unstructuredNodePool, metav1.CreateOptions{})
 		if err != nil {
 			return nil, fmt.Errorf("failed to create NodePool: %w", err)
 		}
@@ -331,6 +304,38 @@ func (c *PodStartupChecker) syntheticPodNamePrefix() string {
 	// The synthetic pod name prefix is used as an additional safety measure to ensure that the checker only operates on its own synthetic pods.
 	// c.name is supposed to be a unique identifier for each checker, so this prefix should be unique across all checkers.
 	return strings.ToLower(fmt.Sprintf("%s-synthetic-", c.name))
+}
+
+func (c *PodStartupChecker) generateKarpenterNodePool(nodePoolName, timestampStr string) *karpenter.NodePool {
+	return &karpenter.NodePool{
+		TypeMeta: metav1.TypeMeta{
+			Kind:       "NodePool",
+			APIVersion: "karpenter.sh/v1",
+		},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: nodePoolName,
+		},
+		Spec: karpenter.NodePoolSpec{
+			Template: karpenter.NodeClaimTemplate{
+				Spec: karpenter.NodeClaimTemplateSpec{
+					NodeClassRef: &karpenter.NodeClassReference{
+						Group: "karpenter.azure.com",
+						Kind:  "AKSNodeClass",
+						Name:  "default",
+					},
+					Requirements: []karpenter.NodeSelectorRequirementWithMinValues{
+						{
+							NodeSelectorRequirement: corev1.NodeSelectorRequirement{
+								Key:      "nodeprovisioningtest",
+								Operator: corev1.NodeSelectorOpIn,
+								Values:   []string{timestampStr},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
 }
 
 func (c *PodStartupChecker) generateSyntheticPod(timestampStr string) *corev1.Pod {

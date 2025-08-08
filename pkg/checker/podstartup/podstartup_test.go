@@ -20,7 +20,6 @@ import (
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
-	karpenterv1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 )
 
 // =============================================================================
@@ -92,14 +91,16 @@ func failingDialer(errMsg string) Dialer {
 func TestPodStartupChecker_Run(t *testing.T) {
 	// Defines adjustable parameters for the test scenarios
 	type testScenario struct {
-		podName         string
-		namespace       string
-		labels          map[string]string
-		podIP           string
-		startupDelay    time.Duration
-		preExistingPods []string
-		hasDeleteError  bool
-		dialer          Dialer
+		podName                string
+		namespace              string
+		labels                 map[string]string
+		podIP                  string
+		startupDelay           time.Duration
+		preExistingPods        []string
+		hasDeleteError         bool
+		dialer                 Dialer
+		enableNodeProvisioning bool
+		fakeDynamicClient      *dynamicfake.FakeDynamicClient
 	}
 
 	// Mutator function type
@@ -174,6 +175,48 @@ func TestPodStartupChecker_Run(t *testing.T) {
 				g.Expect(result.Detail.Message).To(ContainSubstring("TCP request to synthetic pod failed"))
 			},
 		},
+		{
+			name: "healthy result - default scenario with node provisioning test",
+			mutators: []scenarioMutator{
+				func(s *testScenario) {
+					s.enableNodeProvisioning = true
+
+					//scheme.AddKnownTypes(NodePoolGVR.GroupVersion(), &karpenter.NodePool{})
+					nodepool := &unstructured.Unstructured{}
+					nodepool.SetAPIVersion(NodePoolGVR.GroupVersion().String())
+					nodepool.SetKind("NodePool")
+					nodepool.SetName("test-nodepool")
+
+					s.fakeDynamicClient = dynamicfake.NewSimpleDynamicClient(runtime.NewScheme(), nodepool)
+					s.fakeDynamicClient.PrependReactor("create", "nodepool", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
+						return true, &unstructured.Unstructured{}, nil
+					})
+					s.fakeDynamicClient.PrependReactor("delete", "nodepool", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
+						return true, &unstructured.Unstructured{}, nil
+					})
+				},
+			},
+			validateResult: func(g *WithT, result *types.Result, err error) {
+				g.Expect(err).ToNot(HaveOccurred())
+				g.Expect(result).ToNot(BeNil())
+				g.Expect(result.Status).To(Equal(types.StatusHealthy))
+			},
+		},
+		{
+			name: "error - failed to create node pool",
+			mutators: []scenarioMutator{
+				func(s *testScenario) {
+					s.enableNodeProvisioning = true
+					s.fakeDynamicClient.PrependReactor("create", "nodepool", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
+						return true, &unstructured.Unstructured{}, errors.New("unexpected error occurred while creating node pool")
+					})
+				},
+			},
+			validateResult: func(g *WithT, result *types.Result, err error) {
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(err.Error()).To(ContainSubstring("unexpected error occurred while creating node pool"))
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -182,13 +225,14 @@ func TestPodStartupChecker_Run(t *testing.T) {
 
 			// Initialize default healthy scenario
 			scenario := &testScenario{
-				podName:        "pod1",
-				namespace:      syntheticPodNamespace,
-				labels:         map[string]string{syntheticPodLabelKey: checkerName},
-				podIP:          "10.0.0.0",
-				startupDelay:   3 * time.Second,
-				hasDeleteError: false,
-				dialer:         successfulDialer(),
+				podName:           "pod1",
+				namespace:         syntheticPodNamespace,
+				labels:            map[string]string{syntheticPodLabelKey: checkerName},
+				podIP:             "10.0.0.0",
+				startupDelay:      3 * time.Second,
+				hasDeleteError:    false,
+				dialer:            successfulDialer(),
+				fakeDynamicClient: dynamicfake.NewSimpleDynamicClient(runtime.NewScheme()),
 			}
 
 			// Apply mutators to modify the scenario
@@ -232,24 +276,6 @@ func TestPodStartupChecker_Run(t *testing.T) {
 				return true, fakePod, nil
 			})
 
-			nodepool := &unstructured.Unstructured{}
-
-			nodepool.SetUnstructuredContent(map[string]interface{}{
-				"kind":       "NodePool",
-				"apiVersion": "karpenter.sh/v1",
-				"metadata": map[string]interface{}{
-					"name": "test-nodepool",
-				},
-			})
-
-			dynamicClient := dynamicfake.NewSimpleDynamicClient(runtime.NewScheme())
-			dynamicClient.PrependReactor("create", "nodepools", func(action k8stesting.Action) (bool, runtime.Object, error) {
-				return true, &karpenterv1.NodePool{}, nil
-			})
-			dynamicClient.PrependReactor("delete", "nodepools", func(action k8stesting.Action) (bool, runtime.Object, error) {
-				return true, &karpenterv1.NodePool{}, nil
-			})
-
 			podStartupChecker := &PodStartupChecker{
 				name: checkerName,
 				config: &config.PodStartupConfig{
@@ -257,12 +283,12 @@ func TestPodStartupChecker_Run(t *testing.T) {
 					SyntheticPodLabelKey:       syntheticPodLabelKey,
 					SyntheticPodStartupTimeout: 5 * time.Second,
 					MaxSyntheticPods:           maxSyntheticPods,
-					EnableNodeProvisioningTest: true,
+					EnableNodeProvisioningTest: scenario.enableNodeProvisioning,
 				},
 				timeout:       5 * time.Second,
 				k8sClientset:  client,
 				dialer:        scenario.dialer,
-				dynamicClient: dynamicClient,
+				dynamicClient: scenario.fakeDynamicClient,
 			}
 
 			ctx, cancel := context.WithTimeout(context.Background(), podStartupChecker.timeout)
@@ -602,16 +628,22 @@ func TestPodStartupChecker_getImagePullDuration(t *testing.T) {
 
 func TestGenerateSyntheticPod(t *testing.T) {
 	tests := []struct {
-		name        string
-		checkerName string
+		name                       string
+		checkerName                string
+		enableNodeProvisioningTest bool
 	}{
 		{
 			name:        "generates valid synthetic pod",
 			checkerName: "test",
 		},
 		{
-			name:        "succesfully handles uppercase checker name",
+			name:        "successfully handles uppercase checker name",
 			checkerName: "UPPERCASE",
+		},
+		{
+			name:                       "successfully enables node provisioning test",
+			checkerName:                "test",
+			enableNodeProvisioningTest: true,
 		},
 	}
 
@@ -622,17 +654,25 @@ func TestGenerateSyntheticPod(t *testing.T) {
 			checker := &PodStartupChecker{
 				name: tt.checkerName,
 				config: &config.PodStartupConfig{
-					SyntheticPodLabelKey: "cluster-health-monitor/checker-name",
+					SyntheticPodLabelKey:       "cluster-health-monitor/checker-name",
+					EnableNodeProvisioningTest: tt.enableNodeProvisioningTest,
 				},
 			}
 
-			pod := checker.generateSyntheticPod(fmt.Sprintf("%d", time.Now().UnixNano()))
+			timestampStr := fmt.Sprintf("%d", time.Now().UnixNano())
+			pod := checker.generateSyntheticPod(timestampStr)
 			g.Expect(pod).ToNot(BeNil())
 
 			// Verify pod name is k8s compliant (DNS subdomain format)
 			g.Expect(validation.NameIsDNSSubdomain(pod.Name, false)).To(BeEmpty()) // this should not return any validation errors
 			g.Expect(pod.Name).To(HavePrefix(checker.syntheticPodNamePrefix()))
 			g.Expect(pod.Labels).To(Equal(checker.syntheticPodLabels()))
+
+			if tt.enableNodeProvisioningTest {
+				g.Expect(pod.Spec.NodeSelector).To(HaveKeyWithValue("nodeprovisioningtest", timestampStr))
+			} else {
+				g.Expect(pod.Spec.NodeSelector).ToNot(HaveKey("nodeprovisioningtest"))
+			}
 		})
 	}
 }
