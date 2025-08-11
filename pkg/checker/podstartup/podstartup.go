@@ -14,8 +14,11 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
 
 	"github.com/Azure/cluster-health-monitor/pkg/checker"
@@ -37,11 +40,18 @@ const (
 )
 
 type PodStartupChecker struct {
-	name         string
-	config       *config.PodStartupConfig
-	timeout      time.Duration
-	k8sClientset kubernetes.Interface
-	dialer       Dialer
+	name          string
+	config        *config.PodStartupConfig
+	timeout       time.Duration
+	k8sClientset  kubernetes.Interface
+	dialer        Dialer
+	dynamicClient dynamic.Interface // to interact with Karpenter's custom resources
+}
+
+var NodePoolGVR = schema.GroupVersionResource{
+	Group:    "karpenter.sh",
+	Version:  "v1",
+	Resource: "nodepool",
 }
 
 // How often to poll the pod status to check if the container is running.
@@ -70,6 +80,19 @@ func BuildPodStartupChecker(config *config.CheckerConfig, kubeClient kubernetes.
 		"config", chk.config,
 		"timeout", chk.timeout.String(),
 	)
+
+	restConfig, err := rest.InClusterConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get in-cluster config: %w", err)
+	}
+
+	// create a dynamic client to interact with Karpenter's custom resources
+	dynamicClient, err := dynamic.NewForConfig(restConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create dynamic client: %w", err)
+	}
+
+	chk.dynamicClient = dynamicClient
 	return chk, nil
 }
 
@@ -104,8 +127,21 @@ func (c *PodStartupChecker) Run(ctx context.Context) (*types.Result, error) {
 			len(pods.Items), c.config.MaxSyntheticPods)
 	}
 
+	timeStampStr := fmt.Sprintf("%d", time.Now().UnixNano())
+	nodePoolName := fmt.Sprintf("%s-nodepool-%s", c.name, timeStampStr)
+
+	if c.config.EnableNodeProvisioningTest {
+
+		//TODO: check NodePool CRD before creating
+
+		// If node provisioning test is enabled, we will create a NodePool first, then create synthetic pods on a new node from the node pool.
+		if err := c.createKarpenterNodePool(ctx, karpenterNodePool(nodePoolName, timeStampStr)); err != nil {
+			return nil, fmt.Errorf("failed to create Karpenter NodePool: %w", err)
+		}
+	}
+
 	// Create a synthetic pod to measure the startup time.
-	synthPod, err := c.k8sClientset.CoreV1().Pods(c.config.SyntheticPodNamespace).Create(ctx, c.generateSyntheticPod(), metav1.CreateOptions{})
+	synthPod, err := c.k8sClientset.CoreV1().Pods(c.config.SyntheticPodNamespace).Create(ctx, c.generateSyntheticPod(timeStampStr), metav1.CreateOptions{})
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
 			return types.Unhealthy(errCodePodCreationTimeout, "timed out creating synthetic pod"), nil
@@ -117,6 +153,12 @@ func (c *PodStartupChecker) Run(ctx context.Context) (*types.Result, error) {
 		if err != nil && !apierrors.IsNotFound(err) {
 			// Logging instead of returning an error here to avoid failing the checker run.
 			klog.ErrorS(err, "Failed to delete synthetic pod", "name", synthPod.Name)
+		}
+
+		if c.config.EnableNodeProvisioningTest {
+			if err := c.deleteKarpenterNodePool(ctx, nodePoolName); err != nil {
+				klog.ErrorS(err, "Failed to delete Karpenter NodePool", "name", nodePoolName)
+			}
 		}
 	}()
 
@@ -172,6 +214,9 @@ func (c *PodStartupChecker) garbageCollect(ctx context.Context) error {
 			}
 		}
 	}
+
+	//TODO: list Karpenter Node Pools and delete
+
 	return errors.Join(errs...)
 }
 
@@ -248,8 +293,8 @@ func (c *PodStartupChecker) syntheticPodNamePrefix() string {
 	return strings.ToLower(fmt.Sprintf("%s-synthetic-", c.name))
 }
 
-func (c *PodStartupChecker) generateSyntheticPod() *corev1.Pod {
-	podName := fmt.Sprintf("%s%d", c.syntheticPodNamePrefix(), time.Now().UnixNano())
+func (c *PodStartupChecker) generateSyntheticPod(timestampStr string) *corev1.Pod {
+	podName := fmt.Sprintf("%s%s", c.syntheticPodNamePrefix(), timestampStr)
 
 	podSpec := corev1.PodSpec{
 		Containers: []corev1.Container{
@@ -306,6 +351,13 @@ func (c *PodStartupChecker) generateSyntheticPod() *corev1.Pod {
 			},
 		},
 		// TODOcarlosalv: Add pod cpu/memory requests and/or limits.
+	}
+
+	if c.config.EnableNodeProvisioningTest {
+		// If node provisioning test is enabled, we will add a node selector to ensure the synthetic pod is scheduled on a node from the NodePool created by the checker.
+		podSpec.NodeSelector = map[string]string{
+			"nodeprovisioningtest": timestampStr,
+		}
 	}
 
 	return &corev1.Pod{
