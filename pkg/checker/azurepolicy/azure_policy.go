@@ -5,8 +5,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -24,27 +24,27 @@ type WarningCapture interface {
 	GetWarnings() []string
 }
 
-// warningCapturingTransport wraps an HTTP transport to capture warning headers
-type warningCapturingTransport struct {
-	base     http.RoundTripper
+// warningCapturingHandler implements rest.WarningHandlerWithContext to capture warnings
+type warningCapturingHandler struct {
+	mu       sync.Mutex
 	warnings []string
 }
 
-func (w *warningCapturingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	resp, err := w.base.RoundTrip(req)
-	if err != nil {
-		return resp, err
-	}
-
-	warnings := resp.Header.Values("Warning")
-	w.warnings = append(w.warnings, warnings...)
-
-	return resp, err
+// HandleWarningHeaderWithContext captures warning headers
+func (w *warningCapturingHandler) HandleWarningHeaderWithContext(ctx context.Context, code int, agent string, text string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.warnings = append(w.warnings, text)
 }
 
 // GetWarnings returns all captured warning headers
-func (w *warningCapturingTransport) GetWarnings() []string {
-	return w.warnings
+func (w *warningCapturingHandler) GetWarnings() []string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	// Return a copy of the slice to avoid race conditions
+	warnings := make([]string, len(w.warnings))
+	copy(warnings, w.warnings)
+	return warnings
 }
 
 // ClientWithWarningCaptureFactory creates Kubernetes clients with warning capture capability
@@ -56,30 +56,26 @@ type ClientWithWarningCaptureFactory interface {
 type defaultClientFactory struct{}
 
 func (f *defaultClientFactory) CreateClientWithWarningCapture(restConfig *rest.Config) (kubernetes.Interface, WarningCapture, error) {
-	warningTransport := &warningCapturingTransport{
-		base:     http.DefaultTransport,
+	warningHandler := &warningCapturingHandler{
 		warnings: []string{},
 	}
 
 	config := rest.CopyConfig(restConfig)
-	config.WrapTransport = func(rt http.RoundTripper) http.RoundTripper {
-		warningTransport.base = rt
-		return warningTransport
-	}
+	config.WarningHandlerWithContext = warningHandler
 
 	client, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	return client, warningTransport, nil
+	return client, warningHandler, nil
 }
 
 // AzurePolicyChecker implements the Checker interface for Azure Policy checks.
 type AzurePolicyChecker struct {
 	name          string
 	timeout       time.Duration
-	restConfig    *rest.Config // used to create a Kubernetes client with warning capture transport.
+	restConfig    *rest.Config // used to create a Kubernetes client with warning capture handler.
 	clientFactory ClientWithWarningCaptureFactory
 }
 
