@@ -16,6 +16,8 @@ import (
 	k8stesting "k8s.io/client-go/testing"
 )
 
+const _testSyntheticLabelKey = "test-synthetic-label-key"
+
 func TestCreateKarpenterNodePool(t *testing.T) {
 	g := NewWithT(t)
 
@@ -54,7 +56,7 @@ func TestCreateKarpenterNodePool(t *testing.T) {
 				dynamicClient: fakeDynamicClient,
 				config: &config.PodStartupConfig{
 					SyntheticPodNamespace: "test",
-					SyntheticPodLabelKey:  "test-key",
+					SyntheticPodLabelKey:  _testSyntheticLabelKey,
 				},
 			}
 			err := checker.createKarpenterNodePool(ctx, checker.karpenterNodePool(nodePoolName, timestampStr))
@@ -159,7 +161,7 @@ func TestDeleteAllKarpenterNodePools(t *testing.T) {
 									"metadata": map[string]interface{}{
 										"name": "test-checker-nodepool-1",
 										"labels": map[string]interface{}{
-											"test-key": "123456",
+											_testSyntheticLabelKey: "123456",
 										},
 									},
 								},
@@ -188,7 +190,7 @@ func TestDeleteAllKarpenterNodePools(t *testing.T) {
 									"kind":       "NodePool",
 									"metadata": map[string]interface{}{
 										"labels": map[string]interface{}{
-											"test-key": "123456",
+											_testSyntheticLabelKey: "123456",
 										},
 									},
 								},
@@ -219,7 +221,7 @@ func TestDeleteAllKarpenterNodePools(t *testing.T) {
 									"metadata": map[string]interface{}{
 										"name": "test-checker-nodepool-1",
 										"labels": map[string]interface{}{
-											"test-key": "123456",
+											_testSyntheticLabelKey: "123456",
 										},
 									},
 								},
@@ -254,7 +256,7 @@ func TestDeleteAllKarpenterNodePools(t *testing.T) {
 				dynamicClient: fakeDynamicClient,
 				config: &config.PodStartupConfig{
 					SyntheticPodNamespace: "test",
-					SyntheticPodLabelKey:  "test-key",
+					SyntheticPodLabelKey:  _testSyntheticLabelKey,
 				},
 			}
 			err := checker.deleteAllKarpenterNodePools(ctx)
