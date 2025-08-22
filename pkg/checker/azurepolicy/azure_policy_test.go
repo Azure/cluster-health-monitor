@@ -139,7 +139,7 @@ func TestAzurePolicyChecker_Run(t *testing.T) {
 				g.Expect(err).ToNot(HaveOccurred())
 				g.Expect(result).ToNot(BeNil())
 				g.Expect(result.Status).To(Equal(types.StatusUnhealthy))
-				g.Expect(result.Detail.Code).To(Equal(errCodeAzurePolicyTimeout))
+				g.Expect(result.Detail.Code).To(Equal(errCodeRequestTimeout))
 			},
 		},
 		{
