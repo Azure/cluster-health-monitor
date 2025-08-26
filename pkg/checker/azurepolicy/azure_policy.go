@@ -24,14 +24,14 @@ type WarningCapture interface {
 	GetWarnings() []string
 }
 
-// warningCapturingHandler implements rest.WarningHandlerWithContext to capture warnings
+// warningCapturingHandler implements rest.WarningHandler to capture warnings
 type warningCapturingHandler struct {
 	mu       sync.Mutex
 	warnings []string
 }
 
-// HandleWarningHeaderWithContext captures warning headers
-func (w *warningCapturingHandler) HandleWarningHeaderWithContext(ctx context.Context, code int, agent string, text string) {
+// HandleWarningHeader captures warning headers
+func (w *warningCapturingHandler) HandleWarningHeader(_ int, _ string, text string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.warnings = append(w.warnings, text)
@@ -61,7 +61,7 @@ func (f *defaultClientFactory) CreateClientWithWarningCapture(restConfig *rest.C
 	}
 
 	config := rest.CopyConfig(restConfig)
-	config.WarningHandlerWithContext = warningHandler
+	config.WarningHandler = warningHandler
 
 	client, err := kubernetes.NewForConfig(config)
 	if err != nil {
