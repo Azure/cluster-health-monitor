@@ -127,7 +127,7 @@ func (c AzurePolicyChecker) Run(ctx context.Context) (*types.Result, error) {
 
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
-			return types.Unhealthy(errCodeRequestTimeout, "timed out during pod creation request"), nil
+			return nil, fmt.Errorf("dry run request to create pod timed out: %w", err)
 		}
 		if c.hasAzurePolicyViolation(err.Error()) {
 			return types.Healthy(), nil

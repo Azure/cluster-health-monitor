@@ -136,10 +136,9 @@ func TestAzurePolicyChecker_Run(t *testing.T) {
 				return factory, client, warningCapture
 			},
 			validateResult: func(g *WithT, result *types.Result, err error) {
-				g.Expect(err).ToNot(HaveOccurred())
-				g.Expect(result).ToNot(BeNil())
-				g.Expect(result.Status).To(Equal(types.StatusUnhealthy))
-				g.Expect(result.Detail.Code).To(Equal(errCodeRequestTimeout))
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(err.Error()).To(ContainSubstring("dry run request to create pod timed out"))
+				g.Expect(result).To(BeNil())
 			},
 		},
 		{
