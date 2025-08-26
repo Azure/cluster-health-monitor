@@ -228,14 +228,21 @@ func TestAzurePolicyChecker_hasAzurePolicyViolation(t *testing.T) {
 			},
 		},
 		{
-			name:    "empty message",
+			name:    "no violation - missing azure policy string",
+			message: "Container <synthetic> in your Pod <test-pod> has no <livenessProbe>. Required probes: [\"readinessProbe\", \"livenessProbe\"]",
+			validateRes: func(g *WithT, result bool) {
+				g.Expect(result).To(BeFalse())
+			},
+		},
+		{
+			name:    "no violation - empty message",
 			message: "",
 			validateRes: func(g *WithT, result bool) {
 				g.Expect(result).To(BeFalse())
 			},
 		},
 		{
-			name:    "unrelated message",
+			name:    "no violation - unrelated message",
 			message: "some unrelated message",
 			validateRes: func(g *WithT, result bool) {
 				g.Expect(result).To(BeFalse())

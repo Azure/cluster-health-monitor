@@ -172,14 +172,14 @@ func (c AzurePolicyChecker) hasAzurePolicyViolation(message string) bool {
 	//
 	// Sample error:
 	// Error from server (Forbidden): admission webhook "validation.gatekeeper.sh" denied the request: [azurepolicy-k8sazurev2containerenforceprob-39c2336da6b53f16b908] Container <pause> in your Pod <pause> has no <livenessProbe>. Required probes: ["readinessProbe", "livenessProbe"]
+	azurePolicyString := "azurepolicy-k8sazurev2containerenforceprob"
 	azurePolicyMatchers := []string{
-		"azurepolicy-k8sazurev2containerenforceprob",
 		"has no <livenessProbe>",
 		"has no <readinessProbe>",
 	}
 
 	for _, matcher := range azurePolicyMatchers {
-		if strings.Contains(message, matcher) {
+		if strings.Contains(message, azurePolicyString) && strings.Contains(message, matcher) {
 			return true
 		}
 	}
