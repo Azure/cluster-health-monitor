@@ -20,6 +20,7 @@ import (
 )
 
 // WarningCapture provides access to captured warning headers
+// This interface mainly exists so that it is possible to use a mock implementation in unit tests.
 type WarningCapture interface {
 	GetWarnings() []string
 }
@@ -48,6 +49,7 @@ func (w *warningCapturingHandler) GetWarnings() []string {
 }
 
 // ClientWithWarningCaptureFactory creates Kubernetes clients with warning capture capability
+// This interface mainly exists so that it is possible to use a mock implementation in unit tests.
 type ClientWithWarningCaptureFactory interface {
 	CreateClientWithWarningCapture(restConfig *rest.Config) (kubernetes.Interface, WarningCapture, error)
 }
@@ -75,7 +77,7 @@ func (f *defaultClientFactory) CreateClientWithWarningCapture(restConfig *rest.C
 type AzurePolicyChecker struct {
 	name          string
 	timeout       time.Duration
-	restConfig    *rest.Config // used to create a Kubernetes client with warning capture handler.
+	restConfig    *rest.Config // used by the client factory to create a Kubernetes client with warning capture handler.
 	clientFactory ClientWithWarningCaptureFactory
 }
 
