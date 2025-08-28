@@ -98,11 +98,11 @@ func buildAzurePolicyChecker(config *config.CheckerConfig, kubeClient kubernetes
 	}, nil
 }
 
-func (c AzurePolicyChecker) Name() string {
+func (c *AzurePolicyChecker) Name() string {
 	return c.name
 }
 
-func (c AzurePolicyChecker) Type() config.CheckerType {
+func (c *AzurePolicyChecker) Type() config.CheckerType {
 	return config.CheckTypeAzurePolicy
 }
 
@@ -112,7 +112,7 @@ func (c AzurePolicyChecker) Type() config.CheckerType {
 // are mainly expected to be present when the policy enforcement is set to "Audit". The errors are mainly expected to be present when the
 // policy enforcement is set to "Deny". That said, if a policy has recently had its enforcement mode changed, it is possible to receive
 // both an error and warning headers in the response.
-func (c AzurePolicyChecker) Run(ctx context.Context) (*types.Result, error) {
+func (c *AzurePolicyChecker) Run(ctx context.Context) (*types.Result, error) {
 	// Create client with warning capture
 	client, warningCapture, err := c.clientFactory.CreateClientWithWarningCapture(c.restConfig)
 	if err != nil {
@@ -143,7 +143,7 @@ func (c AzurePolicyChecker) Run(ctx context.Context) (*types.Result, error) {
 }
 
 // createTestPod creates a test pod without probes to trigger Azure Policy warnings
-func (c AzurePolicyChecker) createTestPod() *corev1.Pod {
+func (c *AzurePolicyChecker) createTestPod() *corev1.Pod {
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: fmt.Sprintf("%s-test-pod-%d", c.name, time.Now().Unix()),
@@ -166,7 +166,7 @@ func (c AzurePolicyChecker) createTestPod() *corev1.Pod {
 }
 
 // hasAzurePolicyViolation checks if a string contains Azure Policy violation patterns
-func (c AzurePolicyChecker) hasAzurePolicyViolation(message string) bool {
+func (c *AzurePolicyChecker) hasAzurePolicyViolation(message string) bool {
 	// Sample warning:
 	// Warning: [azurepolicy-k8sazurev2containerenforceprob-74321cbd58a88a12c510] Container <pause> in your Pod <pause> has no <livenessProbe>. Required probes: ["readinessProbe", "livenessProbe"]
 	//
