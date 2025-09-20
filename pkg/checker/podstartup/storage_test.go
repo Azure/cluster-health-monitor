@@ -4,10 +4,14 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/Azure/cluster-health-monitor/pkg/config"
 	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
@@ -202,5 +206,278 @@ func TestDeleteCSIResources(t *testing.T) {
 		err := checker.deleteCSIResources(context.Background(), "timestampstr")
 		g := NewWithT(t)
 		tc.validateFunc(g, err, tc.k8sClient)
+	}
+}
+
+func TestPersistentVolumeClaimGarbageCollection(t *testing.T) {
+	checkerName := "chk"
+	syntheticPodNamespace := "checker-ns"
+	checkerTimeout := 5 * time.Second
+	syntheticPodLabelKey := "cluster-health-monitor/checker-name"
+
+	tests := []struct {
+		name        string
+		client      *k8sfake.Clientset
+		validateRes func(g *WithT, pvcs *corev1.PersistentVolumeClaimList, err error)
+	}{
+		{
+			name: "only removes pvcs older than timeout",
+			client: k8sfake.NewClientset(
+				pvcWithLabels("chk-synthetic-old", syntheticPodNamespace, map[string]string{syntheticPodLabelKey: checkerName}, time.Now().Add(-2*time.Hour)),
+				pvcWithLabels("chk-synthetic-new", syntheticPodNamespace, map[string]string{syntheticPodLabelKey: checkerName}, time.Now()),
+			),
+			validateRes: func(g *WithT, pvcs *corev1.PersistentVolumeClaimList, err error) {
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(pvcs.Items).To(HaveLen(1))
+				g.Expect(pvcs.Items[0].Name).To(Equal("chk-synthetic-new"))
+			},
+		},
+		{
+			name: "no pvcs to delete",
+			client: k8sfake.NewClientset(
+				pvcWithLabels("chk-synthetic-too-new", syntheticPodNamespace, map[string]string{syntheticPodLabelKey: checkerName}, time.Now()), // pvc too new
+				pvcWithLabels("chk-synthetic-no-labels", syntheticPodNamespace, map[string]string{}, time.Now().Add(-2*time.Hour)),              // old pvc wrong labels
+				pvcWithLabels("no-name-prefix", syntheticPodNamespace, map[string]string{}, time.Now().Add(-2*time.Hour)),                       // pvc missing name prefix
+			),
+			validateRes: func(g *WithT, pvcs *corev1.PersistentVolumeClaimList, err error) {
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(pvcs.Items).To(HaveLen(3))
+				actualNames := make([]string, len(pvcs.Items))
+				for i, pvc := range pvcs.Items {
+					actualNames[i] = pvc.Name
+				}
+				g.Expect(actualNames).To(ConsistOf([]string{"chk-synthetic-too-new", "chk-synthetic-no-labels", "no-name-prefix"}))
+			},
+		},
+		{
+			name: "only removes pvc with checker labels",
+			client: k8sfake.NewClientset(
+				pvcWithLabels("chk-synthetic-pvc", syntheticPodNamespace, map[string]string{syntheticPodLabelKey: checkerName}, time.Now().Add(-2*time.Hour)),
+				pvcWithLabels("chk-synthetic-no-label-pvc", syntheticPodNamespace, map[string]string{}, time.Now().Add(-2*time.Hour)),
+			),
+			validateRes: func(g *WithT, pvcs *corev1.PersistentVolumeClaimList, err error) {
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(pvcs.Items).To(HaveLen(1))
+				g.Expect(pvcs.Items[0].Name).To(Equal("chk-synthetic-no-label-pvc"))
+			},
+		},
+		{
+			name: "error listing PVCs",
+			client: func() *k8sfake.Clientset {
+				client := k8sfake.NewClientset()
+				client.PrependReactor("list", "persistentvolumeclaims", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
+					// fail the List call in garbageCollect because it uses a label selector. This prevents breaking the test which also
+					// lists PVCs but does not use a selector.
+					listAction, ok := action.(k8stesting.ListAction)
+					if ok && listAction.GetListRestrictions().Labels.String() != "" {
+						return true, nil, errors.New("error bad things")
+					}
+					return false, nil, nil
+				})
+				return client
+			}(),
+			validateRes: func(g *WithT, pvcs *corev1.PersistentVolumeClaimList, err error) {
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(err.Error()).To(ContainSubstring("failed to list persistent volume claims"))
+			},
+		},
+		{
+			name: "error deleting pvc",
+			client: func() *k8sfake.Clientset {
+				client := k8sfake.NewClientset(
+					pvcWithLabels("chk-synthetic-pvc-1", syntheticPodNamespace, map[string]string{syntheticPodLabelKey: checkerName}, time.Now().Add(-2*time.Hour)),
+					pvcWithLabels("chk-synthetic-pvc-2", syntheticPodNamespace, map[string]string{syntheticPodLabelKey: checkerName}, time.Now().Add(-2*time.Hour)),
+				)
+				// only fail the Delete call for old-pvc-1
+				client.PrependReactor("delete", "persistentvolumeclaims", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
+					deleteAction, ok := action.(k8stesting.DeleteAction)
+					if ok && deleteAction.GetName() == "chk-synthetic-pvc-1" {
+						return true, nil, errors.New("error bad things")
+					}
+					return false, nil, nil
+				})
+				return client
+			}(),
+			validateRes: func(g *WithT, pvcs *corev1.PersistentVolumeClaimList, err error) {
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(err.Error()).To(ContainSubstring("failed to delete outdated persistent volume claim chk-synthetic-pvc-1"))
+				g.Expect(pvcs.Items).To(HaveLen(1)) // one PVC should be deleted
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			g := NewWithT(t)
+
+			checker := &PodStartupChecker{
+				name: checkerName,
+				config: &config.PodStartupConfig{
+					SyntheticPodNamespace:      syntheticPodNamespace,
+					SyntheticPodLabelKey:       syntheticPodLabelKey,
+					SyntheticPodStartupTimeout: 3 * time.Second,
+					MaxSyntheticPods:           5,
+				},
+				timeout:      checkerTimeout,
+				k8sClientset: tt.client,
+			}
+
+			// Run garbage collect
+			err := checker.persistentVolumeClaimGarbageCollection(context.Background())
+
+			// Get PVCs and SCs for validation
+			pvcs, listErr := tt.client.CoreV1().PersistentVolumeClaims(syntheticPodNamespace).List(context.Background(), metav1.ListOptions{})
+			g.Expect(listErr).NotTo(HaveOccurred())
+
+			tt.validateRes(g, pvcs, err)
+		})
+	}
+}
+
+func TestStorageClassGarbageCollection(t *testing.T) {
+	checkerName := "chk"
+	syntheticPodNamespace := "checker-ns"
+	checkerTimeout := 5 * time.Second
+	syntheticPodLabelKey := "cluster-health-monitor/checker-name"
+
+	tests := []struct {
+		name        string
+		client      *k8sfake.Clientset
+		validateRes func(g *WithT, scs *storagev1.StorageClassList, err error)
+	}{
+		{
+			name: "only removes storage classes older than timeout",
+			client: k8sfake.NewClientset(
+				scWithLabels("chk-synthetic-old", map[string]string{syntheticPodLabelKey: checkerName}, time.Now().Add(-2*time.Hour)),
+				scWithLabels("chk-synthetic-new", map[string]string{syntheticPodLabelKey: checkerName}, time.Now()),
+			),
+			validateRes: func(g *WithT, scs *storagev1.StorageClassList, err error) {
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(scs.Items).To(HaveLen(1))
+				g.Expect(scs.Items[0].Name).To(Equal("chk-synthetic-new"))
+			},
+		},
+		{
+			name: "no storage classes to delete",
+			client: k8sfake.NewClientset(
+				scWithLabels("chk-synthetic-too-new", map[string]string{syntheticPodLabelKey: checkerName}, time.Now()), // sc too new
+				scWithLabels("chk-synthetic-no-labels", map[string]string{}, time.Now().Add(-2*time.Hour)),              // old sc wrong labels
+				scWithLabels("no-name-prefix", map[string]string{}, time.Now().Add(-2*time.Hour)),                       // sc missing name prefix
+			),
+			validateRes: func(g *WithT, scs *storagev1.StorageClassList, err error) {
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(scs.Items).To(HaveLen(3))
+				actualNames := make([]string, len(scs.Items))
+				for i, sc := range scs.Items {
+					actualNames[i] = sc.Name
+				}
+				g.Expect(actualNames).To(ConsistOf([]string{"chk-synthetic-too-new", "chk-synthetic-no-labels", "no-name-prefix"}))
+			},
+		},
+		{
+			name: "only removes storage classes with checker labels",
+			client: k8sfake.NewClientset(
+				scWithLabels("chk-synthetic-sc", map[string]string{syntheticPodLabelKey: checkerName}, time.Now().Add(-2*time.Hour)),
+				scWithLabels("chk-synthetic-no-label-sc", map[string]string{}, time.Now().Add(-2*time.Hour)),
+			),
+			validateRes: func(g *WithT, scs *storagev1.StorageClassList, err error) {
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(scs.Items).To(HaveLen(1))
+				g.Expect(scs.Items[0].Name).To(Equal("chk-synthetic-no-label-sc"))
+			},
+		},
+		{
+			name: "error listing storage classes",
+			client: func() *k8sfake.Clientset {
+				client := k8sfake.NewClientset()
+				client.PrependReactor("list", "storageclasses", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
+					// fail the List call in garbageCollect because it uses a label selector. This prevents breaking the test which also
+					// lists storage classes but does not use a selector.
+					listAction, ok := action.(k8stesting.ListAction)
+					if ok && listAction.GetListRestrictions().Labels.String() != "" {
+						return true, nil, errors.New("error bad things")
+					}
+					return false, nil, nil
+				})
+				return client
+			}(),
+			validateRes: func(g *WithT, scs *storagev1.StorageClassList, err error) {
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(err.Error()).To(ContainSubstring("failed to list storage classes"))
+			},
+		},
+		{
+			name: "error deleting storage class",
+			client: func() *k8sfake.Clientset {
+				client := k8sfake.NewClientset(
+					scWithLabels("chk-synthetic-sc-1", map[string]string{syntheticPodLabelKey: checkerName}, time.Now().Add(-2*time.Hour)),
+					scWithLabels("chk-synthetic-sc-2", map[string]string{syntheticPodLabelKey: checkerName}, time.Now().Add(-2*time.Hour)),
+				)
+				// only fail the Delete call for old-sc-1
+				client.PrependReactor("delete", "storageclasses", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
+					deleteAction, ok := action.(k8stesting.DeleteAction)
+					if ok && deleteAction.GetName() == "chk-synthetic-sc-1" {
+						return true, nil, errors.New("error bad things")
+					}
+					return false, nil, nil
+				})
+				return client
+			}(),
+			validateRes: func(g *WithT, scs *storagev1.StorageClassList, err error) {
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(err.Error()).To(ContainSubstring("failed to delete outdated storage class chk-synthetic-sc-1"))
+				g.Expect(scs.Items).To(HaveLen(1)) // one SC should be deleted
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			g := NewWithT(t)
+
+			checker := &PodStartupChecker{
+				name: checkerName,
+				config: &config.PodStartupConfig{
+					SyntheticPodNamespace:      syntheticPodNamespace,
+					SyntheticPodLabelKey:       syntheticPodLabelKey,
+					SyntheticPodStartupTimeout: 3 * time.Second,
+					MaxSyntheticPods:           5,
+				},
+				timeout:      checkerTimeout,
+				k8sClientset: tt.client,
+			}
+
+			// Run garbage collect
+			err := checker.storageClassGarbageCollection(context.Background())
+
+			// Get SCs for validation
+			scs, listErr := tt.client.StorageV1().StorageClasses().List(context.Background(), metav1.ListOptions{})
+			g.Expect(listErr).NotTo(HaveOccurred())
+
+			tt.validateRes(g, scs, err)
+		})
+	}
+}
+
+func pvcWithLabels(name string, namespace string, labels map[string]string, creationTime time.Time) *corev1.PersistentVolumeClaim {
+	return &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              name,
+			Namespace:         namespace,
+			Labels:            labels,
+			CreationTimestamp: metav1.NewTime(creationTime),
+		},
+	}
+}
+
+func scWithLabels(name string, labels map[string]string, creationTime time.Time) *storagev1.StorageClass {
+	return &storagev1.StorageClass{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:              name,
+			Labels:            labels,
+			CreationTimestamp: metav1.NewTime(creationTime),
+		},
 	}
 }

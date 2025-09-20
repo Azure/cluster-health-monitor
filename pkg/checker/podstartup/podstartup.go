@@ -212,6 +212,7 @@ func (c *PodStartupChecker) Run(ctx context.Context) (*types.Result, error) {
 
 // garbageCollect deletes all pods created by the checker that are older than the checker's timeout.
 func (c *PodStartupChecker) garbageCollect(ctx context.Context) error {
+	// TODO: refactor pods garbage collection like storage resources garbage collections
 	podList, err := c.k8sClientset.CoreV1().Pods(c.config.SyntheticPodNamespace).List(ctx, metav1.ListOptions{
 		LabelSelector: labels.SelectorFromSet(labels.Set(c.syntheticPodLabels())).String(),
 	})
@@ -234,7 +235,13 @@ func (c *PodStartupChecker) garbageCollect(ctx context.Context) error {
 		}
 	}
 
-	// TODO: Garbage collection for CSI test resources
+	if err := c.persistentVolumeClaimGarbageCollection(ctx); err != nil {
+		errs = append(errs, fmt.Errorf("failed to garbage collect outdated persistent volume claims: %w", err))
+	}
+
+	if err := c.storageClassGarbageCollection(ctx); err != nil {
+		errs = append(errs, fmt.Errorf("failed to garbage collect outdated storage classes: %w", err))
+	}
 
 	return errors.Join(errs...)
 }

@@ -2,7 +2,9 @@ package podstartup
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"time"
 
 	"github.com/Azure/cluster-health-monitor/pkg/config"
 	corev1 "k8s.io/api/core/v1"
@@ -10,6 +12,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 )
 
 const (
@@ -189,4 +192,47 @@ func (c *PodStartupChecker) deleteCSIResources(ctx context.Context, timestampStr
 		}
 	}
 	return nil
+}
+
+func (c *PodStartupChecker) persistentVolumeClaimGarbageCollection(ctx context.Context) error {
+	pvcs, err := c.k8sClientset.CoreV1().PersistentVolumeClaims(c.config.SyntheticPodNamespace).List(ctx, metav1.ListOptions{
+		LabelSelector: labels.SelectorFromSet(labels.Set(c.syntheticPodLabels())).String(),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list persistent volume claims: %w", err)
+	}
+
+	var errs []error
+
+	for _, pvc := range pvcs.Items {
+		if time.Since(pvc.CreationTimestamp.Time) > c.timeout {
+			err := c.k8sClientset.CoreV1().PersistentVolumeClaims(c.config.SyntheticPodNamespace).Delete(ctx, pvc.Name, metav1.DeleteOptions{})
+			if err != nil && !apierrors.IsNotFound(err) {
+				errs = append(errs, fmt.Errorf("failed to delete outdated persistent volume claim %s: %w", pvc.Name, err))
+			}
+		}
+	}
+
+	return errors.Join(errs...)
+}
+
+func (c *PodStartupChecker) storageClassGarbageCollection(ctx context.Context) error {
+	scs, err := c.k8sClientset.StorageV1().StorageClasses().List(ctx, metav1.ListOptions{
+		LabelSelector: labels.SelectorFromSet(labels.Set(c.syntheticPodLabels())).String(),
+	})
+	if err != nil {
+		return fmt.Errorf("failed to list storage classes: %w", err)
+	}
+
+	var errs []error
+	for _, sc := range scs.Items {
+		if time.Since(sc.CreationTimestamp.Time) > c.timeout {
+			err := c.k8sClientset.StorageV1().StorageClasses().Delete(ctx, sc.Name, metav1.DeleteOptions{})
+			if err != nil && !apierrors.IsNotFound(err) {
+				errs = append(errs, fmt.Errorf("failed to delete outdated storage class %s: %w", sc.Name, err))
+			}
+		}
+	}
+
+	return errors.Join(errs...)
 }
