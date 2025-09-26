@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/Azure/cluster-health-monitor/pkg/config"
+	"github.com/Azure/cluster-health-monitor/pkg/metrics"
 	"github.com/Azure/cluster-health-monitor/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
@@ -18,7 +19,7 @@ type Checker interface {
 	Type() config.CheckerType
 
 	// Run executes the health check logic for the checker.
-	Run(ctx context.Context) (*types.Result, error)
+	Run(ctx context.Context)
 }
 
 type Builder func(cfg *config.CheckerConfig, kubeClient kubernetes.Interface) (Checker, error)
@@ -41,4 +42,34 @@ func Build(cfg *config.CheckerConfig, kubeClient kubernetes.Interface) (Checker,
 		return nil, fmt.Errorf("unrecognized checker type: %q", cfg.Type)
 	}
 	return builder(cfg, kubeClient)
+}
+
+// DefaultRecordResult increments the result counter for a specific checker run.
+// If err is not nil, it records a run error (unknown status).
+// If result is not nil, it records the status from the result.
+func DefaultRecordResult(checker Checker, result *types.Result, err error) {
+	checkerType := string(checker.Type())
+	checkerName := checker.Name()
+	// If there's an error, record as unknown.
+	if err != nil {
+		metrics.CheckerResultCounter.WithLabelValues(checkerType, checkerName, metrics.UnknownStatus, metrics.UnknownCode).Inc()
+		klog.V(3).InfoS("Recorded checker result", "name", checkerName, "type", checkerType, "status", metrics.UnknownStatus)
+		klog.ErrorS(err, "Failed checker run", "name", checkerName, "type", checkerType)
+		return
+	}
+
+	// Record based on result status.
+	var status string
+	var errorCode string
+	switch result.Status {
+	case types.StatusHealthy:
+		status = metrics.HealthyStatus
+		errorCode = metrics.HealthyCode
+	case types.StatusUnhealthy:
+		status = metrics.UnhealthyStatus
+		errorCode = result.Detail.Code
+	}
+
+	metrics.CheckerResultCounter.WithLabelValues(checkerType, checkerName, status, errorCode).Inc()
+	klog.V(3).InfoS("Recorded checker result", "name", checkerName, "type", checkerType, "status", status, "errorCode", errorCode, "message", result.Detail.Message)
 }

@@ -108,13 +108,18 @@ func (c *AzurePolicyChecker) Type() config.CheckerType {
 	return config.CheckTypeAzurePolicy
 }
 
-// Run executes the Azure Policy check by doing a dry run creation of a test pod that violates default AKS Deployment Safeguards policies.
+func (c *AzurePolicyChecker) Run(ctx context.Context) {
+	result, err := c.check(ctx)
+	checker.DefaultRecordResult(c, result, err)
+}
+
+// check executes the Azure Policy check by doing a dry run creation of a test pod that violates default AKS Deployment Safeguards policies.
 // Currently, it is specifically trying to violate the "Ensure cluster containers have readiness or liveness probes configured" policy.
 // If azure policy is running, we are expecting a response with warning headers or an error indicating the policy violations. The headers
 // are mainly expected to be present when the policy enforcement is set to "Audit". The errors are mainly expected to be present when the
 // policy enforcement is set to "Deny". That said, if a policy has recently had its enforcement mode changed, it is possible to receive
 // both an error and warning headers in the response.
-func (c *AzurePolicyChecker) Run(ctx context.Context) (*types.Result, error) {
+func (c *AzurePolicyChecker) check(ctx context.Context) (*types.Result, error) {
 	// Create client with warning capture
 	client, warningCapture, err := c.clientFactory.CreateClientWithWarningCapture(c.restConfig)
 	if err != nil {

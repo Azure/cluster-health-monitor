@@ -65,9 +65,14 @@ func (c *MetricsServerChecker) Type() config.CheckerType {
 	return config.CheckTypeMetricsServer
 }
 
-// Run executes the metrics server check.
+func (c *MetricsServerChecker) Run(ctx context.Context) {
+	result, err := c.check(ctx)
+	checker.DefaultRecordResult(c, result, err)
+}
+
+// check executes the metrics server check.
 // It attempts to call the metrics server API to verify it's available and responding.
-func (c *MetricsServerChecker) Run(ctx context.Context) (*types.Result, error) {
+func (c *MetricsServerChecker) check(ctx context.Context) (*types.Result, error) {
 	err := c.checkMetricsServerAPI(ctx)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {

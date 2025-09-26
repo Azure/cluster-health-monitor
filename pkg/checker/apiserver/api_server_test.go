@@ -21,7 +21,7 @@ import (
 	k8stesting "k8s.io/client-go/testing"
 )
 
-func TestAPIServerChecker_Run(t *testing.T) {
+func TestAPIServerChecker_check(t *testing.T) {
 	checkerName := "test-api-server-checker"
 	configMapNamespace := "test-namespace"
 	configMapLabelKey := "cluster-health-monitor/checker-name"
@@ -183,7 +183,7 @@ func TestAPIServerChecker_Run(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 			defer cancel()
 
-			result, err := apiServerChecker.Run(ctx)
+			result, err := apiServerChecker.check(ctx)
 			tt.validateResult(g, result, err)
 		})
 	}

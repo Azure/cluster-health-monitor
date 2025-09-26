@@ -103,11 +103,16 @@ func (c *PodStartupChecker) Type() config.CheckerType {
 	return config.CheckTypePodStartup
 }
 
+func (c *PodStartupChecker) Run(ctx context.Context) {
+	result, err := c.check(ctx)
+	checker.DefaultRecordResult(c, result, err)
+}
+
 // Run executes the pod startup checker logic. It creates synthetic pods to measure the startup time. The startup time is defined as the
 // duration between the pod creation and the container running, minus the image pull duration (including waiting). If it is within the
 // allowed limit, the checker is considered healthy. Otherwise, it is considered unhealthy. Before each run, the checker also attempts to
 // garbage collect any leftover synthetic pods from previous runs that may not have been previously deleted due to errors or other issues.
-func (c *PodStartupChecker) Run(ctx context.Context) (*types.Result, error) {
+func (c *PodStartupChecker) check(ctx context.Context) (*types.Result, error) {
 	// Garbage collect any leftover synthetic pods previously created by this checker.
 	if err := c.garbageCollect(ctx); err != nil {
 		// Logging instead of returning an error here to avoid failing the checker run.

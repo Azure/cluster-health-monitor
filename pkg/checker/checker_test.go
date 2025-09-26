@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/Azure/cluster-health-monitor/pkg/config"
-	"github.com/Azure/cluster-health-monitor/pkg/types"
 	. "github.com/onsi/gomega"
 	"k8s.io/client-go/kubernetes"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
@@ -14,9 +13,9 @@ import (
 
 type fakeChecker struct{ name string }
 
-func (f *fakeChecker) Name() string                                   { return f.name }
-func (f *fakeChecker) Run(ctx context.Context) (*types.Result, error) { return nil, nil }
-func (f *fakeChecker) Type() config.CheckerType                       { return config.CheckerType("fake") }
+func (f *fakeChecker) Name() string             { return f.name }
+func (f *fakeChecker) Run(ctx context.Context)  {}
+func (f *fakeChecker) Type() config.CheckerType { return config.CheckerType("fake") }
 
 func fakeBuilder(cfg *config.CheckerConfig, kubeClient kubernetes.Interface) (Checker, error) {
 	if cfg.Name == "fail" {

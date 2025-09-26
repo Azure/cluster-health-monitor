@@ -39,7 +39,7 @@ func (m *mockClientFactory) CreateClientWithWarningCapture(restConfig *rest.Conf
 	return m.client, m.warningCapture, nil
 }
 
-func TestAzurePolicyChecker_Run(t *testing.T) {
+func TestAzurePolicyChecker_check(t *testing.T) {
 	checkerName := "test-azure-policy-checker"
 
 	tests := []struct {
@@ -172,7 +172,7 @@ func TestAzurePolicyChecker_Run(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 			defer cancel()
 
-			result, err := azurePolicyChecker.Run(ctx)
+			result, err := azurePolicyChecker.check(ctx)
 			tt.validateResult(g, result, err)
 		})
 	}

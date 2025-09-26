@@ -74,9 +74,14 @@ func (c DNSChecker) Type() config.CheckerType {
 	return config.CheckTypeDNS
 }
 
-// Run executes the DNS check.
+func (c DNSChecker) Run(ctx context.Context) {
+	result, err := c.check(ctx)
+	checker.DefaultRecordResult(c, result, err)
+}
+
+// check executes the DNS check.
 // It will check either CoreDNS or LocalDNS for the configured domain.
-func (c DNSChecker) Run(ctx context.Context) (*types.Result, error) {
+func (c DNSChecker) check(ctx context.Context) (*types.Result, error) {
 	if c.config.CheckLocalDNS {
 		return c.checkLocalDNS(ctx)
 	} else {

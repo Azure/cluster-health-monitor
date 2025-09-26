@@ -56,10 +56,15 @@ func (c APIServerChecker) Type() config.CheckerType {
 	return config.CheckTypeAPIServer
 }
 
-// Run executes the API server check.
+func (c APIServerChecker) Run(ctx context.Context) {
+	result, err := c.check(ctx)
+	checker.DefaultRecordResult(c, result, err)
+}
+
+// check executes the API server check.
 // It creates an empty ConfigMap, gets it, and then deletes it.
 // If all operations succeed, the check is considered healthy.
-func (c APIServerChecker) Run(ctx context.Context) (*types.Result, error) {
+func (c APIServerChecker) check(ctx context.Context) (*types.Result, error) {
 	// Garbage collect any leftover ConfigMaps previously created by this checker.
 	if err := c.garbageCollect(ctx); err != nil {
 		// Logging instead of returning an error to avoid failing the checker run.

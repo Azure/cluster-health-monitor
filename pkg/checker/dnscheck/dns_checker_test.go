@@ -23,7 +23,7 @@ func (f *fakeResolver) lookupHost(ctx context.Context, ip, domain string, queryT
 	return f.lookupHostFunc(ctx, ip, domain, queryTimeout)
 }
 
-func TestDNSChecker_Run(t *testing.T) {
+func TestDNSChecker_check(t *testing.T) {
 	t.Parallel()
 	testCases := []struct {
 		name          string
@@ -166,7 +166,7 @@ func TestDNSChecker_Run(t *testing.T) {
 				resolver:   tc.mockResolver,
 			}
 
-			res, err := chk.Run(context.Background())
+			res, err := chk.check(context.Background())
 			tc.validateRes(g, res, err)
 		})
 	}
@@ -194,7 +194,7 @@ func TestDNSChecker_QueryTimeoutUsedByResolver(t *testing.T) {
 		resolver:   mockResolver,
 	}
 
-	_, err := chk.Run(context.Background())
+	_, err := chk.check(context.Background())
 	g.Expect(err).ToNot(HaveOccurred())
 	g.Expect(capturedTimeout).To(Equal(5 * time.Second))
 }

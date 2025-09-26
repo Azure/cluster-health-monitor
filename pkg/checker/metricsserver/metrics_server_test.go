@@ -14,7 +14,7 @@ import (
 	metricsfake "k8s.io/metrics/pkg/client/clientset/versioned/fake"
 )
 
-func TestMetricsServerChecker_Run(t *testing.T) {
+func TestMetricsServerChecker_check(t *testing.T) {
 	t.Parallel()
 
 	testCases := []struct {
@@ -83,7 +83,7 @@ func TestMetricsServerChecker_Run(t *testing.T) {
 				metricsClient: tc.client,
 			}
 
-			res, err := checker.Run(context.Background())
+			res, err := checker.check(context.Background())
 			tc.validateRes(g, res, err)
 		})
 	}

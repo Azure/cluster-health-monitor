@@ -77,7 +77,7 @@ func failingDialer(errMsg string) Dialer {
 // Test Functions
 // =============================================================================
 
-func TestPodStartupChecker_Run(t *testing.T) {
+func TestPodStartupChecker_check(t *testing.T) {
 	// Defines adjustable parameters for the test scenarios
 	type testScenario struct {
 		podName                string
@@ -496,7 +496,7 @@ func TestPodStartupChecker_Run(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), podStartupChecker.timeout)
 			defer cancel()
 
-			result, err := podStartupChecker.Run(ctx)
+			result, err := podStartupChecker.check(ctx)
 			tt.validateResult(g, result, err, scenario.fakeDynamicClient)
 		})
 	}
