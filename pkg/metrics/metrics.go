@@ -29,6 +29,6 @@ var (
 			Name: "cluster_health_monitor_coredns_pod_result_total",
 			Help: "Total number of CoreDNS pod checker runs, labeled by status and code",
 		},
-		[]string{"checker_type", "checker_name", "pod_name", "status", "error_code"},
+		[]string{"checker_type", "checker_name", "pod", "status", "error_code"},
 	)
 )
