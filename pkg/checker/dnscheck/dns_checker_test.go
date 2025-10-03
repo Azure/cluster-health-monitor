@@ -209,9 +209,9 @@ func TestDNSChecker_checkCoreDNSPerPod(t *testing.T) {
 		validateRes  func(g *WithT, res []*checker.Result, err error)
 	}{
 		{
-			name: "All CoreDNS pods Healthy",
+			name: "All CoreDNS Pods Healthy",
 			client: k8sfake.NewClientset(
-				makeCoreDNSEndpointSlice([]string{"10.0.0.11", "10.0.0.12"}),
+				makeCoreDNSEndpointSliceWithHostName([]string{"10.0.0.11", "10.0.0.12"}),
 			),
 			mockResolver: &fakeResolver{
 				lookupHostFunc: func(ctx context.Context, ip, domain string, queryTimeout time.Duration) ([]string, error) {
@@ -227,10 +227,8 @@ func TestDNSChecker_checkCoreDNSPerPod(t *testing.T) {
 			},
 		},
 		{
-			name: "CoreDNS Pods Not Ready",
-			client: k8sfake.NewClientset(
-				makeCoreDNSService("10.0.0.10"),
-			),
+			name:   "CoreDNS Pods Not Ready",
+			client: k8sfake.NewClientset(), // No endpoint slices.
 			mockResolver: &fakeResolver{
 				lookupHostFunc: func(ctx context.Context, ip, domain string, queryTimeout time.Duration) ([]string, error) {
 					return []string{"1.2.3.4"}, nil
@@ -238,14 +236,14 @@ func TestDNSChecker_checkCoreDNSPerPod(t *testing.T) {
 			},
 			validateRes: func(g *WithT, res []*checker.Result, err error) {
 				g.Expect(err).To(HaveOccurred())
-				g.Expect(err.Error()).To(Equal(errPodsNotReady.Error()))
+				g.Expect(err).To(Equal(errPodsNotReady))
 				g.Expect(res).To(HaveLen(0))
 			},
 		},
 		{
 			name: "CoreDNS Pod Timeout",
 			client: k8sfake.NewClientset(
-				makeCoreDNSEndpointSlice([]string{"10.0.0.11"}),
+				makeCoreDNSEndpointSliceWithHostName([]string{"10.0.0.11"}),
 			),
 			mockResolver: &fakeResolver{
 				lookupHostFunc: func(ctx context.Context, ip, domain string, queryTimeout time.Duration) ([]string, error) {
@@ -257,6 +255,23 @@ func TestDNSChecker_checkCoreDNSPerPod(t *testing.T) {
 				g.Expect(res).To(HaveLen(1))
 				g.Expect(res[0].Status).To(Equal(checker.StatusUnhealthy))
 				g.Expect(res[0].Detail.Code).To(Equal(ErrCodePodTimeout))
+			},
+		},
+		{
+			name: "CoreDNS Pods Hostname Missing",
+			client: k8sfake.NewClientset(
+				makeCoreDNSEndpointSlice([]string{"10.0.0.11"}),
+			),
+			mockResolver: &fakeResolver{
+				lookupHostFunc: func(ctx context.Context, ip, domain string, queryTimeout time.Duration) ([]string, error) {
+					return []string{"1.2.3.4"}, nil
+				},
+			},
+			validateRes: func(g *WithT, res []*checker.Result, err error) {
+				g.Expect(err).ToNot(HaveOccurred())
+				g.Expect(res).To(HaveLen(1))
+				g.Expect(res[0].Status).To(Equal(checker.StatusUnhealthy))
+				g.Expect(res[0].Detail.Code).To(Equal(ErrCodePodNameMissing))
 			},
 		},
 	}
@@ -326,6 +341,28 @@ func makeCoreDNSService(ip string) *corev1.Service {
 }
 
 func makeCoreDNSEndpointSlice(ips []string) *discoveryv1.EndpointSlice {
+	endpoints := []discoveryv1.Endpoint{}
+	for _, ip := range ips {
+		ready := true
+		endpoints = append(endpoints, discoveryv1.Endpoint{
+			Addresses: []string{ip},
+			Conditions: discoveryv1.EndpointConditions{
+				Ready: &ready,
+			},
+		})
+	}
+	return &discoveryv1.EndpointSlice{
+		ObjectMeta: metav1.ObjectMeta{
+			Namespace: coreDNSNamespace,
+			Labels: map[string]string{
+				discoveryv1.LabelServiceName: coreDNSServiceName,
+			},
+		},
+		Endpoints: endpoints,
+	}
+}
+
+func makeCoreDNSEndpointSliceWithHostName(ips []string) *discoveryv1.EndpointSlice {
 	endpoints := []discoveryv1.Endpoint{}
 	for i, ip := range ips {
 		ready := true
