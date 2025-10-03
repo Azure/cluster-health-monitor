@@ -91,7 +91,7 @@ func (c DNSChecker) Run(ctx context.Context) {
 			return
 		}
 		for _, res := range results {
-			checker.RecordCoreDNSPodResult(c, res, nil)
+			checker.RecordCoreDNSPodResult(c, res)
 		}
 		return
 	}
@@ -149,20 +149,19 @@ func (c DNSChecker) checkCoreDNSPods(ctx context.Context) ([]*checker.Result, er
 	var results []*checker.Result
 	for _, pod := range pods {
 		if pod.Hostname == nil {
-			results = append(results, checker.Unhealthy(ErrCodePodNameMissing, "Found CoreDNS pod with no name"))
-			continue
+			return nil, fmt.Errorf("found CoreDNS pod missing hostname")
 		}
 		podname := *pod.Hostname
+		isPodHealthy := true
 		for _, ip := range pod.Addresses {
 			if _, err := c.resolver.lookupHost(ctx, ip, c.config.Domain, c.config.QueryTimeout); err != nil {
-				if errors.Is(err, context.DeadlineExceeded) {
-					results = append(results, checker.Unhealthy(ErrCodePodTimeout, "CoreDNS pod query timed out").WithPod(podname))
-					continue
-				}
+				isPodHealthy = false
 				results = append(results, checker.Unhealthy(ErrCodePodError, fmt.Sprintf("CoreDNS pod query error: %s", err)).WithPod(podname))
-			} else {
-				results = append(results, checker.Healthy().WithPod(podname))
+				break
 			}
+		}
+		if isPodHealthy {
+			results = append(results, checker.Healthy().WithPod(podname))
 		}
 	}
 

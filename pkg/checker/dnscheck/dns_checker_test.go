@@ -254,7 +254,7 @@ func TestDNSChecker_checkCoreDNSPerPod(t *testing.T) {
 				g.Expect(err).ToNot(HaveOccurred())
 				g.Expect(res).To(HaveLen(1))
 				g.Expect(res[0].Status).To(Equal(checker.StatusUnhealthy))
-				g.Expect(res[0].Detail.Code).To(Equal(ErrCodePodTimeout))
+				g.Expect(res[0].Detail.Code).To(Equal(ErrCodePodError))
 			},
 		},
 		{
@@ -268,10 +268,9 @@ func TestDNSChecker_checkCoreDNSPerPod(t *testing.T) {
 				},
 			},
 			validateRes: func(g *WithT, res []*checker.Result, err error) {
-				g.Expect(err).ToNot(HaveOccurred())
-				g.Expect(res).To(HaveLen(1))
-				g.Expect(res[0].Status).To(Equal(checker.StatusUnhealthy))
-				g.Expect(res[0].Detail.Code).To(Equal(ErrCodePodNameMissing))
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(err.Error()).To(Equal("found CoreDNS pod missing hostname"))
+				g.Expect(res).To(HaveLen(0))
 			},
 		},
 	}
