@@ -27,6 +27,9 @@ type Detail struct {
 
 	// Message is a string that provides a human-readable message about the unhealthy result.
 	Message string
+
+	// Pod is the name of the pod associated with this result, if applicable.
+	Pod string
 }
 
 // Healthy is a helper function to create a healthy Result.
@@ -55,4 +58,9 @@ func Skipped(message string) *Result {
 			Message: message,
 		},
 	}
+}
+
+func (r *Result) WithPod(pod string) *Result {
+	r.Detail.Pod = pod
+	return r
 }

@@ -76,14 +76,14 @@ func RecordResult(checker Checker, result *Result, err error) {
 // RecordCoreDNSPodResult increments the result counter for a specific core DNS pod check.
 // If err is not nil, it records a run error (unknown status).
 // If result is not nil, it records the status from the result.
-func RecordCoreDNSPodResult(checker Checker, podName string, result *Result, err error) {
+func RecordCoreDNSPodResult(checker Checker, result *Result, err error) {
 	checkerType := string(checker.Type())
 	checkerName := checker.Name()
 	// If there's an error, record as unknown.
 	if err != nil {
-		metrics.CoreDNSPodResultCounter.WithLabelValues(checkerType, checkerName, podName, metrics.UnknownStatus, metrics.UnknownCode).Inc()
-		klog.V(3).InfoS("Recorded checker result", "name", checkerName, "type", checkerType, "podName", podName, "status", metrics.UnknownStatus)
-		klog.ErrorS(err, "Failed checker run", "name", checkerName, "type", checkerType, "podName", podName)
+		metrics.CoreDNSPodResultCounter.WithLabelValues(checkerType, checkerName, metrics.UnknownStatus, metrics.UnknownCode).Inc()
+		klog.V(3).InfoS("Recorded checker result", "name", checkerName, "type", checkerType, "status", metrics.UnknownStatus)
+		klog.ErrorS(err, "Failed checker run", "name", checkerName, "type", checkerType)
 		return
 	}
 
@@ -99,6 +99,6 @@ func RecordCoreDNSPodResult(checker Checker, podName string, result *Result, err
 		errorCode = result.Detail.Code
 	}
 
-	metrics.CoreDNSPodResultCounter.WithLabelValues(checkerType, checkerName, podName, status, errorCode).Inc()
-	klog.V(3).InfoS("Recorded checker result", "name", checkerName, "type", checkerType, "podName", podName, "status", status, "errorCode", errorCode, "message", result.Detail.Message)
+	metrics.CoreDNSPodResultCounter.WithLabelValues(checkerType, checkerName, result.Detail.Pod, status, errorCode).Inc()
+	klog.V(3).InfoS("Recorded checker result", "name", checkerName, "type", checkerType, "podName", result.Detail.Pod, "status", status, "errorCode", errorCode, "message", result.Detail.Message)
 }
