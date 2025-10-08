@@ -2,9 +2,14 @@
 package e2e
 
 import (
+	"github.com/Azure/cluster-health-monitor/pkg/checker/dnscheck"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gexec"
+)
+
+const (
+	errCodePodError = dnscheck.ErrCodePodError
 )
 
 var (
@@ -40,7 +45,7 @@ var _ = Describe("DNS per pod checker metrics", Ordered, ContinueOnFailure, func
 		}, "30s", "5s").Should(BeTrue(), "DNS checker metrics did not report healthy status within the timeout period")
 	})
 
-	It("should report unhealthy status for CoreDNS checkers when CoreDNS pods are not ready", func() {
+	It("should report unhealthy status for CoreDNSPerPod checkers when CoreDNS pods are not ready", func() {
 		By("Getting the CoreDNS deployment")
 		deployment, err := getCoreDNSDeployment(clientset)
 		Expect(err).NotTo(HaveOccurred(), "Failed to get CoreDNS deployment")
@@ -74,15 +79,15 @@ var _ = Describe("DNS per pod checker metrics", Ordered, ContinueOnFailure, func
 			return deployment.Status.AvailableReplicas == 0
 		}, "30s", "2s").Should(BeTrue(), "Not all CoreDNS pods terminated")
 
-		By("Waiting for DNS checker metrics to report unhealthy status with pods not ready")
+		By("Waiting for DNS checker metrics to report unhealthy status with pods with error")
 		Eventually(func() bool {
-			matched, foundCheckers := verifyCheckerResultMetrics(localPort, coreDNSCheckerNames, checkerTypeDNS, metricsUnhealthyStatus, dnsPodsNotReadyErrorCode)
+			matched, foundCheckers := verifyCheckerResultMetrics(localPort, coreDNSPerPodCheckerNames, checkerTypeDNS, metricsUnhealthyStatus, errCodePodError)
 			if !matched {
-				GinkgoWriter.Printf("Expected DNS checkers to be unhealthy and pods not ready: %v, found: %v\n", coreDNSCheckerNames, foundCheckers)
+				GinkgoWriter.Printf("Expected DNS checkers to be unhealthy and pods with error: %v, found: %v\n", coreDNSPerPodCheckerNames, foundCheckers)
 				return false
 			}
-			GinkgoWriter.Printf("Found unhealthy and pods not ready DNS checker metric for %v\n", foundCheckers)
+			GinkgoWriter.Printf("Found unhealthy and pods with error DNS checker metric for %v\n", foundCheckers)
 			return true
-		}, "30s", "5s").Should(BeTrue(), "DNS checker metrics did not report unhealthy status and pods not ready within the timeout period")
+		}, "30s", "5s").Should(BeTrue(), "DNS checker metrics did not report unhealthy status and pods with error within the timeout period")
 	})
 })
