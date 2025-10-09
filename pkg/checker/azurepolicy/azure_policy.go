@@ -152,7 +152,7 @@ func (c *AzurePolicyChecker) check(ctx context.Context) (*checker.Result, error)
 func (c *AzurePolicyChecker) createTestPod() *corev1.Pod {
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: fmt.Sprintf("%s-test-pod-%d", c.name, time.Now().Unix()),
+			Name: fmt.Sprintf("%s-test-pod-%d", strings.ToLower(c.name), time.Now().Unix()),
 			// The default configuration of azure-policy is not evaluated in the "kube-system" namespace. However, pod creation requests are
 			// rejected by the API server before azure policy can be evaluated if attempting to perform an operation without the necessary
 			// permission. There is a role to create pods in the "default" namespace which is why we are using it.

@@ -145,7 +145,7 @@ func (c *PodStartupChecker) check(ctx context.Context) (*checker.Result, error) 
 			len(pods.Items), c.config.MaxSyntheticPods)
 	}
 
-	nodePoolName := fmt.Sprintf("%s-nodepool-%s", c.name, timeStampStr)
+	nodePoolName := fmt.Sprintf("%s-nodepool-%s", strings.ToLower(c.name), timeStampStr)
 
 	if c.config.EnableNodeProvisioningTest {
 		karpenterNodePoolCRDPresent, err := c.isKarpenterNodePoolCRDPresent(ctx)
