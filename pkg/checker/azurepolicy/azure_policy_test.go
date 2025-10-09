@@ -57,7 +57,7 @@ func TestAzurePolicyChecker_check(t *testing.T) {
 					if createAction.GetCreateOptions().DryRun[0] != metav1.DryRunAll {
 						return true, nil, errors.New("Expected dry run but got actual pod creation")
 					}
-					return true, nil, errors.New("Error from server (Forbidden): admission webhook \"validation.gatekeeper.sh\" denied the request: [azurepolicy-k8sazurev2containerenforceprob-39c2336da6b53f16b908] Container <synthetic> in your Pod <test-pod> has no <livenessProbe>")
+					return true, nil, errors.New("Error from server (Forbidden): admission webhook \"validation.gatekeeper.sh\" denied the request: [azurepolicy-k8sazurev1restrictedlabels-4a872f727137b85dcf39] Label <{\"kubernetes.azure.com\"}> is reserved for AKS use only")
 				})
 				warningCapture := &mockWarningCapture{warnings: []string{}}
 				factory := &mockClientFactory{client: client, warningCapture: warningCapture}
@@ -77,7 +77,7 @@ func TestAzurePolicyChecker_check(t *testing.T) {
 					return true, nil, nil
 				})
 				warningCapture := &mockWarningCapture{
-					warnings: []string{"Warning: [azurepolicy-k8sazurev2containerenforceprob-74321cbd58a88a12c510] Container <synthetic> in your Pod <test-pod> has no <readinessProbe>. Required probes: [\"readinessProbe\", \"livenessProbe\"]"},
+					warnings: []string{"Warning: [azurepolicy-k8sazurev1restrictedlabels-4a872f727137b85dcf39] Label <{\"kubernetes.azure.com\"}> is reserved for AKS use only"},
 				}
 				factory := &mockClientFactory{client: client, warningCapture: warningCapture}
 				return factory, client, warningCapture
@@ -195,8 +195,8 @@ func TestAzurePolicyChecker_createTestPod(t *testing.T) {
 	// Namespace should be default
 	g.Expect(pod.ObjectMeta.Namespace).To(Equal("default"))
 
-	// Pod does not have readiness or liveness probes so that it triggers policy violations
-	g.Expect(pod.Spec.Containers).To(HaveLen(1))
+	// Pod has AKS restricted label
+	g.Expect(pod.ObjectMeta.Labels).To(HaveKey("kubernetes.azure.com"))
 	g.Expect(pod.Spec.Containers[0].ReadinessProbe).To(BeNil())
 	g.Expect(pod.Spec.Containers[0].LivenessProbe).To(BeNil())
 
@@ -214,21 +214,21 @@ func TestAzurePolicyChecker_hasAzurePolicyViolation(t *testing.T) {
 	}{
 		{
 			name:    "Azure Policy violation - realistic warning",
-			message: "Warning: [azurepolicy-k8sazurev2containerenforceprob-74321cbd58a88a12c510] Container <synthetic> in your Pod <test-pod> has no <livenessProbe>. Required probes: [\"readinessProbe\", \"livenessProbe\"]",
+			message: "Warning: [azurepolicy-k8sazurev1restrictedlabels-4a872f727137b85dcf39] Label <{\"kubernetes.azure.com\"}> is reserved for AKS use only",
 			validateRes: func(g *WithT, result bool) {
 				g.Expect(result).To(BeTrue())
 			},
 		},
 		{
 			name:    "Azure Policy violation - realistic error",
-			message: "Error from server (Forbidden): admission webhook \"validation.gatekeeper.sh\" denied the request: [azurepolicy-k8sazurev2containerenforceprob-39c2336da6b53f16b908] Container <synthetic> in your Pod <test-pod> has no <livenessProbe>",
+			message: "Error from server (Forbidden): admission webhook \"validation.gatekeeper.sh\" denied the request: [azurepolicy-k8sazurev1restrictedlabels-4a872f727137b85dcf39] Label <{\"kubernetes.azure.com\"}> is reserved for AKS use only",
 			validateRes: func(g *WithT, result bool) {
 				g.Expect(result).To(BeTrue())
 			},
 		},
 		{
-			name:    "no violation - missing azure policy string",
-			message: "Container <synthetic> in your Pod <test-pod> has no <livenessProbe>. Required probes: [\"readinessProbe\", \"livenessProbe\"]",
+			name:    "no violation - missing azurePolicyString",
+			message: "Label <{\"kubernetes.azure.com\"}> is reserved for AKS use only",
 			validateRes: func(g *WithT, result bool) {
 				g.Expect(result).To(BeFalse())
 			},

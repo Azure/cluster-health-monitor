@@ -148,7 +148,7 @@ func (c *AzurePolicyChecker) check(ctx context.Context) (*checker.Result, error)
 	return checker.Unhealthy(ErrCodeAzurePolicyEnforcementMissing, "no Azure Policy violations detected"), nil
 }
 
-// createTestPod creates a test pod without probes to trigger Azure Policy warnings
+// createTestPod creates a test pod with restricted labels to trigger Azure Policy warnings
 func (c *AzurePolicyChecker) createTestPod() *corev1.Pod {
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -157,6 +157,9 @@ func (c *AzurePolicyChecker) createTestPod() *corev1.Pod {
 			// rejected by the API server before azure policy can be evaluated if attempting to perform an operation without the necessary
 			// permission. There is a role to create pods in the "default" namespace which is why we are using it.
 			Namespace: "default",
+			Labels: map[string]string{
+				"kubernetes.azure.com": "restricted", // Intentionally using a restricted label to trigger potential policy violations
+			},
 		},
 		Spec: corev1.PodSpec{
 			RestartPolicy: corev1.RestartPolicyNever,
@@ -164,7 +167,6 @@ func (c *AzurePolicyChecker) createTestPod() *corev1.Pod {
 				{
 					Name:  "synthetic",
 					Image: "mcr.microsoft.com/azurelinux/base/nginx:1.25.4-4-azl3.0.20250702",
-					// Intentionally no liveness or readiness probes to trigger Azure Policy warnings
 				},
 			},
 		},
@@ -174,14 +176,13 @@ func (c *AzurePolicyChecker) createTestPod() *corev1.Pod {
 // hasAzurePolicyViolation checks if a string contains Azure Policy violation patterns
 func (c *AzurePolicyChecker) hasAzurePolicyViolation(message string) bool {
 	// Sample warning:
-	// Warning: [azurepolicy-k8sazurev2containerenforceprob-74321cbd58a88a12c510] Container <pause> in your Pod <pause> has no <livenessProbe>. Required probes: ["readinessProbe", "livenessProbe"]
+	// Warning: [azurepolicy-k8sazurev1restrictedlabels-4a872f727137b85dcf39] Label <{\"kubernetes.azure.com\"}> is reserved for AKS use only
 	//
 	// Sample error:
-	// Error from server (Forbidden): admission webhook "validation.gatekeeper.sh" denied the request: [azurepolicy-k8sazurev2containerenforceprob-39c2336da6b53f16b908] Container <pause> in your Pod <pause> has no <livenessProbe>. Required probes: ["readinessProbe", "livenessProbe"]
-	azurePolicyString := "azurepolicy-k8sazurev2containerenforceprob"
+	// Error from server (Forbidden): admission webhook "validation.gatekeeper.sh" denied the request: [azurepolicy-k8sazurev1restrictedlabels-4a872f727137b85dcf39] Label <{\"kubernetes.azure.com\"}> is reserved for AKS use only
+	azurePolicyString := "azurepolicy-k8sazurev1restrictedlabels"
 	azurePolicyMatchers := []string{
-		"has no <livenessProbe>",
-		"has no <readinessProbe>",
+		"is reserved for AKS use only",
 	}
 
 	for _, matcher := range azurePolicyMatchers {
