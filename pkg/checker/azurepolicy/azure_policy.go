@@ -113,7 +113,8 @@ func (c *AzurePolicyChecker) Run(ctx context.Context) {
 }
 
 // check executes the Azure Policy check by doing a dry run creation of a test pod that violates default AKS Deployment Safeguards policies.
-// Currently, it is specifically trying to violate the "Ensure cluster containers have readiness or liveness probes configured" policy.
+// Currently, it is specifically trying to violate the "Ensure cluster containers have readiness or liveness probes configured" policy or
+// the "No AKS restricted labels" policy.
 // If azure policy is running, we are expecting a response with warning headers or an error indicating the policy violations. The headers
 // are mainly expected to be present when the policy enforcement is set to "Audit". The errors are mainly expected to be present when the
 // policy enforcement is set to "Deny". That said, if a policy has recently had its enforcement mode changed, it is possible to receive
@@ -148,7 +149,7 @@ func (c *AzurePolicyChecker) check(ctx context.Context) (*checker.Result, error)
 	return checker.Unhealthy(ErrCodeAzurePolicyEnforcementMissing, "no Azure Policy violations detected"), nil
 }
 
-// createTestPod creates a test pod with restricted labels to trigger Azure Policy warnings
+// createTestPod creates a test pod without probes and with restricted labels to trigger Azure Policy warnings
 func (c *AzurePolicyChecker) createTestPod() *corev1.Pod {
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -167,6 +168,7 @@ func (c *AzurePolicyChecker) createTestPod() *corev1.Pod {
 				{
 					Name:  "synthetic",
 					Image: "mcr.microsoft.com/azurelinux/base/nginx:1.25.4-4-azl3.0.20250702",
+					// Intentionally not setting readiness or liveness probes to trigger potential policy violations
 				},
 			},
 		},
@@ -175,13 +177,17 @@ func (c *AzurePolicyChecker) createTestPod() *corev1.Pod {
 
 // hasAzurePolicyViolation checks if a string contains Azure Policy violation patterns
 func (c *AzurePolicyChecker) hasAzurePolicyViolation(message string) bool {
-	// Sample warning:
+	// Sample warnings:
 	// Warning: [azurepolicy-k8sazurev1restrictedlabels-4a872f727137b85dcf39] Label <{\"kubernetes.azure.com\"}> is reserved for AKS use only
+	// Warning: [azurepolicy-k8sazurev2containerenforceprob-74321cbd58a88a12c510] Container <pause> in your Pod <pause> has no <livenessProbe>. Required probes: ["readinessProbe", "livenessProbe"]
 	//
-	// Sample error:
+	// Sample errors:
 	// Error from server (Forbidden): admission webhook "validation.gatekeeper.sh" denied the request: [azurepolicy-k8sazurev1restrictedlabels-4a872f727137b85dcf39] Label <{\"kubernetes.azure.com\"}> is reserved for AKS use only
+	// // Error from server (Forbidden): admission webhook "validation.gatekeeper.sh" denied the request: [azurepolicy-k8sazurev2containerenforceprob-39c2336da6b53f16b908] Container <pause> in your Pod <pause> has no <livenessProbe>. Required probes: ["readinessProbe", "livenessProbe"]
 	azurePolicyString := "azurepolicy"
 	azurePolicyMatchers := []string{
+		"has no <livenessProbe>",
+		"has no <readinessProbe>",
 		"is reserved for AKS use only",
 	}
 
