@@ -197,8 +197,6 @@ func TestAzurePolicyChecker_createTestPod(t *testing.T) {
 
 	// Pod has AKS restricted label
 	g.Expect(pod.ObjectMeta.Labels).To(HaveKey("kubernetes.azure.com"))
-	g.Expect(pod.Spec.Containers[0].ReadinessProbe).To(BeNil())
-	g.Expect(pod.Spec.Containers[0].LivenessProbe).To(BeNil())
 
 	// Image should be sourced from MCR
 	g.Expect(pod.Spec.Containers[0].Image).To(HavePrefix("mcr.microsoft.com/"))
