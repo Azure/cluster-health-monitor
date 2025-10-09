@@ -180,7 +180,7 @@ func (c *AzurePolicyChecker) hasAzurePolicyViolation(message string) bool {
 	//
 	// Sample error:
 	// Error from server (Forbidden): admission webhook "validation.gatekeeper.sh" denied the request: [azurepolicy-k8sazurev1restrictedlabels-4a872f727137b85dcf39] Label <{\"kubernetes.azure.com\"}> is reserved for AKS use only
-	azurePolicyString := "azurepolicy-k8sazurev1restrictedlabels"
+	azurePolicyString := "azurepolicy"
 	azurePolicyMatchers := []string{
 		"is reserved for AKS use only",
 	}
