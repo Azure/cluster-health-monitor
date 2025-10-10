@@ -21,7 +21,7 @@
           target: "CoreDNS"
           domain: "mcr.microsoft.com"
           queryTimeout: "1s"
-       - name: "TestInternalCoreDNSPerPod"
+      - name: "TestInternalCoreDNSPerPod"
         type: "DNS"
         interval: "5s"
         timeout: "3s"
