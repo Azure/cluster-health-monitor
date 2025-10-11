@@ -33,25 +33,25 @@ var _ = Describe("DNS per pod checker metrics", Ordered, ContinueOnFailure, func
 	})
 
 	It("should report healthy status for CoreDNSPerPod checkers", func() {
-		By("Waiting for DNS checker metrics to report healthy status")
+		By("Waiting for CoreDNSPerPod checker metrics to report healthy status")
 		Eventually(func() bool {
 			matched, foundCheckers := verifyCheckerResultMetrics(localPort, coreDNSPerPodCheckerNames, checkerTypeDNS, metricsHealthyStatus, metricsHealthyErrorCode)
 			if !matched {
-				GinkgoWriter.Printf("Expected DNS checkers to be healthy: %v, found: %v\n", coreDNSPerPodCheckerNames, foundCheckers)
+				GinkgoWriter.Printf("Expected CoreDNSPerPod checkers to be healthy: %v, found: %v\n", coreDNSPerPodCheckerNames, foundCheckers)
 				return false
 			}
-			GinkgoWriter.Printf("Found healthy DNS checker metric for %v\n", foundCheckers)
+			GinkgoWriter.Printf("Found healthy CoreDNSPerPod checker metric for %v\n", foundCheckers)
 			return true
-		}, "30s", "5s").Should(BeTrue(), "DNS checker metrics did not report healthy status within the timeout period")
+		}, "30s", "5s").Should(BeTrue(), "CoreDNSPerPod checker metrics did not report healthy status within the timeout period")
 	})
 
 	It("should report unhealthy status for CoreDNSPerPod checkers when CoreDNS pods are not ready", func() {
-		By("Getting the CoreDNS deployment")
+		By("Getting the CoreDNSPerPod deployment")
 		deployment, err := getCoreDNSDeployment(clientset)
 		Expect(err).NotTo(HaveOccurred(), "Failed to get CoreDNS deployment")
 		originalReplicas := *deployment.Spec.Replicas
 
-		By("Scaling down CoreDNS deployment to 0 replicas to simulate unhealthy state")
+		By("Scaling down CoreDNSPerPod deployment to 0 replicas to simulate unhealthy state")
 		err = updateCoreDNSDeploymentReplicas(clientset, 0)
 		Expect(err).NotTo(HaveOccurred(), "Failed to scale down CoreDNS deployment")
 
@@ -79,15 +79,15 @@ var _ = Describe("DNS per pod checker metrics", Ordered, ContinueOnFailure, func
 			return deployment.Status.AvailableReplicas == 0
 		}, "30s", "2s").Should(BeTrue(), "Not all CoreDNS pods terminated")
 
-		By("Waiting for DNS checker metrics to report unhealthy status with pods with error")
+		By("Waiting for CoreDNSPerPod checker metrics to report unhealthy status with pods with error")
 		Eventually(func() bool {
 			matched, foundCheckers := verifyCheckerResultMetrics(localPort, coreDNSPerPodCheckerNames, checkerTypeDNS, metricsUnhealthyStatus, errCodePodError)
 			if !matched {
-				GinkgoWriter.Printf("Expected DNS checkers to be unhealthy and pods with error: %v, found: %v\n", coreDNSPerPodCheckerNames, foundCheckers)
+				GinkgoWriter.Printf("Expected CoreDNSPerPod checkers to be unhealthy and pods with error: %v, found: %v\n", coreDNSPerPodCheckerNames, foundCheckers)
 				return false
 			}
-			GinkgoWriter.Printf("Found unhealthy and pods with error DNS checker metric for %v\n", foundCheckers)
+			GinkgoWriter.Printf("Found unhealthy and pods with error CoreDNSPerPod checker metric for %v\n", foundCheckers)
 			return true
-		}, "30s", "5s").Should(BeTrue(), "DNS checker metrics did not report unhealthy status and pods with error within the timeout period")
+		}, "30s", "5s").Should(BeTrue(), "CoreDNSPerPod checker metrics did not report unhealthy status and pods with error within the timeout period")
 	})
 })

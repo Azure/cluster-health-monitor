@@ -26,18 +26,18 @@ import (
 const (
 	// Kubernetes resource names.
 	// Note that these names must match with the applied manifests/overlays/test.
-	namespace            = "kube-system"
-	deploymentName       = "cluster-health-monitor"
-	checkerConfigMapName = "cluster-health-monitor-config"
+	namespace      = "kube-system"
+	deploymentName = "cluster-health-monitor"
 
 	remoteMetricsPort = 9800  // remoteMetricsPort is the fixed port used by the service in the container.
 	baseLocalPort     = 10000 // baseLocalPort is the base local port for dynamic allocation.
 
-	checkerResultMetricName = "cluster_health_monitor_checker_result_total"
-	metricsCheckerTypeLabel = "checker_type"
-	metricsCheckerNameLabel = "checker_name"
-	metricsStatusLabel      = "status"
-	metricsErrorCodeLabel   = "error_code"
+	checkerResultMetricName    = "cluster_health_monitor_checker_result_total"
+	coreDNSPodResultMetricName = "cluster_health_monitor_coredns_pod_result_total"
+	metricsCheckerTypeLabel    = "checker_type"
+	metricsCheckerNameLabel    = "checker_name"
+	metricsStatusLabel         = "status"
+	metricsErrorCodeLabel      = "error_code"
 )
 
 // safeSessionKill is shorthand to kill the provided gexec.Session if it is not nil.
@@ -297,14 +297,25 @@ func verifyCheckerResultMetrics(localPort int, expectedChkNames []string, expect
 		return false, nil
 	}
 
-	metricFamily, found := metricsData[checkerResultMetricName]
+	checkerResultMetricFamily, found := metricsData[checkerResultMetricName]
 	if !found {
 		return false, nil
 	}
 
+	/*
+		coreDNSPodResultMetricFamily, found := metricsData[coreDNSPodResultMetricName]
+		if !found {
+			return false, nil
+		}
+	*/
+
+	metrics := []*dto.Metric{}
+	metrics = append(metrics, checkerResultMetricFamily.Metric...)
+	//metrics = append(metrics, coreDNSPodResultMetricFamily.Metric...)
+
 	// Get checkers reporting the expected type, status, and error code.
 	foundCheckers := make(map[string]struct{})
-	for _, m := range metricFamily.Metric {
+	for _, m := range metrics {
 		labels := make(map[string]string)
 		for _, label := range m.Label {
 			labels[label.GetName()] = label.GetValue()
