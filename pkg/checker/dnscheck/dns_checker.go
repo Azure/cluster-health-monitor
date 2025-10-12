@@ -149,11 +149,10 @@ func (c DNSChecker) checkCoreDNSPods(ctx context.Context) ([]*checker.Result, er
 	var results []*checker.Result
 	for _, endpointSlice := range endpointSlices {
 		isPodHealthy := true
-		podname := "unknown"
-		if len(endpointSlice.TargetRef.Name) == 0 {
+		if endpointSlice.TargetRef == nil || len(endpointSlice.TargetRef.Name) == 0 {
 			return nil, fmt.Errorf("found CoreDNS endpoint missing pod name in targetRef")
 		}
-		podname = endpointSlice.TargetRef.Name
+		podname := endpointSlice.TargetRef.Name
 		for _, ip := range endpointSlice.Addresses {
 			if _, err := c.resolver.lookupHost(ctx, ip, c.config.Domain, c.config.QueryTimeout); err != nil {
 				isPodHealthy = false

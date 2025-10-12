@@ -211,7 +211,7 @@ func TestDNSChecker_checkCoreDNSPerPod(t *testing.T) {
 		{
 			name: "All CoreDNS Pods Healthy",
 			client: k8sfake.NewClientset(
-				makeCoreDNSEndpointSliceWithHostName([]string{"10.0.0.11", "10.0.0.12"}),
+				makeCoreDNSEndpointSliceWithTargetref([]string{"10.0.0.11", "10.0.0.12"}),
 			),
 			mockResolver: &fakeResolver{
 				lookupHostFunc: func(ctx context.Context, ip, domain string, queryTimeout time.Duration) ([]string, error) {
@@ -243,7 +243,7 @@ func TestDNSChecker_checkCoreDNSPerPod(t *testing.T) {
 		{
 			name: "CoreDNS Pod Timeout",
 			client: k8sfake.NewClientset(
-				makeCoreDNSEndpointSliceWithHostName([]string{"10.0.0.11"}),
+				makeCoreDNSEndpointSliceWithTargetref([]string{"10.0.0.11"}),
 			),
 			mockResolver: &fakeResolver{
 				lookupHostFunc: func(ctx context.Context, ip, domain string, queryTimeout time.Duration) ([]string, error) {
@@ -269,7 +269,7 @@ func TestDNSChecker_checkCoreDNSPerPod(t *testing.T) {
 			},
 			validateRes: func(g *WithT, res []*checker.Result, err error) {
 				g.Expect(err).To(HaveOccurred())
-				g.Expect(err.Error()).To(Equal("found CoreDNS pod missing hostname"))
+				g.Expect(err.Error()).To(Equal("found CoreDNS endpoint missing pod name in targetRef"))
 				g.Expect(res).To(HaveLen(0))
 			},
 		},
@@ -361,17 +361,21 @@ func makeCoreDNSEndpointSlice(ips []string) *discoveryv1.EndpointSlice {
 	}
 }
 
-func makeCoreDNSEndpointSliceWithHostName(ips []string) *discoveryv1.EndpointSlice {
+func makeCoreDNSEndpointSliceWithTargetref(ips []string) *discoveryv1.EndpointSlice {
 	endpoints := []discoveryv1.Endpoint{}
 	for i, ip := range ips {
 		ready := true
-		hostName := fmt.Sprintf("coredns-%d", i)
+		podName := fmt.Sprintf("coredns-%d", i)
 		endpoints = append(endpoints, discoveryv1.Endpoint{
 			Addresses: []string{ip},
 			Conditions: discoveryv1.EndpointConditions{
 				Ready: &ready,
 			},
-			Hostname: &hostName,
+			TargetRef: &corev1.ObjectReference{
+				Kind:      "Pod",
+				Namespace: coreDNSNamespace,
+				Name:      podName,
+			},
 		})
 	}
 	return &discoveryv1.EndpointSlice{
