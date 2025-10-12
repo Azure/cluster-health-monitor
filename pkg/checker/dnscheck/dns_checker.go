@@ -87,11 +87,11 @@ func (c DNSChecker) Run(ctx context.Context) {
 	case config.DNSCheckTargetCoreDNSPerPod:
 		results, err := c.checkCoreDNSPods(ctx)
 		if err != nil {
-			checker.RecordResult(c, nil, err)
+			checker.RecordCoreDNSPodResult(c, nil, err)
 			return
 		}
 		for _, res := range results {
-			checker.RecordCoreDNSPodResult(c, res)
+			checker.RecordCoreDNSPodResult(c, res, nil)
 		}
 		return
 	}
@@ -116,7 +116,7 @@ func (c DNSChecker) checkCoreDNS(ctx context.Context) (*checker.Result, error) {
 	}
 
 	// Check CoreDNS pods.
-	podIPs, err := getCoreDNSPods(ctx, c.kubeClient)
+	podIPs, err := getCoreDNSEndpointSlices(ctx, c.kubeClient)
 	if errors.Is(err, errPodsNotReady) {
 		return checker.Unhealthy(ErrCodePodsNotReady, "CoreDNS Pods are not ready"), nil
 	}
@@ -141,19 +141,20 @@ func (c DNSChecker) checkCoreDNS(ctx context.Context) (*checker.Result, error) {
 // checkCoreDNS queries CoreDNS pods and return a result for each of the pods.
 func (c DNSChecker) checkCoreDNSPods(ctx context.Context) ([]*checker.Result, error) {
 	// Check CoreDNS pods.
-	pods, err := getCoreDNSPods(ctx, c.kubeClient)
+	endpointSlices, err := getCoreDNSEndpointSlices(ctx, c.kubeClient)
 	if err != nil {
 		return nil, err
 	}
 
 	var results []*checker.Result
-	for _, pod := range pods {
-		if pod.Hostname == nil {
-			return nil, fmt.Errorf("found CoreDNS pod missing hostname")
-		}
-		podname := *pod.Hostname
+	for _, endpointSlice := range endpointSlices {
 		isPodHealthy := true
-		for _, ip := range pod.Addresses {
+		podname := "unknown"
+		if len(endpointSlice.TargetRef.Name) == 0 {
+			return nil, fmt.Errorf("found CoreDNS endpoint missing pod name in targetRef")
+		}
+		podname = endpointSlice.TargetRef.Name
+		for _, ip := range endpointSlice.Addresses {
 			if _, err := c.resolver.lookupHost(ctx, ip, c.config.Domain, c.config.QueryTimeout); err != nil {
 				isPodHealthy = false
 				results = append(results, checker.Unhealthy(ErrCodePodError, fmt.Sprintf("CoreDNS pod query error: %s", err)).WithPod(podname))
@@ -199,8 +200,8 @@ func getCoreDNSSvcIP(ctx context.Context, kubeClient kubernetes.Interface) (stri
 	return svc.Spec.ClusterIP, nil
 }
 
-// getCoreDNSPods returns all CoreDNS pods in the cluster as DNSTargets.
-func getCoreDNSPods(ctx context.Context, kubeClient kubernetes.Interface) ([]discoveryv1.Endpoint, error) {
+// getCoreDNSEndpointSlices returns all CoreDNS pods in the cluster as DNSTargets.
+func getCoreDNSEndpointSlices(ctx context.Context, kubeClient kubernetes.Interface) ([]discoveryv1.Endpoint, error) {
 	endpointSliceList, err := kubeClient.DiscoveryV1().EndpointSlices(coreDNSNamespace).List(ctx, metav1.ListOptions{
 		LabelSelector: discoveryv1.LabelServiceName + "=" + coreDNSServiceName,
 	})

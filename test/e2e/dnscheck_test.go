@@ -6,6 +6,7 @@ import (
 
 	"github.com/Azure/cluster-health-monitor/pkg/checker/dnscheck"
 	"github.com/Azure/cluster-health-monitor/pkg/config"
+	"github.com/Azure/cluster-health-monitor/pkg/metrics"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gexec"
@@ -17,6 +18,9 @@ const (
 	dnsPodsNotReadyErrorCode   = dnscheck.ErrCodePodsNotReady
 	dnsServiceTimeoutErrorCode = dnscheck.ErrCodeServiceTimeout
 	localDNSTimeoutErrorCode   = dnscheck.ErrCodeLocalDNSTimeout
+
+	unKnownErrorStatus = metrics.UnknownStatus
+	unKnownErrorCode   = metrics.UnknownCode
 )
 
 var (
@@ -25,6 +29,9 @@ var (
 	coreDNSCheckerNames  = []string{"TestInternalCoreDNS", "TestExternalCoreDNS"}
 	localDNSCheckerNames = []string{"TestInternalLocalDNS", "TestExternalLocalDNS"}
 	dnsCheckerNames      = append(coreDNSCheckerNames, localDNSCheckerNames...)
+
+	// Expected CoreDNS pod checkers.
+	coreDNSCheckerPodNames = []string{"TestInternalCoreDNSPerPod", "TestExternalCoreDNSPerPod"}
 )
 
 var _ = Describe("DNS checker metrics", Ordered, ContinueOnFailure, func() {
@@ -41,7 +48,7 @@ var _ = Describe("DNS checker metrics", Ordered, ContinueOnFailure, func() {
 		safeSessionKill(session)
 	})
 
-	It("should report healthy status for CoreDNS and LocalDNS checkers", func() {
+	It("should report healthy status for CoreDNS, LocalDNS and CoreDNSPod checkers", func() {
 		By("Verifying LocalDNS is properly configured in the pod via the DNS patch")
 		pod, err := getClusterHealthMonitorPod(clientset)
 		Expect(err).NotTo(HaveOccurred(), "Failed to get cluster health monitor pod")
@@ -64,6 +71,14 @@ var _ = Describe("DNS checker metrics", Ordered, ContinueOnFailure, func() {
 				return false
 			}
 			GinkgoWriter.Printf("Found healthy DNS checker metric for %v\n", foundCheckers)
+
+			coreDNSPodCheckerMatched, foundcoreDNSPodCheckers := verifyCoreDNSPodCheckerResultMetrics(localPort, coreDNSCheckerPodNames, checkerTypeDNS, metricsHealthyStatus, metricsHealthyErrorCode)
+			if !coreDNSPodCheckerMatched {
+				GinkgoWriter.Printf("Expected CoreDNS pod checkers to be healthy: %v, found: %v\n", coreDNSCheckerPodNames, foundcoreDNSPodCheckers)
+				return false
+			}
+			GinkgoWriter.Printf("Found healthy CoreDNS pod checker metric for %v\n", foundcoreDNSPodCheckers)
+
 			return true
 		}, "30s", "5s").Should(BeTrue(), "DNS checker metrics did not report healthy status within the timeout period")
 	})
@@ -110,6 +125,14 @@ var _ = Describe("DNS checker metrics", Ordered, ContinueOnFailure, func() {
 				return false
 			}
 			GinkgoWriter.Printf("Found unhealthy and pods not ready DNS checker metric for %v\n", foundCheckers)
+
+			dnsPodCheckersMatched, foundDNSPodCheckers := verifyCoreDNSPodCheckerResultMetrics(localPort, coreDNSCheckerPodNames, checkerTypeDNS, unKnownErrorStatus, unKnownErrorCode)
+			if !dnsPodCheckersMatched {
+				GinkgoWriter.Printf("Expected DNS pod checkers to be unhealthy and pods not ready: %v, found: %v\n", coreDNSCheckerPodNames, foundDNSPodCheckers)
+				return false
+			}
+			GinkgoWriter.Printf("Found unhealthy and pods not ready DNS pod checker metric for %v\n", foundDNSPodCheckers)
+
 			return true
 		}, "30s", "5s").Should(BeTrue(), "DNS checker metrics did not report unhealthy status and pods not ready within the timeout period")
 	})

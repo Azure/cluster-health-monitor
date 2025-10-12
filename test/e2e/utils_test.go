@@ -288,34 +288,36 @@ func isMockLocalDNSAvailable(clientset *kubernetes.Clientset) bool {
 		bindLocalDNS.Status.NumberAvailable == bindLocalDNS.Status.DesiredNumberScheduled
 }
 
+func verifyCoreDNSPodCheckerResultMetrics(localPort int, expectedChkNames []string, expectedType, expectedStatus, expectedErrorCode string) (bool, map[string]struct{}) {
+	return verifyCheckerResultMetricsHelper(coreDNSPodResultMetricName, localPort, expectedChkNames, expectedType, expectedStatus, expectedErrorCode)
+}
+
+func verifyCheckerResultMetrics(localPort int, expectedChkNames []string, expectedType, expectedStatus, expectedErrorCode string) (bool, map[string]struct{}) {
+	return verifyCheckerResultMetricsHelper(checkerResultMetricName, localPort, expectedChkNames, expectedType, expectedStatus, expectedErrorCode)
+}
+
 // verifyCheckerResultMetrics checks if all the checker result metrics match the expected type, status, and error code.
 // It returns true if all checker names match the criteria, false otherwise.
-func verifyCheckerResultMetrics(localPort int, expectedChkNames []string, expectedType, expectedStatus, expectedErrorCode string) (bool, map[string]struct{}) {
+func verifyCheckerResultMetricsHelper(metricName string, localPort int, expectedChkNames []string, expectedType, expectedStatus, expectedErrorCode string) (bool, map[string]struct{}) {
 	metricsData, err := getMetrics(localPort)
 	if err != nil {
 		GinkgoWriter.Printf("Failed to get metrics: %v\n", err)
 		return false, nil
 	}
 
-	checkerResultMetricFamily, found := metricsData[checkerResultMetricName]
+	for name, mf := range metricsData {
+		GinkgoWriter.Printf("Metric: %s, Type: %s, #Metrics: %d\n", name, mf.GetType().String(), len(mf.Metric))
+	}
+
+	metricFamily, found := metricsData[metricName]
 	if !found {
+		GinkgoWriter.Printf("%s not found\n", metricName)
 		return false, nil
 	}
 
-	/*
-		coreDNSPodResultMetricFamily, found := metricsData[coreDNSPodResultMetricName]
-		if !found {
-			return false, nil
-		}
-	*/
-
-	metrics := []*dto.Metric{}
-	metrics = append(metrics, checkerResultMetricFamily.Metric...)
-	//metrics = append(metrics, coreDNSPodResultMetricFamily.Metric...)
-
 	// Get checkers reporting the expected type, status, and error code.
 	foundCheckers := make(map[string]struct{})
-	for _, m := range metrics {
+	for _, m := range metricFamily.Metric {
 		labels := make(map[string]string)
 		for _, label := range m.Label {
 			labels[label.GetName()] = label.GetValue()
