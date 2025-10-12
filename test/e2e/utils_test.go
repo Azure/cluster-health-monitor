@@ -305,10 +305,6 @@ func verifyCheckerResultMetricsHelper(metricName string, localPort int, expected
 		return false, nil
 	}
 
-	for name, mf := range metricsData {
-		GinkgoWriter.Printf("Metric: %s, Type: %s, #Metrics: %d\n", name, mf.GetType().String(), len(mf.Metric))
-	}
-
 	metricFamily, found := metricsData[metricName]
 	if !found {
 		GinkgoWriter.Printf("%s not found\n", metricName)
