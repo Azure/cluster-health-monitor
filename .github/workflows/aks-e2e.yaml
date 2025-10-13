@@ -44,13 +44,20 @@ jobs:
     runs-on: ubuntu-latest
     needs: [get_ref]
     permissions:
-      contents: read
       id-token: write
+      contents: read
+      actions: read
+    env:
+      AZURE_CORE_OUTPUT: none
+      SUBSCRIPTION_ID: ${{ secrets.SUBSCRIPTION_ID }}
     steps:
       - name: Checkout code
         uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
         with:
           ref: ${{ needs.get_ref.outputs.checkout_ref }}
+
+      - name: Set up Kubectl
+        uses: azure/setup-kubectl@776406bce94f63e41d621b960d78ee25c8b76ede # v4.0.1
       
       - name: Azure Login
         uses: azure/login@6c251865b4e6290e7b78be643ea2d005bc51f69a # v2.1.1
@@ -59,36 +66,81 @@ jobs:
           tenant-id: ${{ secrets.TENANT_ID }}
           subscription-id: ${{ secrets.SUBSCRIPTION_ID }}
       
-      - name: Create ACR
-        env:
-          SUBSCRIPTION_ID: ${{ secrets.SUBSCRIPTION_ID }}
-        run: |
-          # Create resource group if it doesn't exist
-          az group create \
-            --name "chm-e2e-${{ github.run_id }}" \
-            --location "canadacentral" \
-            --subscription "$SUBSCRIPTION_ID"
-          
-          # Create Azure Container Registry
-          az acr create \
-            --name "chme2e${{ github.run_id }}" \
-            --resource-group "chm-e2e${{ github.run_id }}" \
-            --location "canadacentral" \
-            --sku "Basic" \
-            --subscription "$SUBSCRIPTION_ID"
+      - name: Create Resource Group
+        uses: Azure/CLI@9f7ce6f37c31b777ec6c6b6d1dfe7db79f497956 # v2.2.0
+        with:
+          azcliversion: latest
+          inlineScript: |
+            az group create \
+              --name "chme2e${{ github.run_id }}" \
+              --location "canadacentral" \
+              --subscription "$SUBSCRIPTION_ID"
       
-      - name: Run provision script
-        env:
-          SUBSCRIPTION_ID: ${{ secrets.SUBSCRIPTION_ID }}
-        run: |
-          # Create AKS Automatic cluster and deploy
-          ./hack/provision-aks-and-deploy.sh \
-            --subscription "$SUBSCRIPTION_ID" \
-            --location "canadacentral" \
-            --resource-group "chm-e2e-${{ github.run_id }}" \
-            --cluster-name "chm-e2e-${{ github.run_id }}" \
-            --acr-resource-id "/subscriptions/$SUBSCRIPTION_ID/resourceGroups/chme2e${{ github.run_id }}/providers/Microsoft.ContainerRegistry/registries/chme2e${{ github.run_id }}" \
-            --aks-automatic
+      - name: Create Azure Container Registry
+        uses: Azure/CLI@9f7ce6f37c31b777ec6c6b6d1dfe7db79f497956 # v2.2.0
+        with:
+          azcliversion: latest
+          inlineScript: |
+            az acr create \
+              --name "chme2e${{ github.run_id }}" \
+              --resource-group "chme2e${{ github.run_id }}" \
+              --location "canadacentral" \
+              --sku "Basic" \
+              --subscription "$SUBSCRIPTION_ID"
+
+      - name: Build and Push Image to ACR
+        uses: Azure/CLI@9f7ce6f37c31b777ec6c6b6d1dfe7db79f497956 # v2.2.0
+        with:
+          azcliversion: latest
+          inlineScript: |
+            # Build and push image to ACR
+            az acr build \
+              --registry "chme2e${{ github.run_id }}" \
+              --image "cluster-health-monitor:${{ github.sha }}" \
+              --file "docker/cluster-health-monitor.Dockerfile" \
+              .
+      
+      - name: Create AKS Cluster
+        uses: Azure/CLI@9f7ce6f37c31b777ec6c6b6d1dfe7db79f497956 # v2.2.0
+        with:
+          azcliversion: latest
+          inlineScript: |
+            az aks create \
+              --name "chme2e${{ github.run_id }}" \
+              --resource-group "chme2e${{ github.run_id }}" \
+              --location "canadacentral" \
+              --attach-acr "/subscriptions/${SUBSCRIPTION_ID}/resourceGroups/chme2e${{ github.run_id }}/providers/Microsoft.ContainerRegistry/registries/chme2e${{ github.run_id }}" \
+              --subscription "$SUBSCRIPTION_ID"
+      
+      - name: Get AKS Credentials
+        uses: Azure/CLI@9f7ce6f37c31b777ec6c6b6d1dfe7db79f497956 # v2.2.0
+        id: get_credentials
+        with:
+          azcliversion: latest
+          inlineScript: |
+            KUBECONFIG_CONTENT=$(az aks get-credentials \
+              --name "chme2e${{ github.run_id }}" \
+              --resource-group "chme2e${{ github.run_id }}" \
+              --subscription "$SUBSCRIPTION_ID" \
+              --file -)
+            echo "kubeconfig=$(echo "$KUBECONFIG_CONTENT" | base64 -w 0)" >> $GITHUB_OUTPUT
+      
+      - name: Set AKS Context
+        uses: Azure/k8s-set-context@212a19233d93f03eceaac31ae5a1d1acf650b6ef # v4.0.1
+        with:
+          method: kubeconfig
+          kubeconfig: ${{ steps.get_credentials.outputs.kubeconfig }}
+      
+      - name: Deploy Kubernetes Resources
+        uses: Azure/k8s-deploy@6f7c489cecd8da05646259d9fa3daae92e095c7b # v5.0.4
+        with:
+          action: deploy
+          manifests: |
+            manifests/overlays/test/
+          strategy: basic
+          images: |
+            chme2e${{ github.run_id }}.azurecr.io/cluster-health-monitor:${{ github.sha }}
+          force: true
 
   cleanup:
     name: "Cleanup Resources"
@@ -98,6 +150,9 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    env:
+      AZURE_CORE_OUTPUT: none
+      SUBSCRIPTION_ID: ${{ secrets.SUBSCRIPTION_ID }}
     steps:
       - name: Checkout code
         uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
@@ -111,14 +166,14 @@ jobs:
           tenant-id: ${{ secrets.TENANT_ID }}
           subscription-id: ${{ secrets.SUBSCRIPTION_ID }}
       
-      - name: Run cleanup script
-        env:
-          SUBSCRIPTION_ID: ${{ secrets.SUBSCRIPTION_ID }}
-        run: |
-          # Delete resource group and all resources
-          ./hack/provision-aks-and-deploy.sh \
-            --subscription "$SUBSCRIPTION_ID" \
-            --location "canadacentral" \
-            --resource-group "chm-e2e-${{ github.run_id }}" \
-            --cluster-name "chm-e2e-${{ github.run_id }}" \
-            --cleanup
+      - name: Cleanup Resources
+        uses: Azure/CLI@9f7ce6f37c31b777ec6c6b6d1dfe7db79f497956 # v2.2.0
+        with:
+          azcliversion: latest
+          inlineScript: |
+            # Delete resource group and all resources
+            az group delete \
+              --name "chme2e${{ github.run_id }}" \
+              --subscription "$SUBSCRIPTION_ID" \
+              --yes \
+              --no-wait
