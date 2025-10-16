@@ -62,10 +62,38 @@ jobs:
           echo "Using region: $REGION"
           echo "REGION=$REGION" >> $GITHUB_OUTPUT
 
+  validate_sku:
+    name: "Validate SKU"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      sku: ${{ steps.set_sku.outputs.SKU }}
+    steps:
+      # validate and set the sku parameter
+      - id: set_sku
+        env:
+          SKU_ARG: ${{ github.event.client_payload.slash_command.args.named.sku }}
+        run: |
+          SKU="${SKU_ARG:-automatic}"
+          
+          # Validate SKU is one of the allowed values
+          case "$SKU" in
+            automatic|base)
+              echo "Using SKU: $SKU"
+              ;;
+            *)
+              echo "Error: Invalid SKU provided. Allowed values: automatic, base"
+              exit 1
+              ;;
+          esac
+          
+          echo "SKU=$SKU" >> $GITHUB_OUTPUT
+
   provision_azure:
     name: "Provision Azure"
     runs-on: ubuntu-latest
-    needs: [get_ref, validate_region]
+    needs: [get_ref, validate_region, validate_sku]
     permissions:
       id-token: write
       contents: read
@@ -135,13 +163,13 @@ jobs:
               --resource-group "chme2e${{ github.run_id }}" \
               --location "${{ needs.validate_region.outputs.region }}" \
               --subscription "$SUBSCRIPTION_ID" \
-              --sku "automatic" \
+              --sku "${{ needs.validate_sku.outputs.sku }}" \
               --no-ssh-key
 
   deploy_kubernetes_resources:
     name: "Deploy Kubernetes Resources"
     runs-on: ubuntu-latest
-    needs: [get_ref, provision_azure, validate_region]
+    needs: [get_ref, provision_azure]
     permissions:
       id-token: write
       contents: read
@@ -201,7 +229,7 @@ jobs:
   cleanup:
     name: "Cleanup Resources"
     runs-on: ubuntu-latest
-    needs: [get_ref, provision_azure, deploy_kubernetes_resources, validate_region]
+    needs: [deploy_kubernetes_resources]
     if: always()
     permissions:
       contents: read
