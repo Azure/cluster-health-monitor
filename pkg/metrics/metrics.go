@@ -23,8 +23,8 @@ var (
 		[]string{"checker_type", "checker_name", "status", "error_code"},
 	)
 
-	// CoreDNSPodResultCounter is a Prometheus counter that tracks the results of CoreDNS pod checker runs.
-	CoreDNSPodResultCounter = prometheus.NewCounterVec(
+	// PodHealthResultCounter is a Prometheus counter that tracks the results of CoreDNS pod checker runs.
+	PodHealthResultCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "cluster_health_monitor_pod_health_result_total",
 			Help: "Total number of per-pod health checks, labeled by status and code",
