@@ -33,7 +33,7 @@ const (
 	baseLocalPort     = 10000 // baseLocalPort is the base local port for dynamic allocation.
 
 	checkerResultMetricName    = "cluster_health_monitor_checker_result_total"
-	coreDNSPodResultMetricName = "cluster_health_monitor_coredns_pod_result_total"
+	coreDNSPodResultMetricName = "cluster_health_monitor_pod_health_result_total"
 	metricsCheckerTypeLabel    = "checker_type"
 	metricsCheckerNameLabel    = "checker_name"
 	metricsStatusLabel         = "status"
