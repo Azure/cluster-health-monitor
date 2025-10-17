@@ -23,6 +23,7 @@ import (
 )
 
 const (
+	// Wow I made a change. I wonder if it's ok to test.
 	defaultConfigPath = "/etc/cluster-health-monitor/config.yaml"
 )
 
