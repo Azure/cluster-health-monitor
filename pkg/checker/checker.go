@@ -81,7 +81,7 @@ func RecordCoreDNSPodResult(checker Checker, podName string, result *Result, err
 	checkerName := checker.Name()
 	// If there's an error, record as unknown.
 	if err != nil {
-		metrics.CoreDNSPodResultCounter.WithLabelValues(checkerType, checkerName, podName, metrics.UnknownStatus, metrics.UnknownCode).Inc()
+		metrics.PodHealthResultCounter.WithLabelValues(checkerType, checkerName, podName, metrics.UnknownStatus, metrics.UnknownCode).Inc()
 		klog.V(3).InfoS("Recorded checker result", "name", checkerName, "type", checkerType, "podName", podName, "status", metrics.UnknownStatus)
 		klog.ErrorS(err, "Failed checker run", "name", checkerName, "type", checkerType, "podName", podName)
 		return
@@ -99,6 +99,6 @@ func RecordCoreDNSPodResult(checker Checker, podName string, result *Result, err
 		errorCode = result.Detail.Code
 	}
 
-	metrics.CoreDNSPodResultCounter.WithLabelValues(checkerType, checkerName, podName, status, errorCode).Inc()
+	metrics.PodHealthResultCounter.WithLabelValues(checkerType, checkerName, podName, status, errorCode).Inc()
 	klog.V(3).InfoS("Recorded checker result", "name", checkerName, "type", checkerType, "podName", podName, "status", status, "errorCode", errorCode, "message", result.Detail.Message)
 }

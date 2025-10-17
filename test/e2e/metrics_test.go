@@ -43,6 +43,6 @@ var _ = Describe("Metrics endpoint", func() {
 		metricsData, err := getMetrics(localPort)
 		Expect(err).NotTo(HaveOccurred(), "Failed to get metrics")
 		Expect(metricsData).To(HaveKey(checkerResultMetricName), "Expected %s metric not found", checkerResultMetricName)
-		Expect(metricsData).To(HaveKey(coreDNSPodResultMetricName), "Expected %s metric not found", coreDNSPodResultMetricName)
+		Expect(metricsData).To(HaveKey(podHealthResultMetricName), "Expected %s metric not found", podHealthResultMetricName)
 	})
 })
