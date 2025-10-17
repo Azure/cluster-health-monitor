@@ -32,12 +32,12 @@ const (
 	remoteMetricsPort = 9800  // remoteMetricsPort is the fixed port used by the service in the container.
 	baseLocalPort     = 10000 // baseLocalPort is the base local port for dynamic allocation.
 
-	checkerResultMetricName    = "cluster_health_monitor_checker_result_total"
-	coreDNSPodResultMetricName = "cluster_health_monitor_pod_health_result_total"
-	metricsCheckerTypeLabel    = "checker_type"
-	metricsCheckerNameLabel    = "checker_name"
-	metricsStatusLabel         = "status"
-	metricsErrorCodeLabel      = "error_code"
+	checkerResultMetricName   = "cluster_health_monitor_checker_result_total"
+	podHealthResultMetricName = "cluster_health_monitor_pod_health_result_total"
+	metricsCheckerTypeLabel   = "checker_type"
+	metricsCheckerNameLabel   = "checker_name"
+	metricsStatusLabel        = "status"
+	metricsErrorCodeLabel     = "error_code"
 )
 
 // safeSessionKill is shorthand to kill the provided gexec.Session if it is not nil.
@@ -289,7 +289,7 @@ func isMockLocalDNSAvailable(clientset *kubernetes.Clientset) bool {
 }
 
 func verifyCoreDNSPodCheckerResultMetrics(localPort int, expectedChkNames []string, expectedType, expectedStatus, expectedErrorCode string) (bool, map[string]struct{}) {
-	return verifyCheckerResultMetricsHelper(coreDNSPodResultMetricName, localPort, expectedChkNames, expectedType, expectedStatus, expectedErrorCode, []string{"pod_name"})
+	return verifyCheckerResultMetricsHelper(podHealthResultMetricName, localPort, expectedChkNames, expectedType, expectedStatus, expectedErrorCode, []string{"pod_name"})
 }
 
 func verifyCheckerResultMetrics(localPort int, expectedChkNames []string, expectedType, expectedStatus, expectedErrorCode string) (bool, map[string]struct{}) {
