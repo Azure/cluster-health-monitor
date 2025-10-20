@@ -9,6 +9,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -19,7 +20,9 @@ func TestE2E(t *testing.T) {
 
 var (
 	clientset          *kubernetes.Clientset
+	dynamicClient      dynamic.Interface
 	skipClusterSetup   = os.Getenv("E2E_SKIP_CLUSTER_SETUP") == "true"
+	skipAllCleanup     = os.Getenv("E2E_SKIP_ALL_CLEANUP") == "true"
 	skipClusterCleanup = os.Getenv("E2E_SKIP_CLUSTER_CLEANUP") == "true"
 )
 
@@ -31,13 +34,7 @@ func beforeSuiteAllProcesses() []byte {
 	}
 	GinkgoWriter.Println("Using kubeconfig:", kubeConfigPath)
 
-	if skipClusterSetup {
-		By("Applying the cluster health monitor deployment")
-		cmd := exec.Command("make", "kind-apply-manifests")
-		output, err := run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "Failed to apply cluster health monitor manifests: %s", string(output))
-		GinkgoWriter.Println(string(output))
-	} else {
+	if !skipClusterSetup {
 		By("Setting up a Kind cluster for E2E")
 		cmd := exec.Command("make", "kind-test-local")
 		output, err := run(cmd)
@@ -47,6 +44,10 @@ func beforeSuiteAllProcesses() []byte {
 
 	// Initialize Kubernetes client.
 	clientset, err := getKubeClient(kubeConfigPath)
+	Expect(err).NotTo(HaveOccurred())
+
+	// Initialize dynamic client for YAML operations
+	dynamicClient, err = getDynamicKubeClient(kubeConfigPath)
 	Expect(err).NotTo(HaveOccurred())
 
 	By("Waiting for CoreDNS pods to be running")
@@ -85,9 +86,18 @@ var _ = SynchronizedBeforeSuite(beforeSuiteAllProcesses, func(kubeConfigPath []b
 	var err error
 	clientset, err = getKubeClient(string(kubeConfigPath))
 	Expect(err).NotTo(HaveOccurred())
+
+	// Initialize dynamic client for YAML operations
+	dynamicClient, err = getDynamicKubeClient(string(kubeConfigPath))
+	Expect(err).NotTo(HaveOccurred())
 })
 
 func afterSuiteAllProcesses() {
+	if skipAllCleanup {
+		GinkgoWriter.Println("Skipping all cleanup as E2E_SKIP_ALL_CLEANUP is set to true")
+		return
+	}
+
 	if skipClusterCleanup {
 		By("Deleting the test deployment")
 		cmd := exec.Command("make", "kind-delete-deployment")

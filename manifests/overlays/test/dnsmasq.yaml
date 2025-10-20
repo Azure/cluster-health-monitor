@@ -1,4 +1,3 @@
-# This runs a mock LocalDNS server using dnsmasq.
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -14,46 +13,63 @@ spec:
         app: mock-localdns
     spec:
       hostNetwork: true
+      dnsPolicy: Default
+      # The init container ensures the IP address is added to the node's network interface before the main dnsmasq container starts.
+      # This avoids a race condition where dnsmasq tries to bind to the IP but the IP is not yet configured. If this happens, dnsmasq will
+      # fail to start.
+      initContainers:
+        - name: ip-binder
+          image: busybox
+          command: ["/bin/sh", "-c"]
+          args:
+            # Attempt to add the IP address to the interface. If the IP is already assigned (possible on restart or rolling updates),
+            # tolerate known errors and continue.
+            - |
+              set -eu
+              echo "Adding IP 169.254.10.11 to eth0..."
+              if ! output=$(ip addr add 169.254.10.11/32 dev eth0 2>&1); then
+                if echo "$output" | grep -q -e "Error: ipv4: Address already assigned" -e "RTNETLINK answers: File exists"; then
+                  echo "IP already assigned (or file exists), continuing."
+                else
+                  echo "Failed to add IP: $output" >&2
+                  exit 1
+                fi
+              fi
+              echo "IP successfully added or already present."
+          securityContext:
+            capabilities:
+              add: ["NET_ADMIN"]
       containers:
         - name: dnsmasq
           image: jpillora/dnsmasq
           args:
             # Options doc: https://dnsmasq.org/docs/dnsmasq-man.html.
+            - "--listen-address=169.254.10.11"
+            - "--bind-interfaces"
             - "--address=/kubernetes.default.svc.cluster.local/1.2.3.4"
             - "--address=/mcr.microsoft.com/4.3.2.1"
             - "--address=/#/"
             - "--log-queries"
             - "--log-facility=-"
----
-# This runs a container that binds LocalDNS IP address to the node's network interface.
-apiVersion: apps/v1
-kind: DaemonSet
-metadata:
-  name: bind-localdns-ip
-  namespace: kube-system
-spec:
-  selector:
-    matchLabels:
-      app: bind-localdns-ip
-  template:
-    metadata:
-      labels:
-        app: bind-localdns-ip
-    spec:
-      hostNetwork: true
-      containers:
-        - name: ip-binder
-          image: busybox
-          command: ["/bin/sh", "-c"]
-          args:
-            - |
-              ip addr add 169.254.10.11/32 dev eth0
-              sleep infinity
           lifecycle:
             preStop:
               exec:
                 command:
-                  ["/bin/sh", "-c", "ip addr del 169.254.10.11/32 dev eth0"]
+                  - /bin/sh
+                  - -c
+                  # On pod termination, clean up the IP address to leave the host network in a clean state.
+                  - |
+                    set -eu
+                    echo "Removing IP 169.254.10.11 from eth0..."
+                    if ! output=$(ip addr del 169.254.10.11/32 dev eth0 2>&1); then
+                      if echo "$output" | grep -q "Error: ipv4: Address not found"; then
+                        echo "IP already removed, continuing."
+                      else
+                        echo "Failed to remove IP: $output" >&2
+                        exit 1
+                      fi
+                    fi
+                    echo "IP removed or was already gone."
           securityContext:
             capabilities:
               add: ["NET_ADMIN"]
