@@ -106,7 +106,13 @@ func (c *PodStartupChecker) karpenterNodePool(nodePoolName, timestampStr string)
 						c.config.SyntheticPodLabelKey: timestampStr,
 					},
 				},
-				Spec: karpenter.NodeClaimTemplateSpec{},
+				Spec: karpenter.NodeClaimTemplateSpec{
+					NodeClassRef: &karpenter.NodeClassReference{
+						Group: "karpenter.azure.com",
+						Kind:  "AKSNodeClass",
+						Name:  "default",
+					},
+				},
 			},
 		},
 	}
