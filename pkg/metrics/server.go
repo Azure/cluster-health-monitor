@@ -24,7 +24,7 @@ func NewServer(port int) (*Server, error) {
 		klog.ErrorS(err, "Failed to register checker result counter")
 		return nil, err
 	}
-	if err := reg.Register(CoreDNSPodResultCounter); err != nil {
+	if err := reg.Register(PodHealthResultCounter); err != nil {
 		klog.ErrorS(err, "Failed to register CoreDNS pod result counter")
 		return nil, err
 	}
