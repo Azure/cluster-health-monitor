@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 
-	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -102,21 +101,19 @@ func (c *PodStartupChecker) karpenterNodePool(nodePoolName, timestampStr string)
 		},
 		Spec: karpenter.NodePoolSpec{
 			Template: karpenter.NodeClaimTemplate{
+				ObjectMeta: karpenter.ObjectMeta{
+					Labels: map[string]string{
+						"kubernetes.azure.com/mode":   "system",
+						c.config.SyntheticPodLabelKey: timestampStr,
+					},
+				},
 				Spec: karpenter.NodeClaimTemplateSpec{
 					NodeClassRef: &karpenter.NodeClassReference{
 						Group: "karpenter.azure.com",
 						Kind:  "AKSNodeClass",
 						Name:  "default",
 					},
-					Requirements: []karpenter.NodeSelectorRequirementWithMinValues{
-						{
-							NodeSelectorRequirement: corev1.NodeSelectorRequirement{
-								Key:      c.config.SyntheticPodLabelKey,
-								Operator: corev1.NodeSelectorOpIn,
-								Values:   []string{timestampStr},
-							},
-						},
-					},
+					Requirements: []karpenter.NodeSelectorRequirementWithMinValues{},
 				},
 			},
 		},
