@@ -103,6 +103,7 @@ func (c *PodStartupChecker) karpenterNodePool(nodePoolName, timestampStr string)
 			Template: karpenter.NodeClaimTemplate{
 				ObjectMeta: karpenter.ObjectMeta{
 					Labels: map[string]string{
+						"kubernetes.azure.com/mode":   "system",
 						c.config.SyntheticPodLabelKey: timestampStr,
 					},
 				},
