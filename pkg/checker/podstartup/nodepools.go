@@ -112,6 +112,7 @@ func (c *PodStartupChecker) karpenterNodePool(nodePoolName, timestampStr string)
 						Kind:  "AKSNodeClass",
 						Name:  "default",
 					},
+					Requirements: []karpenter.NodeSelectorRequirementWithMinValues{},
 				},
 			},
 		},
