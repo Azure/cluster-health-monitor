@@ -12,7 +12,6 @@ const (
 	checkerTypeMetricsServer = string(config.CheckTypeMetricsServer)
 
 	metricsServerUnavailableErrorCode = metricsserver.ErrCodeMetricsServerUnavailable
-	metricsServerTimeoutErrorCode     = metricsserver.ErrCodeMetricsServerTimeout
 )
 
 var (
