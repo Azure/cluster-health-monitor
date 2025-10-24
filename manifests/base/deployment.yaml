@@ -21,6 +21,8 @@ spec:
         - name: cluster-health-monitor
           # TODO: Update the image to the latest version.
           image: mcr.microsoft.com/aks/cluster-health-monitor/cluster-health-monitor:v0.0.12
+          args:
+            - "--v=3"
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 9800
