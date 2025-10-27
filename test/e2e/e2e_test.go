@@ -20,6 +20,7 @@ func TestE2E(t *testing.T) {
 var (
 	clientset          *kubernetes.Clientset
 	skipClusterSetup   = os.Getenv("E2E_SKIP_CLUSTER_SETUP") == "true"
+	skipAllCleanup     = os.Getenv("E2E_SKIP_ALL_CLEANUP") == "true"
 	skipClusterCleanup = os.Getenv("E2E_SKIP_CLUSTER_CLEANUP") == "true"
 )
 
@@ -31,13 +32,7 @@ func beforeSuiteAllProcesses() []byte {
 	}
 	GinkgoWriter.Println("Using kubeconfig:", kubeConfigPath)
 
-	if skipClusterSetup {
-		By("Applying the cluster health monitor deployment")
-		cmd := exec.Command("make", "kind-apply-manifests")
-		output, err := run(cmd)
-		Expect(err).NotTo(HaveOccurred(), "Failed to apply cluster health monitor manifests: %s", string(output))
-		GinkgoWriter.Println(string(output))
-	} else {
+	if !skipClusterSetup {
 		By("Setting up a Kind cluster for E2E")
 		cmd := exec.Command("make", "kind-test-local")
 		output, err := run(cmd)
@@ -88,6 +83,11 @@ var _ = SynchronizedBeforeSuite(beforeSuiteAllProcesses, func(kubeConfigPath []b
 })
 
 func afterSuiteAllProcesses() {
+	if skipAllCleanup {
+		GinkgoWriter.Println("Skipping all cleanup as E2E_SKIP_ALL_CLEANUP is set to true")
+		return
+	}
+
 	if skipClusterCleanup {
 		By("Deleting the test deployment")
 		cmd := exec.Command("make", "kind-delete-deployment")
