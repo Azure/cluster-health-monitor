@@ -58,7 +58,7 @@ var _ = Describe("DNS checker metrics", Ordered, ContinueOnFailure, func() {
 
 		By("Waiting for DNS checker metrics to report healthy status")
 		Eventually(func() bool {
-			matched, foundCheckers := verifyCheckerResultMetrics(localPort, dnsCheckerNames, checkerTypeDNS, metricsHealthyStatus, metricsHealthyErrorCode)
+			matched, foundCheckers := verifyCheckerResultMetricsWithErrorCode(localPort, dnsCheckerNames, checkerTypeDNS, metricsHealthyStatus, metricsHealthyErrorCode)
 			if !matched {
 				GinkgoWriter.Printf("Expected DNS checkers to be healthy: %v, found: %v\n", dnsCheckerNames, foundCheckers)
 				return false
@@ -104,7 +104,7 @@ var _ = Describe("DNS checker metrics", Ordered, ContinueOnFailure, func() {
 
 		By("Waiting for DNS checker metrics to report unhealthy status with pods not ready")
 		Eventually(func() bool {
-			matched, foundCheckers := verifyCheckerResultMetrics(localPort, coreDNSCheckerNames, checkerTypeDNS, metricsUnhealthyStatus, dnsPodsNotReadyErrorCode)
+			matched, foundCheckers := verifyCheckerResultMetricsWithErrorCode(localPort, coreDNSCheckerNames, checkerTypeDNS, metricsUnhealthyStatus, dnsPodsNotReadyErrorCode)
 			if !matched {
 				GinkgoWriter.Printf("Expected DNS checkers to be unhealthy and pods not ready: %v, found: %v\n", coreDNSCheckerNames, foundCheckers)
 				return false
@@ -135,7 +135,7 @@ var _ = Describe("DNS checker metrics", Ordered, ContinueOnFailure, func() {
 
 		By("Waiting for DNS checker metrics to report unhealthy status with service timeout")
 		Eventually(func() bool {
-			matched, foundCheckers := verifyCheckerResultMetrics(localPort, coreDNSCheckerNames, checkerTypeDNS, metricsUnhealthyStatus, dnsServiceTimeoutErrorCode)
+			matched, foundCheckers := verifyCheckerResultMetricsWithErrorCode(localPort, coreDNSCheckerNames, checkerTypeDNS, metricsUnhealthyStatus, dnsServiceTimeoutErrorCode)
 			if !matched {
 				GinkgoWriter.Printf("Expected DNS checkers to be unhealthy and service timeout: %v, found: %v\n", coreDNSCheckerNames, foundCheckers)
 				return false
@@ -167,7 +167,7 @@ var _ = Describe("DNS checker metrics", Ordered, ContinueOnFailure, func() {
 
 		By("Waiting for LocalDNS checker metrics to report unhealthy status")
 		Eventually(func() bool {
-			matched, foundCheckers := verifyCheckerResultMetrics(localPort, localDNSCheckerNames, checkerTypeDNS, metricsUnhealthyStatus, localDNSTimeoutErrorCode)
+			matched, foundCheckers := verifyCheckerResultMetricsWithErrorCode(localPort, localDNSCheckerNames, checkerTypeDNS, metricsUnhealthyStatus, localDNSTimeoutErrorCode)
 			if !matched {
 				GinkgoWriter.Printf("Expected LocalDNS checker to be unhealthy, found: %v\n", foundCheckers)
 				return false

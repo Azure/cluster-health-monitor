@@ -46,7 +46,7 @@ var _ = Describe("Pod startup checker", Ordered, ContinueOnFailure, func() {
 	It("should report healthy status for pod startup checker", func() {
 		By("Waiting for pod startup checker metrics to report healthy status")
 		Eventually(func() bool {
-			matched, foundCheckers := verifyCheckerResultMetrics(localPort, podStartupCheckerNames, checkerTypePodStartup, metricsHealthyStatus, metricsHealthyErrorCode)
+			matched, foundCheckers := verifyCheckerResultMetricsWithErrorCode(localPort, podStartupCheckerNames, checkerTypePodStartup, metricsHealthyStatus, metricsHealthyErrorCode)
 			if !matched {
 				GinkgoWriter.Printf("Expected pod startup checkers to be healthy: %v, found: %v\n", podStartupCheckerNames, foundCheckers)
 				return false
@@ -82,7 +82,7 @@ var _ = Describe("Pod startup checker", Ordered, ContinueOnFailure, func() {
 
 		By("Waiting for pod startup checker to report unhealthy status")
 		Eventually(func() bool {
-			matched, foundCheckers := verifyCheckerResultMetrics(localPort, podStartupCheckerNames, checkerTypePodStartup, metricsUnhealthyStatus, "")
+			matched, foundCheckers := verifyCheckerResultMetrics(localPort, podStartupCheckerNames, checkerTypePodStartup, metricsUnhealthyStatus)
 			if !matched {
 				GinkgoWriter.Printf("Expected pod startup checkers to be unhealthy and pod startup duration exceeded: %v, found: %v\n", podStartupCheckerNames, foundCheckers)
 				return false
@@ -97,7 +97,7 @@ var _ = Describe("Pod startup checker", Ordered, ContinueOnFailure, func() {
 
 		By("Waiting for pod startup checker to report healthy status after restoring permissions")
 		Eventually(func() bool {
-			matched, foundCheckers := verifyCheckerResultMetrics(localPort, podStartupCheckerNames, checkerTypePodStartup, metricsHealthyStatus, metricsHealthyErrorCode)
+			matched, foundCheckers := verifyCheckerResultMetricsWithErrorCode(localPort, podStartupCheckerNames, checkerTypePodStartup, metricsHealthyStatus, metricsHealthyErrorCode)
 			if !matched {
 				GinkgoWriter.Printf("Expected pod startup checkers to be healthy: %v, found: %v\n", podStartupCheckerNames, foundCheckers)
 				return false

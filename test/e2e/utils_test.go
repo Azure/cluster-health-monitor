@@ -293,7 +293,11 @@ func verifyCoreDNSPodCheckerResultMetrics(localPort int, expectedChkNames []stri
 	return verifyCheckerResultMetricsHelper(podHealthResultMetricName, localPort, expectedChkNames, expectedType, expectedStatus, expectedErrorCode, []string{"pod_name"})
 }
 
-func verifyCheckerResultMetrics(localPort int, expectedChkNames []string, expectedType, expectedStatus, expectedErrorCode string) (bool, map[string]struct{}) {
+func verifyCheckerResultMetrics(localPort int, expectedChkNames []string, expectedType, expectedStatus string) (bool, map[string]struct{}) {
+	return verifyCheckerResultMetricsHelper(checkerResultMetricName, localPort, expectedChkNames, expectedType, expectedStatus, "", nil)
+}
+
+func verifyCheckerResultMetricsWithErrorCode(localPort int, expectedChkNames []string, expectedType, expectedStatus, expectedErrorCode string) (bool, map[string]struct{}) {
 	return verifyCheckerResultMetricsHelper(checkerResultMetricName, localPort, expectedChkNames, expectedType, expectedStatus, expectedErrorCode, nil)
 }
 
