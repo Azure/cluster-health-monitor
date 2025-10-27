@@ -424,23 +424,6 @@ func replaceRolePermissions(clientset kubernetes.Interface, namespace, roleName 
 	return originalRules, nil
 }
 
-// restoreRolePermissions restores a role to its original permissions.
-func restoreRolePermissions(clientset kubernetes.Interface, namespace, roleName string, originalRules []rbacv1.PolicyRule) error {
-	role, err := clientset.RbacV1().Roles(namespace).Get(context.TODO(), roleName, metav1.GetOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to get role %s: %w", roleName, err)
-	}
-
-	role.Rules = originalRules
-	_, err = clientset.RbacV1().Roles(namespace).Update(context.TODO(), role, metav1.UpdateOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to restore role %s: %w", roleName, err)
-	}
-
-	GinkgoWriter.Printf("Restored permissions for role %s in namespace %s\n", roleName, namespace)
-	return nil
-}
-
 // checkLabelsExistOnAnyNode checks if the required labels exist on at least one node.
 func checkLabelsExistOnAnyNode(clientset kubernetes.Interface, requiredLabels map[string]string) (bool, error) {
 	nodeList, err := clientset.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
