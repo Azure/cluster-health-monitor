@@ -18,6 +18,7 @@ import (
 	"github.com/prometheus/common/expfmt"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
@@ -297,7 +298,7 @@ func verifyCheckerResultMetrics(localPort int, expectedChkNames []string, expect
 }
 
 // verifyCheckerResultMetricsHelper checks if all the checker result metrics match the expected type, status, and error code.
-// It returns true if all checker names match the criteria, false otherwise.
+// It returns true if all checker names match the criteria, false otherwise. If expectedErrorCode is an empty string, any error code is accepted.
 func verifyCheckerResultMetricsHelper(metricName string, localPort int, expectedChkNames []string, expectedType, expectedStatus, expectedErrorCode string, expectedLabels []string) (bool, map[string]struct{}) {
 	metricsData, err := getMetrics(localPort)
 	if err != nil {
@@ -321,7 +322,7 @@ func verifyCheckerResultMetricsHelper(metricName string, localPort int, expected
 
 		if labels[metricsCheckerTypeLabel] == expectedType &&
 			labels[metricsStatusLabel] == expectedStatus &&
-			labels[metricsErrorCodeLabel] == expectedErrorCode &&
+			(labels[metricsErrorCodeLabel] == expectedErrorCode || expectedErrorCode == "") &&
 			containExpectedLabels(labels, expectedLabels) {
 			foundCheckers[labels[metricsCheckerNameLabel]] = struct{}{}
 		}
@@ -349,32 +350,6 @@ func containExpectedLabels(labels map[string]string, expectedLabels []string) bo
 		}
 	}
 	return true
-}
-
-// removeLabelsFromAllNodes removes the given labels from all nodes in the cluster.
-func removeLabelsFromAllNodes(clientset kubernetes.Interface, labels map[string]string) {
-	Eventually(func() error {
-		nodeList, err := clientset.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
-		if err != nil {
-			return fmt.Errorf("failed to list nodes: %w", err)
-		}
-
-		// Remove labels from all nodes.
-		for _, node := range nodeList.Items {
-			for key := range labels {
-				if _, exists := node.Labels[key]; exists {
-					delete(node.Labels, key)
-					GinkgoWriter.Printf("Removed label %s from node %s\n", key, node.Name)
-				}
-			}
-			_, err := clientset.CoreV1().Nodes().Update(context.TODO(), &node, metav1.UpdateOptions{})
-			if err != nil {
-				return fmt.Errorf("failed to update node %s: %w", node.Name, err)
-			}
-		}
-
-		return nil
-	}, "30s", "2s").ShouldNot(HaveOccurred(), "Failed to remove labels from nodes")
 }
 
 // addLabelsToAllNodes applies the given labels to all nodes in the cluster.
@@ -424,4 +399,86 @@ func updateMetricsServerDeploymentReplicas(clientset *kubernetes.Clientset, repl
 	}
 
 	return nil
+}
+
+// replaceRolePermissions replaces a role's permissions with new ones, returning the original permissions for restoration.
+func replaceRolePermissions(clientset kubernetes.Interface, namespace, roleName string, newRules []rbacv1.PolicyRule) ([]rbacv1.PolicyRule, error) {
+	role, err := clientset.RbacV1().Roles(namespace).Get(context.TODO(), roleName, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get role %s: %w", roleName, err)
+	}
+
+	// Backup original rules
+	originalRules := make([]rbacv1.PolicyRule, len(role.Rules))
+	copy(originalRules, role.Rules)
+
+	// Replace with new rules
+	role.Rules = newRules
+
+	_, err = clientset.RbacV1().Roles(namespace).Update(context.TODO(), role, metav1.UpdateOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to update role %s: %w", roleName, err)
+	}
+
+	GinkgoWriter.Printf("Replaced permissions for role %s in namespace %s\n", roleName, namespace)
+	return originalRules, nil
+}
+
+// restoreRolePermissions restores a role to its original permissions.
+func restoreRolePermissions(clientset kubernetes.Interface, namespace, roleName string, originalRules []rbacv1.PolicyRule) error {
+	role, err := clientset.RbacV1().Roles(namespace).Get(context.TODO(), roleName, metav1.GetOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to get role %s: %w", roleName, err)
+	}
+
+	role.Rules = originalRules
+	_, err = clientset.RbacV1().Roles(namespace).Update(context.TODO(), role, metav1.UpdateOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to restore role %s: %w", roleName, err)
+	}
+
+	GinkgoWriter.Printf("Restored permissions for role %s in namespace %s\n", roleName, namespace)
+	return nil
+}
+
+// checkLabelsExistOnAnyNode checks if the required labels exist on at least one node.
+func checkLabelsExistOnAnyNode(clientset kubernetes.Interface, requiredLabels map[string]string) (bool, error) {
+	nodeList, err := clientset.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
+	if err != nil {
+		return false, fmt.Errorf("failed to list nodes: %w", err)
+	}
+
+	for _, node := range nodeList.Items {
+		hasAllLabels := true
+		for key, expectedValue := range requiredLabels {
+			if actualValue, exists := node.Labels[key]; !exists || (expectedValue != "" && actualValue != expectedValue) {
+				hasAllLabels = false
+				break
+			}
+		}
+		if hasAllLabels {
+			GinkgoWriter.Printf("Found node %s with all required labels: %v\n", node.Name, requiredLabels)
+			return true, nil
+		}
+	}
+
+	GinkgoWriter.Printf("No node found with all required labels: %v\n", requiredLabels)
+	return false, nil
+}
+
+// ensureLabelsExistOnAtLeastOneNode adds required labels to all nodes if they don't exist on any node.
+func ensureLabelsExistOnAtLeastOneNode(clientset kubernetes.Interface, requiredLabels map[string]string) {
+	Eventually(func() error {
+		labelsExist, err := checkLabelsExistOnAnyNode(clientset, requiredLabels)
+		if err != nil {
+			return fmt.Errorf("failed to check if required labels exist: %w", err)
+		}
+
+		if !labelsExist {
+			GinkgoWriter.Printf("Required labels not found on any node, adding to all nodes: %v\n", requiredLabels)
+			addLabelsToAllNodes(clientset, requiredLabels)
+		}
+
+		return nil
+	}, "30s", "2s").ShouldNot(HaveOccurred(), "Failed to ensure required labels exist on at least one node")
 }
