@@ -2,16 +2,19 @@ package config
 
 import (
 	"time"
+
+	"github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
 )
 
-type CheckerType string
+// Type aliases for backward compatibility
+type CheckerType = v1alpha1.CheckerType
 
 const (
-	CheckTypeDNS           CheckerType = "DNS"
-	CheckTypePodStartup    CheckerType = "PodStartup"
-	CheckTypeAPIServer     CheckerType = "APIServer"
-	CheckTypeMetricsServer CheckerType = "MetricsServer"
-	CheckTypeAzurePolicy   CheckerType = "AzurePolicy"
+	CheckTypeDNS           = v1alpha1.CheckerTypeDNS
+	CheckTypePodStartup    = v1alpha1.CheckerTypePodStartup
+	CheckTypeAPIServer     = v1alpha1.CheckerTypeAPIServer
+	CheckTypeMetricsServer = v1alpha1.CheckerTypeMetricsServer
+	CheckTypeAzurePolicy   = v1alpha1.CheckerTypeAzurePolicy
 )
 
 // Config represents the configuration for the health checkers.
