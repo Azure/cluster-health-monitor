@@ -62,6 +62,9 @@ const (
 
 	// CheckHealthMonitorConditionFailed indicates one or more checks failed
 	CheckHealthMonitorConditionFailed CheckHealthMonitorConditionType = "Failed"
+
+	// CheckHealthMonitorConditionProgressing indicates checks are in progress
+	CheckHealthMonitorConditionProgressing CheckHealthMonitorConditionType = "Progressing"
 )
 
 // CheckerType represents the category of health checker
