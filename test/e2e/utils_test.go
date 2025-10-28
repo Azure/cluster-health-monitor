@@ -356,6 +356,17 @@ func containExpectedLabels(labels map[string]string, expectedLabels []string) bo
 	return true
 }
 
+// containsAllLabels checks if the target map contains all key-value pairs from the required map.
+// If a required value is empty, only the key existence is checked.
+func containsAllLabels(target map[string]string, required map[string]string) bool {
+	for key, expectedValue := range required {
+		if actualValue, exists := target[key]; !exists || (expectedValue != "" && actualValue != expectedValue) {
+			return false
+		}
+	}
+	return true
+}
+
 // addLabelsToAllNodes applies the given labels to all nodes in the cluster.
 func addLabelsToAllNodes(clientset kubernetes.Interface, labels map[string]string) {
 	Eventually(func() error {
@@ -436,14 +447,7 @@ func checkLabelsExistOnAnyNode(clientset kubernetes.Interface, requiredLabels ma
 	}
 
 	for _, node := range nodeList.Items {
-		hasAllLabels := true
-		for key, expectedValue := range requiredLabels {
-			if actualValue, exists := node.Labels[key]; !exists || (expectedValue != "" && actualValue != expectedValue) {
-				hasAllLabels = false
-				break
-			}
-		}
-		if hasAllLabels {
+		if containsAllLabels(node.Labels, requiredLabels) {
 			GinkgoWriter.Printf("Found node %s with all required labels: %v\n", node.Name, requiredLabels)
 			return true, nil
 		}
