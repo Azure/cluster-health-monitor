@@ -15,7 +15,7 @@ import (
 
 const (
 	checkerTypeAPIServer     = string(config.CheckTypeAPIServer)
-	apiServerObjectNamespace = "kube-system"
+	apiServerObjectNamespace = kubesystem
 	apiServerCreateErrorCode = apiserver.ErrCodeAPIServerCreateError
 )
 
@@ -41,7 +41,7 @@ var _ = Describe("API server checker", Ordered, ContinueOnFailure, func() {
 	It("should report healthy status for API server checker", func() {
 		By("Waiting for API server checker metrics to report healthy status")
 		Eventually(func() bool {
-			matched, foundCheckers := verifyCheckerResultMetrics(localPort, apiServerCheckerNames, checkerTypeAPIServer, metricsHealthyStatus, metricsHealthyErrorCode)
+			matched, foundCheckers := verifyCheckerResultMetricsWithErrorCode(localPort, apiServerCheckerNames, checkerTypeAPIServer, metricsHealthyStatus, metricsHealthyErrorCode)
 			if !matched {
 				GinkgoWriter.Printf("Expected API server checkers to be healthy: %v, found: %v\n", apiServerCheckerNames, foundCheckers)
 				return false
@@ -75,7 +75,7 @@ var _ = Describe("API server checker", Ordered, ContinueOnFailure, func() {
 
 		By("Waiting for API server checker to report unhealthy status")
 		Eventually(func() bool {
-			matched, foundCheckers := verifyCheckerResultMetrics(localPort, apiServerCheckerNames, checkerTypeAPIServer, metricsUnhealthyStatus, apiServerCreateErrorCode)
+			matched, foundCheckers := verifyCheckerResultMetricsWithErrorCode(localPort, apiServerCheckerNames, checkerTypeAPIServer, metricsUnhealthyStatus, apiServerCreateErrorCode)
 			if !matched {
 				GinkgoWriter.Printf("Expected API server checkers to be unhealthy due to configmap creation error: %v, found: %v\n", apiServerCheckerNames, foundCheckers)
 				return false

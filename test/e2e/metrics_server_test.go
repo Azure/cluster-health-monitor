@@ -36,7 +36,7 @@ var _ = Describe("Metrics server checker", Ordered, ContinueOnFailure, func() {
 	It("should report healthy status for metrics server checker", func() {
 		By("Waiting for metrics server checker metrics to report healthy status")
 		Eventually(func() bool {
-			matched, foundCheckers := verifyCheckerResultMetrics(localPort, metricsServerCheckerNames, checkerTypeMetricsServer, metricsHealthyStatus, metricsHealthyErrorCode)
+			matched, foundCheckers := verifyCheckerResultMetricsWithErrorCode(localPort, metricsServerCheckerNames, checkerTypeMetricsServer, metricsHealthyStatus, metricsHealthyErrorCode)
 			if !matched {
 				GinkgoWriter.Printf("Expected metrics server checkers to be healthy: %v, found: %v\n", metricsServerCheckerNames, foundCheckers)
 				return false
@@ -67,7 +67,7 @@ var _ = Describe("Metrics server checker", Ordered, ContinueOnFailure, func() {
 
 		By("Waiting for metrics server checker to report unhealthy status")
 		Eventually(func() bool {
-			matched, foundCheckers := verifyCheckerResultMetrics(localPort, metricsServerCheckerNames, checkerTypeMetricsServer, metricsUnhealthyStatus, metricsServerUnavailableErrorCode)
+			matched, foundCheckers := verifyCheckerResultMetricsWithErrorCode(localPort, metricsServerCheckerNames, checkerTypeMetricsServer, metricsUnhealthyStatus, metricsServerUnavailableErrorCode)
 			if !matched {
 				GinkgoWriter.Printf("Expected metrics server checkers to be unhealthy due to deployment scaling: %v, found: %v\n", metricsServerCheckerNames, foundCheckers)
 				return false
@@ -91,7 +91,7 @@ var _ = Describe("Metrics server checker", Ordered, ContinueOnFailure, func() {
 
 		By("Waiting for metrics server checker to report healthy status again")
 		Eventually(func() bool {
-			matched, foundCheckers := verifyCheckerResultMetrics(localPort, metricsServerCheckerNames, checkerTypeMetricsServer, metricsHealthyStatus, metricsHealthyErrorCode)
+			matched, foundCheckers := verifyCheckerResultMetricsWithErrorCode(localPort, metricsServerCheckerNames, checkerTypeMetricsServer, metricsHealthyStatus, metricsHealthyErrorCode)
 			if !matched {
 				GinkgoWriter.Printf("Expected metrics server checkers to be healthy after restoration: %v, found: %v\n", metricsServerCheckerNames, foundCheckers)
 				return false
