@@ -359,8 +359,8 @@ func containExpectedLabels(labels map[string]string, expectedLabels []string) bo
 // containsAllLabels checks if the target map contains all key-value pairs from the required map.
 // If a required value is empty, only the key existence is checked.
 func containsAllLabels(target map[string]string, required map[string]string) bool {
-	for key, expectedValue := range required {
-		if actualValue, exists := target[key]; !exists || (expectedValue != "" && actualValue != expectedValue) {
+	for key, requiredValue := range required {
+		if actualValue, exists := target[key]; !exists || (requiredValue != "" && actualValue != requiredValue) {
 			return false
 		}
 	}
