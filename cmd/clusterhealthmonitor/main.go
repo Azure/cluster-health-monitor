@@ -15,10 +15,8 @@ import (
 	"github.com/Azure/cluster-health-monitor/pkg/checker/metricsserver"
 	"github.com/Azure/cluster-health-monitor/pkg/checker/podstartup"
 	"github.com/Azure/cluster-health-monitor/pkg/config"
-	"github.com/Azure/cluster-health-monitor/pkg/controller"
 	"github.com/Azure/cluster-health-monitor/pkg/metrics"
 	"github.com/Azure/cluster-health-monitor/pkg/scheduler"
-	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
@@ -87,27 +85,6 @@ func main() {
 	}
 	klog.InfoS("Built checker schedule", "numSchedules", len(cs))
 
-	// Create dynamic client for CRD controller
-	dynamicClient, err := dynamic.NewForConfig(k8sConfig)
-	if err != nil {
-		logErrorAndExit(err, "Failed to create dynamic client")
-	}
-
-	// Build checker registry for CRD controller
-	checkerRegistry, err := buildCheckerRegistry(cfg, kubeClient)
-	if err != nil {
-		logErrorAndExit(err, "Failed to build checker registry")
-	}
-
-	// Start CheckNodeHealth CRD controller
-	cnhController := controller.NewCheckNodeHealthController(kubeClient, dynamicClient, checkerRegistry)
-	go func() {
-		if err := cnhController.Run(ctx, 2); err != nil {
-			logErrorAndExit(err, "CheckNodeHealth controller error")
-		}
-	}()
-	klog.InfoS("CheckNodeHealth controller started")
-
 	// Run the scheduler.
 	sched := scheduler.NewScheduler(cs)
 	go func() {
@@ -139,23 +116,6 @@ func buildCheckerSchedule(cfg *config.Config, kubeClient kubernetes.Interface) (
 		})
 	}
 	return schedules, nil
-}
-
-func buildCheckerRegistry(cfg *config.Config, kubeClient kubernetes.Interface) (map[string]checker.Checker, error) {
-	registry := make(map[string]checker.Checker)
-	for _, chkCfg := range cfg.Checkers {
-		chk, err := checker.Build(&chkCfg, kubeClient)
-		if errors.Is(err, checker.ErrSkipChecker) {
-			klog.V(4).InfoS("Skipped checker", "name", chkCfg.Name)
-			continue
-		}
-		if err != nil {
-			return nil, fmt.Errorf("failed to build checker %q: %w", chkCfg.Name, err)
-		}
-		registry[chkCfg.Name] = chk
-	}
-	klog.InfoS("Built checker registry", "numCheckers", len(registry))
-	return registry, nil
 }
 
 func registerCheckers() {
