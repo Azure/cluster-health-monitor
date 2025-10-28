@@ -322,7 +322,7 @@ func applyYAMLFile(dynamicClient dynamic.Interface, yamlPath string) error {
 			namespace = "default"
 		}
 
-		_, err = dynamicClient.Resource(gvr).Namespace(kubesystem).Create(
+		_, err = dynamicClient.Resource(gvr).Namespace(namespace).Create(
 			context.TODO(), unstructuredObj, metav1.CreateOptions{})
 		if err != nil && !errors.IsAlreadyExists(err) {
 			return fmt.Errorf("failed to create resource %s/%s: %w",
@@ -372,7 +372,7 @@ func deleteYAMLFile(dynamicClient dynamic.Interface, yamlPath string) error {
 			namespace = "default"
 		}
 
-		err = dynamicClient.Resource(gvr).Namespace(kubesystem).Delete(
+		err = dynamicClient.Resource(gvr).Namespace(namespace).Delete(
 			context.TODO(), unstructuredObj.GetName(), metav1.DeleteOptions{})
 		if err != nil && !errors.IsNotFound(err) {
 			return fmt.Errorf("failed to delete resource %s/%s: %w",
