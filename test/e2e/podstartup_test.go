@@ -8,7 +8,8 @@ import (
 )
 
 const (
-	checkerTypePodStartup = "PodStartup"
+	checkerTypePodStartup                   = "PodStartup"
+	clusterHealthMonitorSynthPodManagerRole = "cluster-health-monitor-synth-pod-manager"
 )
 
 var (
@@ -71,12 +72,12 @@ var _ = Describe("Pod startup checker", Ordered, ContinueOnFailure, func() {
 				Verbs:     []string{"get", "list"},
 			},
 		}
-		originalRules, err := replaceRolePermissions(clientset, "kube-system", "cluster-health-monitor-synth-pod-manager", restrictedRules)
+		originalRules, err := replaceRolePermissions(clientset, kubesystem, clusterHealthMonitorSynthPodManagerRole, restrictedRules)
 		Expect(err).NotTo(HaveOccurred())
 
 		DeferCleanup(func() {
 			By("Restoring pod creation permissions to cluster-health-monitor")
-			_, err := replaceRolePermissions(clientset, "kube-system", "cluster-health-monitor-synth-pod-manager", originalRules)
+			_, err := replaceRolePermissions(clientset, kubesystem, clusterHealthMonitorSynthPodManagerRole, originalRules)
 			Expect(err).NotTo(HaveOccurred())
 		})
 
@@ -92,7 +93,7 @@ var _ = Describe("Pod startup checker", Ordered, ContinueOnFailure, func() {
 		}, "60s", "5s").Should(BeTrue(), "Pod startup checker did not report unhealthy status within the timeout period")
 
 		By("Restoring pod creation permissions to cluster-health-monitor")
-		_, err = replaceRolePermissions(clientset, "kube-system", "cluster-health-monitor-synth-pod-manager", originalRules)
+		_, err = replaceRolePermissions(clientset, kubesystem, clusterHealthMonitorSynthPodManagerRole, originalRules)
 		Expect(err).NotTo(HaveOccurred())
 
 		By("Waiting for pod startup checker to report healthy status after restoring permissions")

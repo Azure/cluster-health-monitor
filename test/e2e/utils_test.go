@@ -27,7 +27,7 @@ import (
 const (
 	// Kubernetes resource names.
 	// Note that these names must match with the applied manifests/overlays/test.
-	namespace      = "kube-system"
+	kubesystem     = "kube-system"
 	deploymentName = "cluster-health-monitor"
 
 	remoteMetricsPort = 9800  // remoteMetricsPort is the fixed port used by the service in the container.
@@ -81,7 +81,7 @@ func getKubeClient(kubeConfigPath string) (*kubernetes.Clientset, error) {
 }
 
 func getClusterHealthMonitorDeployment(clientset *kubernetes.Clientset) (*appsv1.Deployment, error) {
-	deployment, err := clientset.AppsV1().Deployments(namespace).Get(context.TODO(), deploymentName, metav1.GetOptions{})
+	deployment, err := clientset.AppsV1().Deployments(kubesystem).Get(context.TODO(), deploymentName, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get cluster health monitor deployment: %w", err)
 	}
@@ -89,7 +89,7 @@ func getClusterHealthMonitorDeployment(clientset *kubernetes.Clientset) (*appsv1
 }
 
 func getClusterHealthMonitorPod(clientset *kubernetes.Clientset) (*corev1.Pod, error) {
-	podList, err := clientset.CoreV1().Pods(namespace).List(context.TODO(), metav1.ListOptions{
+	podList, err := clientset.CoreV1().Pods(kubesystem).List(context.TODO(), metav1.ListOptions{
 		LabelSelector: "app=" + deploymentName,
 	})
 	if err != nil {
@@ -117,11 +117,11 @@ func setupMetricsPortforwarding(clientset *kubernetes.Clientset) (*gexec.Session
 	cmd := exec.Command("kubectl", "port-forward",
 		fmt.Sprintf("pod/%s", pod.Name),
 		fmt.Sprintf("%d:%d", localPort, remoteMetricsPort),
-		"-n", namespace)
+		"-n", kubesystem)
 	cmd.Env = os.Environ()
 	session, err := gexec.Start(cmd, GinkgoWriter, GinkgoWriter)
 	Expect(err).NotTo(HaveOccurred())
-	GinkgoWriter.Printf("Port-forwarding to pod %s in namespace %s on port %d:%d\n", pod.Name, namespace, localPort, remoteMetricsPort)
+	GinkgoWriter.Printf("Port-forwarding to pod %s in namespace %s on port %d:%d\n", pod.Name, kubesystem, localPort, remoteMetricsPort)
 	Eventually(session, "5s", "1s").Should(gbytes.Say("Forwarding from"), "Failed to establish port-forwarding")
 
 	return session, localPort
@@ -184,7 +184,7 @@ func getUnusedPort(basePort int) (int, error) {
 
 // getCoreDNSPodList lists all CoreDNS pods in the kube-system namespace.
 func getCoreDNSPodList(clientset *kubernetes.Clientset) (*corev1.PodList, error) {
-	podList, err := clientset.CoreV1().Pods("kube-system").List(context.TODO(), metav1.ListOptions{
+	podList, err := clientset.CoreV1().Pods(kubesystem).List(context.TODO(), metav1.ListOptions{
 		LabelSelector: "k8s-app=kube-dns",
 	})
 	if err != nil {
@@ -201,7 +201,7 @@ func deleteCoreDNSPods(clientset *kubernetes.Clientset) error {
 	}
 
 	for _, pod := range podList.Items {
-		err := clientset.CoreV1().Pods("kube-system").Delete(context.TODO(), pod.Name, metav1.DeleteOptions{})
+		err := clientset.CoreV1().Pods(kubesystem).Delete(context.TODO(), pod.Name, metav1.DeleteOptions{})
 		if err != nil {
 			return fmt.Errorf("failed to delete CoreDNS pod %s: %w", pod.Name, err)
 		}
@@ -211,7 +211,7 @@ func deleteCoreDNSPods(clientset *kubernetes.Clientset) error {
 
 // getCoreDNSDeployment gets the CoreDNS deployment from the kube-system namespace.
 func getCoreDNSDeployment(clientset *kubernetes.Clientset) (*appsv1.Deployment, error) {
-	return clientset.AppsV1().Deployments("kube-system").Get(context.TODO(), "coredns", metav1.GetOptions{})
+	return clientset.AppsV1().Deployments(kubesystem).Get(context.TODO(), "coredns", metav1.GetOptions{})
 }
 
 // updateCoreDNSDeploymentReplicas updates the replica count of the CoreDNS deployment.
@@ -222,7 +222,7 @@ func updateCoreDNSDeploymentReplicas(clientset *kubernetes.Clientset, replicas i
 	}
 
 	deployment.Spec.Replicas = &replicas
-	_, err = clientset.AppsV1().Deployments("kube-system").Update(context.TODO(), deployment, metav1.UpdateOptions{})
+	_, err = clientset.AppsV1().Deployments(kubesystem).Update(context.TODO(), deployment, metav1.UpdateOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to update CoreDNS deployment replicas: %w", err)
 	}
@@ -232,7 +232,7 @@ func updateCoreDNSDeploymentReplicas(clientset *kubernetes.Clientset, replicas i
 
 // getCoreDNSConfigMap gets the CoreDNS ConfigMap from the kube-system namespace.
 func getCoreDNSConfigMap(clientset *kubernetes.Clientset) (*corev1.ConfigMap, error) {
-	return clientset.CoreV1().ConfigMaps("kube-system").Get(context.TODO(), "coredns", metav1.GetOptions{})
+	return clientset.CoreV1().ConfigMaps(kubesystem).Get(context.TODO(), "coredns", metav1.GetOptions{})
 }
 
 // simulateCoreDNSHighLatency simulates high latency in DNS responses by modifying the CoreDNS ConfigMap.
@@ -250,7 +250,7 @@ func simulateCoreDNSHighLatency(clientset *kubernetes.Clientset) (string, error)
 	modifiedCorefile := strings.Replace(originalCorefile, "cache", "invalidplugin\n    cache", 1)
 	configMap.Data["Corefile"] = modifiedCorefile
 
-	_, err = clientset.CoreV1().ConfigMaps("kube-system").Update(context.TODO(), configMap, metav1.UpdateOptions{})
+	_, err = clientset.CoreV1().ConfigMaps(kubesystem).Update(context.TODO(), configMap, metav1.UpdateOptions{})
 	if err != nil {
 		return "", fmt.Errorf("failed to update CoreDNS ConfigMap: %w", err)
 	}
@@ -265,7 +265,7 @@ func restoreCoreDNSConfigMap(clientset *kubernetes.Clientset, originalCorefile s
 	}
 
 	configMap.Data["Corefile"] = originalCorefile
-	_, err = clientset.CoreV1().ConfigMaps("kube-system").Update(context.TODO(), configMap, metav1.UpdateOptions{})
+	_, err = clientset.CoreV1().ConfigMaps(kubesystem).Update(context.TODO(), configMap, metav1.UpdateOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to restore CoreDNS ConfigMap: %w", err)
 	}
@@ -275,12 +275,12 @@ func restoreCoreDNSConfigMap(clientset *kubernetes.Clientset, originalCorefile s
 // isMockLocalDNSAvailable checks if the mock LocalDNS server is available.
 // It checks the resources deployed from the manifests/overlays/test/dnsmasq.yaml file.
 func isMockLocalDNSAvailable(clientset *kubernetes.Clientset) bool {
-	mockLocalDNS, err := clientset.AppsV1().DaemonSets("kube-system").Get(context.TODO(), "mock-localdns", metav1.GetOptions{})
+	mockLocalDNS, err := clientset.AppsV1().DaemonSets(kubesystem).Get(context.TODO(), "mock-localdns", metav1.GetOptions{})
 	if err != nil {
 		GinkgoWriter.Printf("Error getting mock-dns daemonset: %v\n", err)
 		return false
 	}
-	bindLocalDNS, err := clientset.AppsV1().DaemonSets("kube-system").Get(context.TODO(), "bind-localdns-ip", metav1.GetOptions{})
+	bindLocalDNS, err := clientset.AppsV1().DaemonSets(kubesystem).Get(context.TODO(), "bind-localdns-ip", metav1.GetOptions{})
 	if err != nil {
 		GinkgoWriter.Printf("Error getting bind-localdns-ip daemonset: %v\n", err)
 		return false
@@ -397,7 +397,7 @@ func addLabelsToAllNodes(clientset kubernetes.Interface, labels map[string]strin
 
 // getMetricsServerDeployment gets the metrics server deployment from the kube-system namespace.
 func getMetricsServerDeployment(clientset *kubernetes.Clientset) (*appsv1.Deployment, error) {
-	return clientset.AppsV1().Deployments("kube-system").Get(context.TODO(), "metrics-server", metav1.GetOptions{})
+	return clientset.AppsV1().Deployments(kubesystem).Get(context.TODO(), "metrics-server", metav1.GetOptions{})
 }
 
 // updateMetricsServerDeploymentReplicas updates the replica count of the metrics server deployment.
@@ -408,7 +408,7 @@ func updateMetricsServerDeploymentReplicas(clientset *kubernetes.Clientset, repl
 	}
 
 	deployment.Spec.Replicas = &replicas
-	_, err = clientset.AppsV1().Deployments("kube-system").Update(context.TODO(), deployment, metav1.UpdateOptions{})
+	_, err = clientset.AppsV1().Deployments(kubesystem).Update(context.TODO(), deployment, metav1.UpdateOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to update metrics server deployment replicas: %w", err)
 	}

@@ -45,7 +45,7 @@ var _ = Describe("DNS checker metrics", Ordered, ContinueOnFailure, func() {
 		By("Verifying LocalDNS is properly configured in the pod via the DNS patch")
 		pod, err := getClusterHealthMonitorPod(clientset)
 		Expect(err).NotTo(HaveOccurred(), "Failed to get cluster health monitor pod")
-		cmd := exec.Command("kubectl", "get", "pod", "-n", "kube-system", pod.Name, "-o", "jsonpath={.spec.dnsConfig}")
+		cmd := exec.Command("kubectl", "get", "pod", "-n", kubesystem, pod.Name, "-o", "jsonpath={.spec.dnsConfig}")
 		output, err := run(cmd)
 		Expect(err).NotTo(HaveOccurred(), "Failed to get pod DNS config")
 		GinkgoWriter.Printf("Pod DNS config: %s\n", string(output))

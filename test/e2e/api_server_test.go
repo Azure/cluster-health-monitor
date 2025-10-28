@@ -15,7 +15,7 @@ import (
 
 const (
 	checkerTypeAPIServer     = string(config.CheckTypeAPIServer)
-	apiServerObjectNamespace = "kube-system"
+	apiServerObjectNamespace = kubesystem
 	apiServerCreateErrorCode = apiserver.ErrCodeAPIServerCreateError
 )
 
