@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -19,7 +20,13 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/yaml"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 )
@@ -78,6 +85,19 @@ func getKubeClient(kubeConfigPath string) (*kubernetes.Clientset, error) {
 		return nil, fmt.Errorf("failed to create Kubernetes clientset: %w", err)
 	}
 	return clientset, nil
+}
+
+// getDynamicKubeClient creates a Kubernetes dynamic client using the provided kubeconfig path.
+func getDynamicKubeClient(kubeConfigPath string) (dynamic.Interface, error) {
+	config, err := clientcmd.BuildConfigFromFlags("", kubeConfigPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build Kubernetes config: %w", err)
+	}
+	dynamicClient, err := dynamic.NewForConfig(config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Kubernetes dynamic client: %w", err)
+	}
+	return dynamicClient, nil
 }
 
 func getClusterHealthMonitorDeployment(clientset *kubernetes.Clientset) (*appsv1.Deployment, error) {
@@ -209,27 +229,6 @@ func deleteCoreDNSPods(clientset *kubernetes.Clientset) error {
 	return nil
 }
 
-// getCoreDNSDeployment gets the CoreDNS deployment from the kube-system namespace.
-func getCoreDNSDeployment(clientset *kubernetes.Clientset) (*appsv1.Deployment, error) {
-	return clientset.AppsV1().Deployments(kubesystem).Get(context.TODO(), "coredns", metav1.GetOptions{})
-}
-
-// updateCoreDNSDeploymentReplicas updates the replica count of the CoreDNS deployment.
-func updateCoreDNSDeploymentReplicas(clientset *kubernetes.Clientset, replicas int32) error {
-	deployment, err := getCoreDNSDeployment(clientset)
-	if err != nil {
-		return fmt.Errorf("failed to get CoreDNS deployment: %w", err)
-	}
-
-	deployment.Spec.Replicas = &replicas
-	_, err = clientset.AppsV1().Deployments(kubesystem).Update(context.TODO(), deployment, metav1.UpdateOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to update CoreDNS deployment replicas: %w", err)
-	}
-
-	return nil
-}
-
 // getCoreDNSConfigMap gets the CoreDNS ConfigMap from the kube-system namespace.
 func getCoreDNSConfigMap(clientset *kubernetes.Clientset) (*corev1.ConfigMap, error) {
 	return clientset.CoreV1().ConfigMaps(kubesystem).Get(context.TODO(), "coredns", metav1.GetOptions{})
@@ -280,13 +279,163 @@ func isMockLocalDNSAvailable(clientset *kubernetes.Clientset) bool {
 		GinkgoWriter.Printf("Error getting mock-dns daemonset: %v\n", err)
 		return false
 	}
-	bindLocalDNS, err := clientset.AppsV1().DaemonSets(kubesystem).Get(context.TODO(), "bind-localdns-ip", metav1.GetOptions{})
+
+	return mockLocalDNS.Status.NumberAvailable == mockLocalDNS.Status.DesiredNumberScheduled
+}
+
+// applyYAMLFile applies a YAML file to the Kubernetes cluster using the provided dynamic client.
+func applyYAMLFile(dynamicClient dynamic.Interface, yamlPath string) error {
+	// Read the YAML file
+	yamlData, err := os.ReadFile(yamlPath)
 	if err != nil {
-		GinkgoWriter.Printf("Error getting bind-localdns-ip daemonset: %v\n", err)
-		return false
+		return fmt.Errorf("failed to read YAML file %s: %w", yamlPath, err)
 	}
-	return mockLocalDNS.Status.NumberAvailable == mockLocalDNS.Status.DesiredNumberScheduled &&
-		bindLocalDNS.Status.NumberAvailable == bindLocalDNS.Status.DesiredNumberScheduled
+
+	// Split YAML documents
+	decoder := yaml.NewYAMLOrJSONDecoder(strings.NewReader(string(yamlData)), 4096)
+
+	for {
+		var rawObj runtime.RawExtension
+		if err := decoder.Decode(&rawObj); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return fmt.Errorf("failed to decode YAML: %w", err)
+		}
+
+		obj, gvk, err := unstructured.UnstructuredJSONScheme.Decode(rawObj.Raw, nil, nil)
+		if err != nil {
+			return fmt.Errorf("failed to decode object: %w", err)
+		}
+
+		unstructuredObj := obj.(*unstructured.Unstructured)
+
+		// Get the resource mapping for this object
+		gvr, err := getGVRForObject(gvk)
+		if err != nil {
+			return fmt.Errorf("failed to get GVR for object: %w", err)
+		}
+
+		// Apply the object
+		namespace := unstructuredObj.GetNamespace()
+		if namespace == "" {
+			namespace = "default"
+		}
+
+		_, err = dynamicClient.Resource(gvr).Namespace(kubesystem).Create(
+			context.TODO(), unstructuredObj, metav1.CreateOptions{})
+		if err != nil && !errors.IsAlreadyExists(err) {
+			return fmt.Errorf("failed to create resource %s/%s: %w",
+				unstructuredObj.GetKind(), unstructuredObj.GetName(), err)
+		}
+	}
+
+	return nil
+}
+
+// deleteYAMLFile deletes resources from a YAML file from the Kubernetes cluster using the provided dynamic client.
+func deleteYAMLFile(dynamicClient dynamic.Interface, yamlPath string) error {
+	// Read the YAML file
+	yamlData, err := os.ReadFile(yamlPath)
+	if err != nil {
+		return fmt.Errorf("failed to read YAML file %s: %w", yamlPath, err)
+	}
+
+	// Split YAML documents
+	decoder := yaml.NewYAMLOrJSONDecoder(strings.NewReader(string(yamlData)), 4096)
+
+	for {
+		var rawObj runtime.RawExtension
+		if err := decoder.Decode(&rawObj); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return fmt.Errorf("failed to decode YAML: %w", err)
+		}
+
+		obj, gvk, err := unstructured.UnstructuredJSONScheme.Decode(rawObj.Raw, nil, nil)
+		if err != nil {
+			return fmt.Errorf("failed to decode object: %w", err)
+		}
+
+		unstructuredObj := obj.(*unstructured.Unstructured)
+
+		// Get the resource mapping for this object
+		gvr, err := getGVRForObject(gvk)
+		if err != nil {
+			return fmt.Errorf("failed to get GVR for object: %w", err)
+		}
+
+		// Delete the object
+		namespace := unstructuredObj.GetNamespace()
+		if namespace == "" {
+			namespace = "default"
+		}
+
+		err = dynamicClient.Resource(gvr).Namespace(kubesystem).Delete(
+			context.TODO(), unstructuredObj.GetName(), metav1.DeleteOptions{})
+		if err != nil && !errors.IsNotFound(err) {
+			return fmt.Errorf("failed to delete resource %s/%s: %w",
+				unstructuredObj.GetKind(), unstructuredObj.GetName(), err)
+		}
+	}
+
+	return nil
+}
+
+// getGVRForObject returns the GroupVersionResource for a given GroupVersionKind.
+func getGVRForObject(gvk *schema.GroupVersionKind) (schema.GroupVersionResource, error) {
+	// Map common kinds to their resource names (plurals)
+	kindToResource := map[string]string{
+		"DaemonSet": "daemonsets",
+		"Pod":       "pods",
+		"Service":   "services",
+		"ConfigMap": "configmaps",
+		// Add more as needed
+	}
+
+	resource, ok := kindToResource[gvk.Kind]
+	if !ok {
+		return schema.GroupVersionResource{}, fmt.Errorf("unknown kind: %s", gvk.Kind)
+	}
+
+	return schema.GroupVersionResource{
+		Group:    gvk.Group,
+		Version:  gvk.Version,
+		Resource: resource,
+	}, nil
+}
+
+// enableMockLocalDNS applies the mock LocalDNS YAML file (equivalent to kubectl apply -f dnsmasq.yaml).
+func enableMockLocalDNS(dynamicClient dynamic.Interface) error {
+	gitRoot, err := getGitRoot()
+	if err != nil {
+		return fmt.Errorf("failed to get git root: %w", err)
+	}
+	yamlPath := filepath.Join(gitRoot, "manifests", "overlays", "test", "dnsmasq.yaml")
+	err = applyYAMLFile(dynamicClient, yamlPath)
+	if err != nil {
+		return fmt.Errorf("failed to apply mock LocalDNS YAML: %w", err)
+	}
+
+	GinkgoWriter.Printf("Successfully enabled mock LocalDNS from %s\n", yamlPath)
+	return nil
+}
+
+// disableMockLocalDNS deletes the mock LocalDNS resources (equivalent to kubectl delete -f dnsmasq.yaml).
+func disableMockLocalDNS(dynamicClient dynamic.Interface) error {
+	gitRoot, err := getGitRoot()
+	if err != nil {
+		return fmt.Errorf("failed to get git root: %w", err)
+	}
+	yamlPath := filepath.Join(gitRoot, "manifests", "overlays", "test", "dnsmasq.yaml")
+	err = deleteYAMLFile(dynamicClient, yamlPath)
+	if err != nil {
+		return fmt.Errorf("failed to delete mock LocalDNS YAML: %w", err)
+	}
+
+	GinkgoWriter.Printf("Successfully disabled mock LocalDNS from %s\n", yamlPath)
+	return nil
 }
 
 func verifyCoreDNSPodCheckerResultMetrics(localPort int, expectedChkNames []string, expectedType, expectedStatus, expectedErrorCode string) (bool, map[string]struct{}) {

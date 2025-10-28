@@ -9,6 +9,7 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -19,6 +20,7 @@ func TestE2E(t *testing.T) {
 
 var (
 	clientset          *kubernetes.Clientset
+	dynamicClient      dynamic.Interface
 	skipClusterSetup   = os.Getenv("E2E_SKIP_CLUSTER_SETUP") == "true"
 	skipAllCleanup     = os.Getenv("E2E_SKIP_ALL_CLEANUP") == "true"
 	skipClusterCleanup = os.Getenv("E2E_SKIP_CLUSTER_CLEANUP") == "true"
@@ -42,6 +44,10 @@ func beforeSuiteAllProcesses() []byte {
 
 	// Initialize Kubernetes client.
 	clientset, err := getKubeClient(kubeConfigPath)
+	Expect(err).NotTo(HaveOccurred())
+
+	// Initialize dynamic client for YAML operations
+	dynamicClient, err = getDynamicKubeClient(kubeConfigPath)
 	Expect(err).NotTo(HaveOccurred())
 
 	By("Waiting for CoreDNS pods to be running")
@@ -79,6 +85,10 @@ func beforeSuiteAllProcesses() []byte {
 var _ = SynchronizedBeforeSuite(beforeSuiteAllProcesses, func(kubeConfigPath []byte) {
 	var err error
 	clientset, err = getKubeClient(string(kubeConfigPath))
+	Expect(err).NotTo(HaveOccurred())
+
+	// Initialize dynamic client for YAML operations
+	dynamicClient, err = getDynamicKubeClient(string(kubeConfigPath))
 	Expect(err).NotTo(HaveOccurred())
 })
 
