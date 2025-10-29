@@ -13,17 +13,17 @@ import (
 // +kubebuilder:printcolumn:name="Status",type=string,JSONPath=`.status.conditions[?(@.type=="Completed")].status`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
-// CheckHealthMonitor is a resource that tracks health check results for a specific node
-type CheckHealthMonitor struct {
+// CheckNodeHealth is a resource that tracks health check results for a specific node
+type CheckNodeHealth struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   CheckHealthMonitorSpec   `json:"spec,omitempty"`
-	Status CheckHealthMonitorStatus `json:"status,omitempty"`
+	Spec   CheckNodeHealthSpec   `json:"spec,omitempty"`
+	Status CheckNodeHealthStatus `json:"status,omitempty"`
 }
 
-// CheckHealthMonitorSpec defines the desired state of CheckHealthMonitor
-type CheckHealthMonitorSpec struct {
+// CheckNodeHealthSpec defines the desired state of CheckNodeHealth
+type CheckNodeHealthSpec struct {
 	// NodeRef references the node to check
 	// +required
 	NodeRef NodeReference `json:"nodeRef"`
@@ -36,8 +36,8 @@ type NodeReference struct {
 	Name string `json:"name"`
 }
 
-// CheckHealthMonitorStatus defines the observed state of CheckHealthMonitor
-type CheckHealthMonitorStatus struct {
+// CheckNodeHealthStatus defines the observed state of CheckNodeHealth
+type CheckNodeHealthStatus struct {
 	// StartedAt is the timestamp when the health checks started
 	StartedAt *metav1.Time `json:"startedAt"`
 
@@ -53,15 +53,15 @@ type CheckHealthMonitorStatus struct {
 	Results []CheckResult `json:"results,omitempty"`
 }
 
-// CheckHealthMonitorConditionType represents the type of condition
-type CheckHealthMonitorConditionType string
+// CheckNodeHealthConditionType represents the type of condition
+type CheckNodeHealthConditionType string
 
 const (
-	// CheckHealthMonitorConditionCompleted indicates all checks have completed
-	CheckHealthMonitorConditionCompleted CheckHealthMonitorConditionType = "Completed"
+	// CheckNodeHealthConditionCompleted indicates all checks have completed
+	CheckNodeHealthConditionCompleted CheckNodeHealthConditionType = "Completed"
 
-	// CheckHealthMonitorConditionFailed indicates one or more checks failed
-	CheckHealthMonitorConditionFailed CheckHealthMonitorConditionType = "Failed"
+	// CheckNodeHealthConditionFailed indicates one or more checks failed
+	CheckNodeHealthConditionFailed CheckNodeHealthConditionType = "Failed"
 )
 
 // CheckerType represents the category of health checker
@@ -127,9 +127,9 @@ type CheckResult struct {
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 // +kubebuilder:object:root=true
 
-// CheckHealthMonitorList contains a list of CheckHealthMonitor resources
-type CheckHealthMonitorList struct {
+// CheckNodeHealthList contains a list of CheckNodeHealth resources
+type CheckNodeHealthList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []CheckHealthMonitor `json:"items"`
+	Items           []CheckNodeHealth `json:"items"`
 }

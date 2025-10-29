@@ -4,16 +4,16 @@ kind: CustomResourceDefinition
 metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.19.0
-  name: checkhealthmonitors.chm.azure.com
+  name: checknodehealths.chm.azure.com
 spec:
   group: chm.azure.com
   names:
-    kind: CheckHealthMonitor
-    listKind: CheckHealthMonitorList
-    plural: checkhealthmonitors
+    kind: CheckNodeHealth
+    listKind: CheckNodeHealthList
+    plural: checknodehealths
     shortNames:
     - chm
-    singular: checkhealthmonitor
+    singular: checknodehealth
   scope: Cluster
   versions:
   - additionalPrinterColumns:
@@ -29,7 +29,7 @@ spec:
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: CheckHealthMonitor is a resource that tracks health check results
+        description: CheckNodeHealth is a resource that tracks health check results
           for a specific node
         properties:
           apiVersion:
@@ -50,7 +50,7 @@ spec:
           metadata:
             type: object
           spec:
-            description: CheckHealthMonitorSpec defines the desired state of CheckHealthMonitor
+            description: CheckNodeHealthSpec defines the desired state of CheckNodeHealth
             properties:
               nodeRef:
                 description: NodeRef references the node to check
@@ -65,7 +65,7 @@ spec:
             - nodeRef
             type: object
           status:
-            description: CheckHealthMonitorStatus defines the observed state of CheckHealthMonitor
+            description: CheckNodeHealthStatus defines the observed state of CheckNodeHealth
             properties:
               conditions:
                 description: Conditions represent the latest available observations
@@ -136,7 +136,18 @@ spec:
                     check
                   properties:
                     checker:
-                      description: Checker is the name of the health check
+                      description: |-
+                        Checker is the specific instance name of the health check
+                        For example: "internal-dns", "external-dns", "kubernetes-apiserver"
+                      type: string
+                    checkerType:
+                      description: CheckerType is the category/type of health check
+                      enum:
+                      - APIServer
+                      - DNS
+                      - MetricsServer
+                      - PodStartup
+                      - AzurePolicy
                       type: string
                     completedAt:
                       description: CompletedAt is when this specific check completed
@@ -155,6 +166,7 @@ spec:
                       type: string
                   required:
                   - checker
+                  - checkerType
                   - status
                   type: object
                 type: array

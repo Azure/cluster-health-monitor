@@ -16,8 +16,8 @@ import (
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
 )
 
-// CheckHealthMonitorReconciler reconciles a CheckHealthMonitor object
-type CheckHealthMonitorReconciler struct {
+// CheckNodeHealthReconciler reconciles a CheckNodeHealth object
+type CheckNodeHealthReconciler struct {
 	client.Client
 	Scheme        *runtime.Scheme
 	PodImage      string // Image for the health check pod
@@ -25,47 +25,47 @@ type CheckHealthMonitorReconciler struct {
 	ConfigMapName string // ConfigMap with checker config
 }
 
-// +kubebuilder:rbac:groups=chm.azure.com,resources=checkhealthmonitors,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=chm.azure.com,resources=checkhealthmonitors/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=chm.azure.com,resources=checkhealthmonitors/finalizers,verbs=update
+// +kubebuilder:rbac:groups=chm.azure.com,resources=checknodehealths,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=chm.azure.com,resources=checknodehealths/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=chm.azure.com,resources=checknodehealths/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;create;delete
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch
 
 // SetupWithManager sets up the controller with the Manager
-func (r *CheckHealthMonitorReconciler) SetupWithManager(mgr ctrl.Manager) error {
+func (r *CheckNodeHealthReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&chmv1alpha1.CheckHealthMonitor{}).
+		For(&chmv1alpha1.CheckNodeHealth{}).
 		Owns(&corev1.Pod{}). // Watch pods created by this controller
 		Complete(r)
 }
 
 // Reconcile is part of the main kubernetes reconciliation loop
 // This controller creates a pod on the target node to execute health checks.
-// The pod updates the CheckHealthMonitor status when checks complete.
-func (r *CheckHealthMonitorReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
+// The pod updates the CheckNodeHealth status when checks complete.
+func (r *CheckNodeHealthReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
-	// Fetch the CheckHealthMonitor instance
-	chm := &chmv1alpha1.CheckHealthMonitor{}
-	if err := r.Get(ctx, req.NamespacedName, chm); err != nil {
+	// Fetch the CheckNodeHealth instance
+	cnh := &chmv1alpha1.CheckNodeHealth{}
+	if err := r.Get(ctx, req.NamespacedName, cnh); err != nil {
 		// Resource not found, probably deleted
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	logger.Info("Reconciling CheckHealthMonitor", "name", chm.Name, "node", chm.Spec.NodeRef.Name)
+	logger.Info("Reconciling CheckNodeHealth", "name", cnh.Name, "node", cnh.Spec.NodeRef.Name)
 
 	// Check if already completed - if so, cleanup pod and skip
-	if isCompleted(chm) {
-		logger.V(1).Info("CheckHealthMonitor already completed")
+	if isCompleted(cnh) {
+		logger.V(1).Info("CheckNodeHealth already completed")
 		// Clean up the pod if it still exists
-		if err := r.cleanupPod(ctx, chm); err != nil {
+		if err := r.cleanupPod(ctx, cnh); err != nil {
 			logger.Error(err, "Failed to cleanup pod")
 		}
 		return ctrl.Result{}, nil
 	}
 
 	// Check if pod exists and get its status
-	podName := getHealthCheckPodName(chm)
+	podName := getHealthCheckPodName(cnh)
 	pod := &corev1.Pod{}
 	err := r.Get(ctx, client.ObjectKey{
 		Name:      podName,
@@ -75,7 +75,7 @@ func (r *CheckHealthMonitorReconciler) Reconcile(ctx context.Context, req ctrl.R
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			// Pod doesn't exist, create it
-			if err := r.ensureHealthCheckPod(ctx, chm); err != nil {
+			if err := r.ensureHealthCheckPod(ctx, cnh); err != nil {
 				logger.Error(err, "Failed to ensure health check pod")
 				return ctrl.Result{}, err
 			}
@@ -89,7 +89,7 @@ func (r *CheckHealthMonitorReconciler) Reconcile(ctx context.Context, req ctrl.R
 	// Check if pod succeeded
 	if pod.Status.Phase == corev1.PodSucceeded {
 		logger.Info("Health check pod succeeded, marking as completed")
-		if err := r.markCompleted(ctx, chm); err != nil {
+		if err := r.markCompleted(ctx, cnh); err != nil {
 			logger.Error(err, "Failed to mark as completed")
 			return ctrl.Result{}, err
 		}
@@ -99,7 +99,7 @@ func (r *CheckHealthMonitorReconciler) Reconcile(ctx context.Context, req ctrl.R
 	// Check if pod failed
 	if pod.Status.Phase == corev1.PodFailed {
 		logger.Info("Health check pod failed, marking as failed")
-		if err := r.markFailed(ctx, chm, "Pod failed to execute health checks"); err != nil {
+		if err := r.markFailed(ctx, cnh, "Pod failed to execute health checks"); err != nil {
 			logger.Error(err, "Failed to mark as failed")
 			return ctrl.Result{}, err
 		}
@@ -111,9 +111,9 @@ func (r *CheckHealthMonitorReconciler) Reconcile(ctx context.Context, req ctrl.R
 	return ctrl.Result{}, nil
 }
 
-func (r *CheckHealthMonitorReconciler) ensureHealthCheckPod(ctx context.Context, chm *chmv1alpha1.CheckHealthMonitor) error {
+func (r *CheckNodeHealthReconciler) ensureHealthCheckPod(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth) error {
 	logger := log.FromContext(ctx)
-	podName := getHealthCheckPodName(chm)
+	podName := getHealthCheckPodName(cnh)
 
 	// Check if pod already exists
 	existingPod := &corev1.Pod{}
@@ -133,14 +133,14 @@ func (r *CheckHealthMonitorReconciler) ensureHealthCheckPod(ctx context.Context,
 	}
 
 	// Create the pod
-	pod := r.buildHealthCheckPod(chm, podName)
+	pod := r.buildHealthCheckPod(cnh, podName)
 
-	// Set CheckHealthMonitor as owner
-	if err := controllerutil.SetControllerReference(chm, pod, r.Scheme); err != nil {
+	// Set CheckNodeHealth as owner
+	if err := controllerutil.SetControllerReference(cnh, pod, r.Scheme); err != nil {
 		return fmt.Errorf("failed to set controller reference: %w", err)
 	}
 
-	logger.Info("Creating health check pod", "pod", podName, "node", chm.Spec.NodeRef.Name)
+	logger.Info("Creating health check pod", "pod", podName, "node", cnh.Spec.NodeRef.Name)
 	if err := r.Create(ctx, pod); err != nil {
 		return fmt.Errorf("failed to create pod: %w", err)
 	}
@@ -148,28 +148,28 @@ func (r *CheckHealthMonitorReconciler) ensureHealthCheckPod(ctx context.Context,
 	return nil
 }
 
-func (r *CheckHealthMonitorReconciler) buildHealthCheckPod(chm *chmv1alpha1.CheckHealthMonitor, podName string) *corev1.Pod {
+func (r *CheckNodeHealthReconciler) buildHealthCheckPod(cnh *chmv1alpha1.CheckNodeHealth, podName string) *corev1.Pod {
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      podName,
 			Namespace: r.PodNamespace,
 			Labels: map[string]string{
 				"app":                "cluster-health-monitor",
-				"checkhealthmonitor": chm.Name,
-				"chm.azure.com/node": chm.Spec.NodeRef.Name,
+				"checknodehealth":    cnh.Name,
+				"chm.azure.com/node": cnh.Spec.NodeRef.Name,
 			},
 		},
 		Spec: corev1.PodSpec{
 			RestartPolicy: corev1.RestartPolicyNever,
-			NodeName:      chm.Spec.NodeRef.Name, // Schedule on specific node
+			NodeName:      cnh.Spec.NodeRef.Name, // Schedule on specific node
 			Containers: []corev1.Container{
 				{
 					Name:  "health-checker",
 					Image: r.PodImage,
 					Args: []string{
 						"--config=/etc/cluster-health-monitor/config.yaml",
-						fmt.Sprintf("--cr-name=%s", chm.Name),
-						fmt.Sprintf("--cr-namespace=%s", chm.Namespace),
+						fmt.Sprintf("--cr-name=%s", cnh.Name),
+						fmt.Sprintf("--cr-namespace=%s", cnh.Namespace),
 					},
 					VolumeMounts: []corev1.VolumeMount{
 						{
@@ -196,8 +196,8 @@ func (r *CheckHealthMonitorReconciler) buildHealthCheckPod(chm *chmv1alpha1.Chec
 	}
 }
 
-func (r *CheckHealthMonitorReconciler) cleanupPod(ctx context.Context, chm *chmv1alpha1.CheckHealthMonitor) error {
-	podName := getHealthCheckPodName(chm)
+func (r *CheckNodeHealthReconciler) cleanupPod(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth) error {
+	podName := getHealthCheckPodName(cnh)
 
 	pod := &corev1.Pod{}
 	err := r.Get(ctx, client.ObjectKey{
@@ -222,10 +222,10 @@ func (r *CheckHealthMonitorReconciler) cleanupPod(ctx context.Context, chm *chmv
 	return nil
 }
 
-func (r *CheckHealthMonitorReconciler) markCompleted(ctx context.Context, chm *chmv1alpha1.CheckHealthMonitor) error {
-	chm.Status.Conditions = []metav1.Condition{
+func (r *CheckNodeHealthReconciler) markCompleted(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth) error {
+	cnh.Status.Conditions = []metav1.Condition{
 		{
-			Type:               string(chmv1alpha1.CheckHealthMonitorConditionCompleted),
+			Type:               string(chmv1alpha1.CheckNodeHealthConditionCompleted),
 			Status:             metav1.ConditionTrue,
 			LastTransitionTime: metav1.Now(),
 			Reason:             "ChecksCompleted",
@@ -233,17 +233,17 @@ func (r *CheckHealthMonitorReconciler) markCompleted(ctx context.Context, chm *c
 		},
 	}
 
-	if err := r.Status().Update(ctx, chm); err != nil {
+	if err := r.Status().Update(ctx, cnh); err != nil {
 		return fmt.Errorf("failed to update status: %w", err)
 	}
 
 	return nil
 }
 
-func (r *CheckHealthMonitorReconciler) markFailed(ctx context.Context, chm *chmv1alpha1.CheckHealthMonitor, message string) error {
-	chm.Status.Conditions = []metav1.Condition{
+func (r *CheckNodeHealthReconciler) markFailed(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, message string) error {
+	cnh.Status.Conditions = []metav1.Condition{
 		{
-			Type:               string(chmv1alpha1.CheckHealthMonitorConditionFailed),
+			Type:               string(chmv1alpha1.CheckNodeHealthConditionFailed),
 			Status:             metav1.ConditionTrue,
 			LastTransitionTime: metav1.Now(),
 			Reason:             "ChecksFailed",
@@ -251,20 +251,20 @@ func (r *CheckHealthMonitorReconciler) markFailed(ctx context.Context, chm *chmv
 		},
 	}
 
-	if err := r.Status().Update(ctx, chm); err != nil {
+	if err := r.Status().Update(ctx, cnh); err != nil {
 		return fmt.Errorf("failed to update status: %w", err)
 	}
 
 	return nil
 }
 
-func getHealthCheckPodName(chm *chmv1alpha1.CheckHealthMonitor) string {
-	return fmt.Sprintf("health-check-%s", chm.Name)
+func getHealthCheckPodName(cnh *chmv1alpha1.CheckNodeHealth) string {
+	return fmt.Sprintf("health-check-%s", cnh.Name)
 }
 
-func isCompleted(chm *chmv1alpha1.CheckHealthMonitor) bool {
-	for _, cond := range chm.Status.Conditions {
-		if cond.Type == string(chmv1alpha1.CheckHealthMonitorConditionCompleted) && cond.Status == metav1.ConditionTrue {
+func isCompleted(cnh *chmv1alpha1.CheckNodeHealth) bool {
+	for _, cond := range cnh.Status.Conditions {
+		if cond.Type == string(chmv1alpha1.CheckNodeHealthConditionCompleted) && cond.Status == metav1.ConditionTrue {
 			return true
 		}
 	}

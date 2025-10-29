@@ -57,7 +57,7 @@ func main() {
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
-	setupLog.Info("Starting CheckHealthMonitor Controller")
+	setupLog.Info("Starting CheckNodeHealth Controller")
 
 	// Create manager
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
@@ -67,7 +67,7 @@ func main() {
 		},
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "checkhealthmonitor.chm.azure.com",
+		LeaderElectionID:       "checknodehealth.chm.azure.com",
 	})
 	if err != nil {
 		setupLog.Error(err, "Unable to create manager")
@@ -75,14 +75,14 @@ func main() {
 	}
 
 	// Setup controller
-	if err = (&controller.CheckHealthMonitorReconciler{
+	if err = (&controller.CheckNodeHealthReconciler{
 		Client:        mgr.GetClient(),
 		Scheme:        mgr.GetScheme(),
 		PodImage:      podImage,
 		PodNamespace:  podNamespace,
 		ConfigMapName: configMapName,
 	}).SetupWithManager(mgr); err != nil {
-		setupLog.Error(err, "Unable to create controller", "controller", "CheckHealthMonitor")
+		setupLog.Error(err, "Unable to create controller", "controller", "CheckNodeHealth")
 		os.Exit(1)
 	}
 
