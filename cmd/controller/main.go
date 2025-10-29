@@ -1,115 +1,104 @@
 package main
 
 import (
-	"context"
-	"errors"
 	"flag"
-	"fmt"
-	"os/signal"
-	"syscall"
+	"os"
 
-	"github.com/Azure/cluster-health-monitor/pkg/checker"
-	"github.com/Azure/cluster-health-monitor/pkg/checker/apiserver"
-	"github.com/Azure/cluster-health-monitor/pkg/checker/azurepolicy"
-	"github.com/Azure/cluster-health-monitor/pkg/checker/dnscheck"
-	"github.com/Azure/cluster-health-monitor/pkg/checker/metricsserver"
-	"github.com/Azure/cluster-health-monitor/pkg/checker/podstartup"
-	"github.com/Azure/cluster-health-monitor/pkg/config"
+	"k8s.io/apimachinery/pkg/runtime"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/healthz"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	ctrlmetricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
+
+	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
 	"github.com/Azure/cluster-health-monitor/pkg/controller"
-	"k8s.io/client-go/dynamic"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
-	"k8s.io/klog/v2"
 )
+
+var (
+	scheme   = runtime.NewScheme()
+	setupLog = ctrl.Log.WithName("setup")
+)
+
+func init() {
+	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+	utilruntime.Must(chmv1alpha1.AddToScheme(scheme))
+}
 
 const (
 	defaultConfigPath = "/etc/cluster-health-monitor/config.yaml"
 )
 
-func init() {
-	klog.InitFlags(nil)
-}
-
-// logErrorAndExit logs an error message and exits the program with exit code 1.
-func logErrorAndExit(err error, message string) {
-	klog.ErrorS(err, message)
-	klog.FlushAndExit(klog.ExitFlushTimeout, 1)
-}
-
 func main() {
-	configPath := flag.String("config", defaultConfigPath, "Path to the configuration file")
-	workers := flag.Int("workers", 2, "Number of concurrent workers")
+	var configPath string
+	var metricsAddr string
+	var enableLeaderElection bool
+	var probeAddr string
+	var podImage string
+	var podNamespace string
+	var configMapName string
+
+	flag.StringVar(&configPath, "config", defaultConfigPath, "Path to the configuration file")
+	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to")
+	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to")
+	flag.StringVar(&podImage, "pod-image", "ghcr.io/azure/cluster-health-monitor:latest", "Container image for health check pods")
+	flag.StringVar(&podNamespace, "pod-namespace", "default", "Namespace to create health check pods in")
+	flag.StringVar(&configMapName, "configmap-name", "cluster-health-monitor-config", "ConfigMap containing checker configuration")
+	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
+		"Enable leader election for controller manager. "+
+			"Enabling this will ensure there is only one active controller manager.")
+
+	opts := zap.Options{
+		Development: true,
+	}
+	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
-	defer klog.Flush()
 
-	klog.InfoS("Started CheckHealthMonitor Controller")
-	registerCheckers()
+	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
-	// Wait for interrupt signal to gracefully shutdown.
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
+	setupLog.Info("Starting CheckHealthMonitor Controller")
 
-	// Parse the configuration file.
-	cfg, err := config.ParseFromFile(*configPath)
+	// Create manager
+	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+		Scheme: scheme,
+		Metrics: ctrlmetricsserver.Options{
+			BindAddress: metricsAddr,
+		},
+		HealthProbeBindAddress: probeAddr,
+		LeaderElection:         enableLeaderElection,
+		LeaderElectionID:       "checkhealthmonitor.chm.azure.com",
+	})
 	if err != nil {
-		logErrorAndExit(err, "Failed to parse config")
-	}
-	klog.InfoS("Parsed configuration file",
-		"path", *configPath,
-		"numCheckers", len(cfg.Checkers))
-
-	// Create Kubernetes client.
-	k8sConfig, err := rest.InClusterConfig()
-	if err != nil {
-		logErrorAndExit(err, "Failed to get in-cluster config")
-	}
-	kubeClient, err := kubernetes.NewForConfig(k8sConfig)
-	if err != nil {
-		logErrorAndExit(err, "Failed to create Kubernetes client")
+		setupLog.Error(err, "Unable to create manager")
+		os.Exit(1)
 	}
 
-	// Create dynamic client for CRD operations
-	dynamicClient, err := dynamic.NewForConfig(k8sConfig)
-	if err != nil {
-		logErrorAndExit(err, "Failed to create dynamic client")
+	// Setup controller
+	if err = (&controller.CheckHealthMonitorReconciler{
+		Client:        mgr.GetClient(),
+		Scheme:        mgr.GetScheme(),
+		PodImage:      podImage,
+		PodNamespace:  podNamespace,
+		ConfigMapName: configMapName,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "Unable to create controller", "controller", "CheckHealthMonitor")
+		os.Exit(1)
 	}
 
-	// Build checker registry
-	checkerRegistry, err := buildCheckerRegistry(cfg, kubeClient)
-	if err != nil {
-		logErrorAndExit(err, "Failed to build checker registry")
+	// Add health and readiness checks
+	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
+		setupLog.Error(err, "Unable to set up health check")
+		os.Exit(1)
 	}
-	klog.InfoS("Built checker registry", "numCheckers", len(checkerRegistry))
-
-	// Start CheckHealthMonitor CRD controller
-	chmController := controller.NewCheckHealthMonitorController(kubeClient, dynamicClient, checkerRegistry)
-	if err := chmController.Run(ctx, *workers); err != nil {
-		logErrorAndExit(err, "CheckHealthMonitor controller error")
+	if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
+		setupLog.Error(err, "Unable to set up ready check")
+		os.Exit(1)
 	}
 
-	klog.InfoS("Stopped CheckHealthMonitor Controller")
-}
-
-func buildCheckerRegistry(cfg *config.Config, kubeClient kubernetes.Interface) (map[string]checker.Checker, error) {
-	registry := make(map[string]checker.Checker)
-	for _, chkCfg := range cfg.Checkers {
-		chk, err := checker.Build(&chkCfg, kubeClient)
-		if errors.Is(err, checker.ErrSkipChecker) {
-			klog.ErrorS(err, "Skipped checker", "name", chkCfg.Name)
-			continue
-		}
-		if err != nil {
-			return nil, fmt.Errorf("failed to build checker %q: %w", chkCfg.Name, err)
-		}
-		registry[chkCfg.Name] = chk
+	setupLog.Info("Starting manager")
+	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
+		setupLog.Error(err, "Problem running manager")
+		os.Exit(1)
 	}
-	return registry, nil
-}
-
-func registerCheckers() {
-	dnscheck.Register()
-	podstartup.Register()
-	apiserver.Register()
-	metricsserver.Register()
-	azurepolicy.Register()
 }
