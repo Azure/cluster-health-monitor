@@ -19,6 +19,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
@@ -209,27 +210,6 @@ func deleteCoreDNSPods(clientset *kubernetes.Clientset) error {
 	return nil
 }
 
-// getCoreDNSDeployment gets the CoreDNS deployment from the kube-system namespace.
-func getCoreDNSDeployment(clientset *kubernetes.Clientset) (*appsv1.Deployment, error) {
-	return clientset.AppsV1().Deployments(kubesystem).Get(context.TODO(), "coredns", metav1.GetOptions{})
-}
-
-// updateCoreDNSDeploymentReplicas updates the replica count of the CoreDNS deployment.
-func updateCoreDNSDeploymentReplicas(clientset *kubernetes.Clientset, replicas int32) error {
-	deployment, err := getCoreDNSDeployment(clientset)
-	if err != nil {
-		return fmt.Errorf("failed to get CoreDNS deployment: %w", err)
-	}
-
-	deployment.Spec.Replicas = &replicas
-	_, err = clientset.AppsV1().Deployments(kubesystem).Update(context.TODO(), deployment, metav1.UpdateOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to update CoreDNS deployment replicas: %w", err)
-	}
-
-	return nil
-}
-
 // getCoreDNSConfigMap gets the CoreDNS ConfigMap from the kube-system namespace.
 func getCoreDNSConfigMap(clientset *kubernetes.Clientset) (*corev1.ConfigMap, error) {
 	return clientset.CoreV1().ConfigMaps(kubesystem).Get(context.TODO(), "coredns", metav1.GetOptions{})
@@ -273,20 +253,39 @@ func restoreCoreDNSConfigMap(clientset *kubernetes.Clientset, originalCorefile s
 }
 
 // isMockLocalDNSAvailable checks if the mock LocalDNS server is available.
-// It checks the resources deployed from the manifests/overlays/test/dnsmasq.yaml file.
 func isMockLocalDNSAvailable(clientset *kubernetes.Clientset) bool {
-	mockLocalDNS, err := clientset.AppsV1().DaemonSets(kubesystem).Get(context.TODO(), "mock-localdns", metav1.GetOptions{})
+	mockLocalDNS, err := clientset.AppsV1().DaemonSets(mockLocalDNSDaemonSet().GetNamespace()).Get(
+		context.TODO(), mockLocalDNSDaemonSet().GetName(), metav1.GetOptions{})
 	if err != nil {
 		GinkgoWriter.Printf("Error getting mock-dns daemonset: %v\n", err)
 		return false
 	}
-	bindLocalDNS, err := clientset.AppsV1().DaemonSets(kubesystem).Get(context.TODO(), "bind-localdns-ip", metav1.GetOptions{})
-	if err != nil {
-		GinkgoWriter.Printf("Error getting bind-localdns-ip daemonset: %v\n", err)
-		return false
+
+	return mockLocalDNS.Status.NumberAvailable == mockLocalDNS.Status.DesiredNumberScheduled
+}
+
+// enableMockLocalDNS creates the mock LocalDNS DaemonSet in the k8s cluster
+func enableMockLocalDNS(clientset *kubernetes.Clientset) error {
+	_, err := clientset.AppsV1().DaemonSets(mockLocalDNSDaemonSet().GetNamespace()).Create(
+		context.TODO(), mockLocalDNSDaemonSet(), metav1.CreateOptions{})
+	if err != nil && !errors.IsAlreadyExists(err) {
+		return fmt.Errorf("failed to create mock LocalDNS DaemonSet: %w", err)
 	}
-	return mockLocalDNS.Status.NumberAvailable == mockLocalDNS.Status.DesiredNumberScheduled &&
-		bindLocalDNS.Status.NumberAvailable == bindLocalDNS.Status.DesiredNumberScheduled
+
+	GinkgoWriter.Printf("Successfully enabled mock LocalDNS DaemonSet\n")
+	return nil
+}
+
+// disableMockLocalDNS deletes the mock LocalDNS DaemonSet from the k8s cluster
+func disableMockLocalDNS(clientset *kubernetes.Clientset) error {
+	err := clientset.AppsV1().DaemonSets(mockLocalDNSDaemonSet().GetNamespace()).Delete(
+		context.TODO(), mockLocalDNSDaemonSet().GetName(), metav1.DeleteOptions{})
+	if err != nil && !errors.IsNotFound(err) {
+		return fmt.Errorf("failed to delete mock LocalDNS DaemonSet: %w", err)
+	}
+
+	GinkgoWriter.Printf("Successfully disabled mock LocalDNS DaemonSet\n")
+	return nil
 }
 
 func verifyCoreDNSPodCheckerResultMetrics(localPort int, expectedChkNames []string, expectedType, expectedStatus, expectedErrorCode string) (bool, map[string]struct{}) {

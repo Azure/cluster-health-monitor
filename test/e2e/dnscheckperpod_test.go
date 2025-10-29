@@ -26,6 +26,9 @@ var _ = Describe("DNS per pod checker metrics", Ordered, ContinueOnFailure, func
 	)
 
 	BeforeAll(func() {
+		err := enableMockLocalDNS(clientset)
+		Expect(err).NotTo(HaveOccurred(), "Failed to enable mock LocalDNS")
+
 		session, localPort = setupMetricsPortforwarding(clientset)
 	})
 
