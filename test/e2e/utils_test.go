@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -22,11 +21,6 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/util/yaml"
-	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 )
@@ -85,19 +79,6 @@ func getKubeClient(kubeConfigPath string) (*kubernetes.Clientset, error) {
 		return nil, fmt.Errorf("failed to create Kubernetes clientset: %w", err)
 	}
 	return clientset, nil
-}
-
-// getDynamicKubeClient creates a Kubernetes dynamic client using the provided kubeconfig path.
-func getDynamicKubeClient(kubeConfigPath string) (dynamic.Interface, error) {
-	config, err := clientcmd.BuildConfigFromFlags("", kubeConfigPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to build Kubernetes config: %w", err)
-	}
-	dynamicClient, err := dynamic.NewForConfig(config)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Kubernetes dynamic client: %w", err)
-	}
-	return dynamicClient, nil
 }
 
 func getClusterHealthMonitorDeployment(clientset *kubernetes.Clientset) (*appsv1.Deployment, error) {
@@ -272,9 +253,9 @@ func restoreCoreDNSConfigMap(clientset *kubernetes.Clientset, originalCorefile s
 }
 
 // isMockLocalDNSAvailable checks if the mock LocalDNS server is available.
-// It checks the resources deployed from the manifests/overlays/test/dnsmasq.yaml file.
 func isMockLocalDNSAvailable(clientset *kubernetes.Clientset) bool {
-	mockLocalDNS, err := clientset.AppsV1().DaemonSets(kubesystem).Get(context.TODO(), "mock-localdns", metav1.GetOptions{})
+	mockLocalDNS, err := clientset.AppsV1().DaemonSets(mockLocalDNSDaemonSet().GetNamespace()).Get(
+		context.TODO(), mockLocalDNSDaemonSet().GetName(), metav1.GetOptions{})
 	if err != nil {
 		GinkgoWriter.Printf("Error getting mock-dns daemonset: %v\n", err)
 		return false
@@ -283,158 +264,27 @@ func isMockLocalDNSAvailable(clientset *kubernetes.Clientset) bool {
 	return mockLocalDNS.Status.NumberAvailable == mockLocalDNS.Status.DesiredNumberScheduled
 }
 
-// applyYAMLFile applies a YAML file to the Kubernetes cluster using the provided dynamic client.
-func applyYAMLFile(dynamicClient dynamic.Interface, yamlPath string) error {
-	// Read the YAML file
-	yamlData, err := os.ReadFile(yamlPath)
-	if err != nil {
-		return fmt.Errorf("failed to read YAML file %s: %w", yamlPath, err)
+// enableMockLocalDNS creates the mock LocalDNS DaemonSet in the k8s cluster
+func enableMockLocalDNS(clientset *kubernetes.Clientset) error {
+	_, err := clientset.AppsV1().DaemonSets(mockLocalDNSDaemonSet().GetNamespace()).Create(
+		context.TODO(), mockLocalDNSDaemonSet(), metav1.CreateOptions{})
+	if err != nil && !errors.IsAlreadyExists(err) {
+		return fmt.Errorf("failed to create mock LocalDNS DaemonSet: %w", err)
 	}
 
-	// Split YAML documents
-	decoder := yaml.NewYAMLOrJSONDecoder(strings.NewReader(string(yamlData)), 4096)
-
-	for {
-		var rawObj runtime.RawExtension
-		if err := decoder.Decode(&rawObj); err != nil {
-			if err == io.EOF {
-				break
-			}
-			return fmt.Errorf("failed to decode YAML: %w", err)
-		}
-
-		obj, gvk, err := unstructured.UnstructuredJSONScheme.Decode(rawObj.Raw, nil, nil)
-		if err != nil {
-			return fmt.Errorf("failed to decode object: %w", err)
-		}
-
-		unstructuredObj := obj.(*unstructured.Unstructured)
-
-		// Get the resource mapping for this object
-		gvr, err := getGVRForObject(gvk)
-		if err != nil {
-			return fmt.Errorf("failed to get GVR for object: %w", err)
-		}
-
-		// Apply the object
-		namespace := unstructuredObj.GetNamespace()
-		if namespace == "" {
-			namespace = "default"
-		}
-
-		_, err = dynamicClient.Resource(gvr).Namespace(namespace).Create(
-			context.TODO(), unstructuredObj, metav1.CreateOptions{})
-		if err != nil && !errors.IsAlreadyExists(err) {
-			return fmt.Errorf("failed to create resource %s/%s: %w",
-				unstructuredObj.GetKind(), unstructuredObj.GetName(), err)
-		}
-	}
-
+	GinkgoWriter.Printf("Successfully enabled mock LocalDNS DaemonSet\n")
 	return nil
 }
 
-// deleteYAMLFile deletes resources from a YAML file from the Kubernetes cluster using the provided dynamic client.
-func deleteYAMLFile(dynamicClient dynamic.Interface, yamlPath string) error {
-	// Read the YAML file
-	yamlData, err := os.ReadFile(yamlPath)
-	if err != nil {
-		return fmt.Errorf("failed to read YAML file %s: %w", yamlPath, err)
+// disableMockLocalDNS deletes the mock LocalDNS DaemonSet from the k8s cluster
+func disableMockLocalDNS(clientset *kubernetes.Clientset) error {
+	err := clientset.AppsV1().DaemonSets(mockLocalDNSDaemonSet().GetNamespace()).Delete(
+		context.TODO(), mockLocalDNSDaemonSet().GetName(), metav1.DeleteOptions{})
+	if err != nil && !errors.IsNotFound(err) {
+		return fmt.Errorf("failed to delete mock LocalDNS DaemonSet: %w", err)
 	}
 
-	// Split YAML documents
-	decoder := yaml.NewYAMLOrJSONDecoder(strings.NewReader(string(yamlData)), 4096)
-
-	for {
-		var rawObj runtime.RawExtension
-		if err := decoder.Decode(&rawObj); err != nil {
-			if err == io.EOF {
-				break
-			}
-			return fmt.Errorf("failed to decode YAML: %w", err)
-		}
-
-		obj, gvk, err := unstructured.UnstructuredJSONScheme.Decode(rawObj.Raw, nil, nil)
-		if err != nil {
-			return fmt.Errorf("failed to decode object: %w", err)
-		}
-
-		unstructuredObj := obj.(*unstructured.Unstructured)
-
-		// Get the resource mapping for this object
-		gvr, err := getGVRForObject(gvk)
-		if err != nil {
-			return fmt.Errorf("failed to get GVR for object: %w", err)
-		}
-
-		// Delete the object
-		namespace := unstructuredObj.GetNamespace()
-		if namespace == "" {
-			namespace = "default"
-		}
-
-		err = dynamicClient.Resource(gvr).Namespace(namespace).Delete(
-			context.TODO(), unstructuredObj.GetName(), metav1.DeleteOptions{})
-		if err != nil && !errors.IsNotFound(err) {
-			return fmt.Errorf("failed to delete resource %s/%s: %w",
-				unstructuredObj.GetKind(), unstructuredObj.GetName(), err)
-		}
-	}
-
-	return nil
-}
-
-// getGVRForObject returns the GroupVersionResource for a given GroupVersionKind.
-func getGVRForObject(gvk *schema.GroupVersionKind) (schema.GroupVersionResource, error) {
-	// Map common kinds to their resource names (plurals)
-	kindToResource := map[string]string{
-		"DaemonSet": "daemonsets",
-		"Pod":       "pods",
-		"Service":   "services",
-		"ConfigMap": "configmaps",
-		// Add more as needed
-	}
-
-	resource, ok := kindToResource[gvk.Kind]
-	if !ok {
-		return schema.GroupVersionResource{}, fmt.Errorf("unknown kind: %s", gvk.Kind)
-	}
-
-	return schema.GroupVersionResource{
-		Group:    gvk.Group,
-		Version:  gvk.Version,
-		Resource: resource,
-	}, nil
-}
-
-// enableMockLocalDNS applies the mock LocalDNS YAML file (equivalent to kubectl apply -f dnsmasq.yaml).
-func enableMockLocalDNS(dynamicClient dynamic.Interface) error {
-	gitRoot, err := getGitRoot()
-	if err != nil {
-		return fmt.Errorf("failed to get git root: %w", err)
-	}
-	yamlPath := filepath.Join(gitRoot, "manifests", "overlays", "test", "dnsmasq.yaml")
-	err = applyYAMLFile(dynamicClient, yamlPath)
-	if err != nil {
-		return fmt.Errorf("failed to apply mock LocalDNS YAML: %w", err)
-	}
-
-	GinkgoWriter.Printf("Successfully enabled mock LocalDNS from %s\n", yamlPath)
-	return nil
-}
-
-// disableMockLocalDNS deletes the mock LocalDNS resources (equivalent to kubectl delete -f dnsmasq.yaml).
-func disableMockLocalDNS(dynamicClient dynamic.Interface) error {
-	gitRoot, err := getGitRoot()
-	if err != nil {
-		return fmt.Errorf("failed to get git root: %w", err)
-	}
-	yamlPath := filepath.Join(gitRoot, "manifests", "overlays", "test", "dnsmasq.yaml")
-	err = deleteYAMLFile(dynamicClient, yamlPath)
-	if err != nil {
-		return fmt.Errorf("failed to delete mock LocalDNS YAML: %w", err)
-	}
-
-	GinkgoWriter.Printf("Successfully disabled mock LocalDNS from %s\n", yamlPath)
+	GinkgoWriter.Printf("Successfully disabled mock LocalDNS DaemonSet\n")
 	return nil
 }
 
