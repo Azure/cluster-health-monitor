@@ -24,3 +24,35 @@ jobs:
           issue-type: pull-request
           commands: ok-to-test
           permission: write
+
+      - name: Print parameters as JSON
+        run: |
+          echo "{
+            \"owner\": \"${{ github.repository_owner }}\",
+            \"repo\": \"${{ github.repository }}\",
+            \"actor\": \"${{ github.actor }}\"
+          }"
+
+      - name: Check OAuth scopes for collaborator permission GraphQL query
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "Sending GraphQL request and printing OAuth scopes headers..."
+          gh api graphql \
+            -f query='
+              query CollaboratorPermission($owner: String!, $repo: String!, $collaborator: String) {
+                repository(owner: $owner, name: $repo) {
+                  collaborators(login: $collaborator) {
+                    edges {
+                      permission
+                    }
+                  }
+                }
+              }
+            ' \
+            -F owner='Azure' \
+            -F repo='cluster-health-monitor' \
+            -F collaborator='ThatJuanGuy' \
+            --header 'Accept: application/vnd.github.v4+json' \
+            --verbose \
+            | grep -i "X-OAuth-Scopes\|X-Accepted-OAuth-Scopes"
