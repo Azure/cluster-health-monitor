@@ -1,0 +1,9 @@
+apiVersion: chm.azure.com/v1alpha1
+kind: CheckNodeHealth
+metadata:
+  name: worker-node-1-health
+  labels:
+    node: aks-nodepool1-51467756-vmss000000
+spec:
+  nodeRef:
+    name: aks-nodepool1-51467756-vmss000000

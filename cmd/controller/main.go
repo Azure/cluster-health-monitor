@@ -37,14 +37,12 @@ func main() {
 	var probeAddr string
 	var podImage string
 	var podNamespace string
-	var configMapName string
 
 	flag.StringVar(&configPath, "config", defaultConfigPath, "Path to the configuration file")
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to")
-	flag.StringVar(&podImage, "pod-image", "ghcr.io/azure/cluster-health-monitor:latest", "Container image for health check pods")
+	flag.StringVar(&podImage, "pod-image", "ubuntu:latest", "Container image for health check pods")
 	flag.StringVar(&podNamespace, "pod-namespace", "default", "Namespace to create health check pods in")
-	flag.StringVar(&configMapName, "configmap-name", "cluster-health-monitor-config", "ConfigMap containing checker configuration")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
@@ -76,11 +74,10 @@ func main() {
 
 	// Setup controller
 	if err = (&controller.CheckNodeHealthReconciler{
-		Client:        mgr.GetClient(),
-		Scheme:        mgr.GetScheme(),
-		PodImage:      podImage,
-		PodNamespace:  podNamespace,
-		ConfigMapName: configMapName,
+		Client:       mgr.GetClient(),
+		Scheme:       mgr.GetScheme(),
+		PodImage:     podImage,
+		PodNamespace: podNamespace,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Unable to create controller", "controller", "CheckNodeHealth")
 		os.Exit(1)
