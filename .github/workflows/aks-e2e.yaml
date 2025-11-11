@@ -1,7 +1,25 @@
 name: aks_e2e
 on:
-  repository_dispatch:
-    types: [ok-to-test-command]
+  workflow_dispatch:
+    inputs:
+      pull_request_number:
+        description: 'Pull Request Number'
+        required: true
+        type: string
+      sha:
+        description: 'SHA of the pull request head'
+        required: true
+        type: string
+      region:
+        description: 'Azure region for deployment'
+        required: false
+        type: string
+        default: 'canadacentral'
+      sku:
+        description: 'AKS SKU (automatic or base)'
+        required: false
+        type: string
+        default: 'automatic'
 
 jobs:
   get_ref: # Based on https://github.com/Azure/aks-app-routing-operator/blob/main/.github/workflows/test.yaml
@@ -19,7 +37,7 @@ jobs:
       # it won't change by a user pushing a new change
       - id: checkout_ref 
         env:
-          MERGE_REF: 'refs/pull/${{ github.event.client_payload.pull_request.number }}/merge'
+          MERGE_REF: 'refs/pull/${{ github.event.inputs.pull_request_number }}/merge'
         run: |
           CHECKOUT_REF=$(git ls-remote -q | grep $MERGE_REF | awk '{print $1}')
           echo "Ref is $CHECKOUT_REF"
@@ -27,8 +45,8 @@ jobs:
       # guarantee the ref is what we want to use by ensuring the ok-to-test'd sha matches
       - id: status_ref
         env:
-          HEAD_REF: 'refs/pull/${{ github.event.client_payload.pull_request.number }}/head'
-          OK_REF_PREFIX:  ${{ github.event.client_payload.slash_command.args.named.sha }}
+          HEAD_REF: 'refs/pull/${{ github.event.inputs.pull_request_number }}/head'
+          OK_REF_PREFIX:  ${{ github.event.inputs.sha }}
         run: |
          LATEST=$(git ls-remote -q | grep $HEAD_REF | awk '{print $1}')
          echo "STATUS_REF=$LATEST" >> $GITHUB_OUTPUT
@@ -49,7 +67,7 @@ jobs:
       # validate and set the region parameter
       - id: set_region
         env:
-          REGION_ARG: ${{ github.event.client_payload.slash_command.args.named.region }}
+          REGION_ARG: ${{ github.event.inputs.region }}
         run: |
           REGION="${REGION_ARG:-canadacentral}"
           
@@ -73,7 +91,7 @@ jobs:
       # validate and set the sku parameter
       - id: set_sku
         env:
-          SKU_ARG: ${{ github.event.client_payload.slash_command.args.named.sku }}
+          SKU_ARG: ${{ github.event.inputs.sku }}
         run: |
           SKU="${SKU_ARG:-automatic}"
           
