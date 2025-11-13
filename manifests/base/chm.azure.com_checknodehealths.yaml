@@ -20,8 +20,8 @@ spec:
     - jsonPath: .spec.nodeRef.name
       name: Node
       type: string
-    - jsonPath: .status.conditions[?(@.type=="Healthy")].status
-      name: Healthy
+    - jsonPath: .status.conditions[?(@.type=="Completed")].status
+      name: Status
       type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
@@ -29,10 +29,8 @@ spec:
     name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: |-
-          CheckNodeHealth is a one-time health check resource for a specific node.
-          When created, the controller runs health checks on the target node and updates
-          the status with results. The resource is not modified after completion.
+        description: CheckNodeHealth is a resource that tracks health check results
+          for a specific node
         properties:
           apiVersion:
             description: |-
@@ -59,8 +57,6 @@ spec:
                 properties:
                   name:
                     description: Name is the name of the node
-                    maxLength: 253
-                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$
                     type: string
                 required:
                 - name
@@ -73,7 +69,7 @@ spec:
             properties:
               conditions:
                 description: Conditions represent the latest available observations
-                  of the check's current state
+                  of the check's state
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -139,30 +135,38 @@ spec:
                   description: CheckResult represents the result of a single health
                     check
                   properties:
+                    checker:
+                      description: |-
+                        Checker is the specific instance name of the health check
+                        For example: "internal-dns", "external-dns", "kubernetes-apiserver"
+                      type: string
+                    checkerType:
+                      description: CheckerType is the category/type of health check
+                      enum:
+                      - APIServer
+                      - DNS
+                      - MetricsServer
+                      - PodStartup
+                      - AzurePolicy
+                      type: string
+                    completedAt:
+                      description: CompletedAt is when this specific check completed
+                      format: date-time
+                      type: string
                     errorCode:
-                      description: ErrorCode is the specific error code if the status
-                        is not Healthy
-                      pattern: ^[A-Z][a-zA-Z0-9]*$
+                      description: ErrorCode is the specific error code if the check
+                        failed
                       type: string
                     message:
                       description: Message provides additional details about the check
                         result
                       type: string
-                    name:
-                      description: |-
-                        Name is the specific instance name of the health check
-                        For example: "PodStartup", "PodNetwork"
-                      pattern: ^[A-Z][a-zA-Z0-9]*$
-                      type: string
                     status:
                       description: Status is the health status of this check
-                      enum:
-                      - Healthy
-                      - Unhealthy
-                      - Unknown
                       type: string
                   required:
-                  - name
+                  - checker
+                  - checkerType
                   - status
                   type: object
                 type: array
@@ -171,6 +175,7 @@ spec:
                 format: date-time
                 type: string
             required:
+            - conditions
             - startedAt
             type: object
         type: object

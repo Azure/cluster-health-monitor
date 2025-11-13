@@ -8,12 +8,14 @@ import (
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
-// +kubebuilder:resource:scope=Cluster,shortName=chm
+// +kubebuilder:resource:scope=Cluster,shortName=cnh
 // +kubebuilder:printcolumn:name="Node",type=string,JSONPath=`.spec.nodeRef.name`
-// +kubebuilder:printcolumn:name="Status",type=string,JSONPath=`.status.conditions[?(@.type=="Completed")].status`
+// +kubebuilder:printcolumn:name="Healthy",type=string,JSONPath=`.status.conditions[?(@.type=="Healthy")].status`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
-// CheckNodeHealth is a resource that tracks health check results for a specific node
+// CheckNodeHealth is a one-time health check resource for a specific node.
+// When created, the controller runs health checks on the target node and updates
+// the status with results. The resource is not modified after completion.
 type CheckNodeHealth struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -33,19 +35,23 @@ type CheckNodeHealthSpec struct {
 type NodeReference struct {
 	// Name is the name of the node
 	// +required
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`
+	// +kubebuilder:validation:MaxLength=253
 	Name string `json:"name"`
 }
 
 // CheckNodeHealthStatus defines the observed state of CheckNodeHealth
 type CheckNodeHealthStatus struct {
 	// StartedAt is the timestamp when the health checks started
+	// +required
 	StartedAt *metav1.Time `json:"startedAt"`
 
 	// FinishedAt is the timestamp when the health checks completed
 	// +optional
 	FinishedAt *metav1.Time `json:"finishedAt,omitempty"`
 
-	// Conditions represent the latest available observations of the check's state
+	// Conditions represent the latest available observations of the check's current state
+	// +optional
 	Conditions []metav1.Condition `json:"conditions"`
 
 	// Results contains the individual check results
@@ -57,11 +63,8 @@ type CheckNodeHealthStatus struct {
 type CheckNodeHealthConditionType string
 
 const (
-	// CheckNodeHealthConditionCompleted indicates all checks have completed
-	CheckNodeHealthConditionCompleted CheckNodeHealthConditionType = "Completed"
-
-	// CheckNodeHealthConditionFailed indicates one or more checks failed
-	CheckNodeHealthConditionFailed CheckNodeHealthConditionType = "Failed"
+	// CheckNodeHealthConditionHealthy indicates all checks have completed and are healthy
+	CheckNodeHealthConditionHealthy CheckNodeHealthConditionType = "Healthy"
 )
 
 // CheckerType represents the category of health checker
@@ -93,35 +96,32 @@ const (
 
 	// CheckStatusUnhealthy indicates the check failed
 	CheckStatusUnhealthy CheckStatus = "Unhealthy"
+
+	// CheckStatusUnknown indicates the check is in an unknown state
+	CheckStatusUnknown CheckStatus = "Unknown"
 )
 
 // CheckResult represents the result of a single health check
 type CheckResult struct {
-	// CheckerType is the category/type of health check
+	// Name is the specific instance name of the health check
+	// For example: "PodStartup", "PodNetwork"
 	// +required
-	// +kubebuilder:validation:Enum=APIServer;DNS;MetricsServer;PodStartup;AzurePolicy
-	CheckerType CheckerType `json:"checkerType"`
-
-	// Checker is the specific instance name of the health check
-	// For example: "internal-dns", "external-dns", "kubernetes-apiserver"
-	// +required
-	Checker string `json:"checker"`
+	// +kubebuilder:validation:Pattern=`^[A-Z][a-zA-Z0-9]*$`
+	Name string `json:"name"`
 
 	// Status is the health status of this check
 	// +required
+	// +kubebuilder:validation:Enum=Healthy;Unhealthy;Unknown
 	Status CheckStatus `json:"status"`
 
 	// Message provides additional details about the check result
 	// +optional
 	Message string `json:"message,omitempty"`
 
-	// ErrorCode is the specific error code if the check failed
+	// ErrorCode is the specific error code if the status is not Healthy
 	// +optional
+	// +kubebuilder:validation:Pattern=`^[A-Z][a-zA-Z0-9]*$`
 	ErrorCode string `json:"errorCode,omitempty"`
-
-	// CompletedAt is when this specific check completed
-	// +optional
-	CompletedAt *metav1.Time `json:"completedAt,omitempty"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object

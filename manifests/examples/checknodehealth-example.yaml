@@ -1,9 +1,26 @@
 apiVersion: chm.azure.com/v1alpha1
 kind: CheckNodeHealth
 metadata:
-  name: worker-node-1-health
+  name: test
   labels:
     node: aks-nodepool1-51467756-vmss000000
 spec:
   nodeRef:
     name: aks-nodepool1-51467756-vmss000000
+status:
+  startedAt: 2025-10-18T00:12:34Z
+  finishedAt: 2025-10-18T00:12:57Z
+  conditions:
+    - type: Healthy
+      status: "True"
+      reason: ChecksPassed 
+      message: success
+      lastTransitionTime: 2025-10-18T00:12:57Z
+  results:
+    - name: PodStartup
+      status: Healthy
+      message: "Pod started successfully on the node"
+    - name: PodNetwork
+      status: Unhealthy
+      errorCode: serviceUnreachable
+      message: "Timeout querying CoreDNS service."
