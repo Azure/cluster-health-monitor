@@ -40,6 +40,14 @@ var _ = Describe("DNS checker metrics", Ordered, ContinueOnFailure, func() {
 		err := enableMockLocalDNS(clientset)
 		Expect(err).NotTo(HaveOccurred(), "Failed to enable mock LocalDNS")
 
+		By("Waiting for LocalDNS mock to be available")
+		Eventually(func() bool {
+			return isMockLocalDNSAvailable(clientset)
+		}, "60s", "5s").Should(BeTrue(), "Mock LocalDNS is not available")
+
+		err = resetClusterHealthMonitorMetrics(clientset)
+		Expect(err).NotTo(HaveOccurred(), "Failed to restart cluster health monitor deployment")
+
 		session, localPort = setupMetricsPortforwarding(clientset)
 	})
 
@@ -56,11 +64,6 @@ var _ = Describe("DNS checker metrics", Ordered, ContinueOnFailure, func() {
 		Expect(err).NotTo(HaveOccurred(), "Failed to get pod DNS config")
 		GinkgoWriter.Printf("Pod DNS config: %s\n", string(output))
 		Expect(string(output)).To(ContainSubstring("169.254.10.11"), "LocalDNS IP not found in pod DNS config")
-
-		By("Waiting for LocalDNS mock to be available")
-		Eventually(func() bool {
-			return isMockLocalDNSAvailable(clientset)
-		}, "60s", "5s").Should(BeTrue(), "Mock LocalDNS is not available")
 
 		By("Waiting for DNS checker metrics to report healthy status")
 		Eventually(func() bool {

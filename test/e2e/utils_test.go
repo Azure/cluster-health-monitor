@@ -21,6 +21,7 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 )
@@ -454,6 +455,45 @@ func checkLabelsExistOnAnyNode(clientset kubernetes.Interface, requiredLabels ma
 
 	GinkgoWriter.Printf("No node found with all required labels: %v\n", requiredLabels)
 	return false, nil
+}
+
+// resetClusterHealthMonitorMetrics is used to clear stale metrics at the start of tests. Currently it does so by restarting the deployment.
+func resetClusterHealthMonitorMetrics(clientset *kubernetes.Clientset) error {
+	GinkgoWriter.Printf("Scaling down cluster-health-monitor deployment...\n")
+	scaleDownPatch := []byte(`{"spec":{"replicas":0}}`)
+	_, err := clientset.AppsV1().Deployments(kubesystem).Patch(
+		context.TODO(), deploymentName, types.MergePatchType, scaleDownPatch, metav1.PatchOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to scale down cluster health monitor deployment: %w", err)
+	}
+
+	Eventually(func() bool {
+		dep, err := getClusterHealthMonitorDeployment(clientset)
+		if err != nil {
+			return false
+		}
+		return dep.Status.ReadyReplicas == 0
+	}, "60s", "2s").Should(BeTrue(), "Deployment did not scale down")
+
+	GinkgoWriter.Printf("Scaling up cluster-health-monitor deployment...\n")
+	scaleUpPatch := []byte(`{"spec":{"replicas":1}}`)
+	_, err = clientset.AppsV1().Deployments(kubesystem).Patch(
+		context.TODO(), deploymentName, types.MergePatchType, scaleUpPatch, metav1.PatchOptions{})
+	if err != nil {
+		return fmt.Errorf("failed to scale up cluster health monitor deployment: %w", err)
+	}
+
+	// Wait for deployment to be ready
+	Eventually(func() bool {
+		dep, err := getClusterHealthMonitorDeployment(clientset)
+		if err != nil {
+			return false
+		}
+		return dep.Status.ReadyReplicas == 1
+	}, "60s", "2s").Should(BeTrue(), "Deployment did not scale up")
+
+	GinkgoWriter.Printf("Successfully restarted cluster-health-monitor deployment\n")
+	return nil
 }
 
 // ensureLabelsExistOnAtLeastOneNode adds required labels to all nodes if they don't exist on any node.
