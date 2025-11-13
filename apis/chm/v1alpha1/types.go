@@ -4,7 +4,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// +genclient
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
@@ -47,6 +46,7 @@ type NodeReference struct {
 // +kubebuilder:object:generate=true
 type CheckNodeHealthStatus struct {
 	// StartedAt is the timestamp when the health checks started
+	// +required
 	StartedAt *metav1.Time `json:"startedAt"`
 
 	// FinishedAt is the timestamp when the health checks completed
@@ -62,12 +62,13 @@ type CheckNodeHealthStatus struct {
 	Results []CheckResult `json:"results,omitempty"`
 }
 
-// CheckNodeHealthConditionType represents the type of condition
-type CheckNodeHealthConditionType string
+// NodeHealthConditionType represents the type of condition
+type NodeHealthConditionType string
 
 const (
-	// CheckNodeHealthConditionHealthy indicates all checks have completed and are healthy
-	CheckNodeHealthConditionHealthy CheckNodeHealthConditionType = "Healthy"
+	// NodeHealthConditionHealthy is the condition type used to report the overall health status of the node
+	// The condition's Status field will be True/False/Unknown to indicate the actual health state
+	NodeHealthConditionHealthy NodeHealthConditionType = "Healthy"
 )
 
 // CheckerType represents the category of health checker
