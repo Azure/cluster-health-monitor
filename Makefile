@@ -122,14 +122,6 @@ kind-redeploy: kind-delete-deployment kind-build-image kind-load-image kind-appl
 kind-delete-cluster:
 	kind delete cluster --name $(KIND_CLUSTER_NAME)
 
-.PHONY: kind-enable-localdns-mock
-kind-enable-localdns-mock: kind-export-kubeconfig
-	kubectl apply -f ${GIT_ROOT}/manifests/overlays/test/dnsmasq.yaml
-
-.PHONY: kind-disable-localdns-mock
-kind-disable-localdns-mock: kind-export-kubeconfig
-	kubectl delete -f ${GIT_ROOT}/manifests/overlays/test/dnsmasq.yaml
-
 .PHONY: kind-setup-e2e
 kind-setup-e2e: kind-create-cluster kind-deploy-metrics-server kind-load-image
 

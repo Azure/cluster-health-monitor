@@ -226,11 +226,64 @@ jobs:
           force: true
           pull-images: false
 
+  run_e2e_tests:
+    name: "Run E2E Tests"
+    runs-on: ubuntu-latest
+    needs: [get_ref, deploy_kubernetes_resources]
+    permissions:
+      id-token: write
+      contents: read
+      actions: read
+    env:
+      AZURE_CORE_OUTPUT: none
+      E2E_SKIP_CLUSTER_SETUP: "true" # Eariler jobs already set up the cluster and deployed the k8s resources
+      E2E_SKIP_ALL_CLEANUP: "true" # Resource group will be deleted in later job which should clean up everything
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+        with:
+          ref: ${{ needs.get_ref.outputs.checkout_ref }}
+
+      - name: Set up Go
+        uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
+        with:
+          go-version: stable
+
+      - name: Set up Kubectl
+        uses: azure/setup-kubectl@776406bce94f63e41d621b960d78ee25c8b76ede # v4.0.1
+      
+      - name: Set up kubelogin
+        uses: azure/use-kubelogin@76597ae0fcbaace21b05e13a2cbf8daee2c6e820 # v1.2
+        with:
+          kubelogin-version: 'v0.2.10'
+      
+      - name: Azure Login
+        uses: azure/login@6c251865b4e6290e7b78be643ea2d005bc51f69a # v2.1.1
+        with:
+          client-id: ${{ secrets.CLIENT_ID }}
+          tenant-id: ${{ secrets.TENANT_ID }}
+          subscription-id: ${{ secrets.SUBSCRIPTION_ID }}
+      
+      - name: Set AKS Context
+        uses: azure/aks-set-context@c7eb093e5a5d47caa333f64974d5fd1cd4bf069d # v4.0.3
+        with:
+          cluster-name: "chme2e${{ github.run_id }}"
+          resource-group: "chme2e${{ github.run_id }}"
+
+      - name: Convert kubeconfig to use Azure CLI
+        run: kubelogin convert-kubeconfig -l azurecli
+
+      - name: Install Ginkgo
+        run: go install github.com/onsi/ginkgo/v2/ginkgo
+
+      - name: Run E2E Tests
+        run: ginkgo -v -p --race ./test/e2e/
+
   cleanup:
     name: "Cleanup Resources"
     runs-on: ubuntu-latest
-    needs: [deploy_kubernetes_resources]
-    if: always()
+    needs: [run_e2e_tests]
+    if: always() && needs.run_e2e_tests.result != 'failure'
     permissions:
       contents: read
       id-token: write

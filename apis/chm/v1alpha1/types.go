@@ -4,8 +4,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// +genclient
-// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster,shortName=cnh
@@ -16,6 +14,7 @@ import (
 // CheckNodeHealth is a one-time health check resource for a specific node.
 // When created, the controller runs health checks on the target node and updates
 // the status with results. The resource is not modified after completion.
+// +kubebuilder:object:generate=true
 type CheckNodeHealth struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -25,6 +24,7 @@ type CheckNodeHealth struct {
 }
 
 // CheckNodeHealthSpec defines the desired state of CheckNodeHealth
+// +kubebuilder:object:generate=true
 type CheckNodeHealthSpec struct {
 	// NodeRef references the node to check
 	// +required
@@ -32,6 +32,7 @@ type CheckNodeHealthSpec struct {
 }
 
 // NodeReference contains a reference to a node
+// +kubebuilder:object:generate=true
 type NodeReference struct {
 	// Name is the name of the node
 	// +required
@@ -41,6 +42,7 @@ type NodeReference struct {
 }
 
 // CheckNodeHealthStatus defines the observed state of CheckNodeHealth
+// +kubebuilder:object:generate=true
 type CheckNodeHealthStatus struct {
 	// StartedAt is the timestamp when the health checks started
 	// +required
@@ -59,12 +61,13 @@ type CheckNodeHealthStatus struct {
 	Results []CheckResult `json:"results,omitempty"`
 }
 
-// CheckNodeHealthConditionType represents the type of condition
-type CheckNodeHealthConditionType string
+// NodeHealthConditionType represents the type of condition
+type NodeHealthConditionType string
 
 const (
-	// CheckNodeHealthConditionHealthy indicates all checks have completed and are healthy
-	CheckNodeHealthConditionHealthy CheckNodeHealthConditionType = "Healthy"
+	// NodeHealthConditionHealthy is the condition type used to report the overall health status of the node
+	// The condition's Status field will be True/False/Unknown to indicate the actual health state
+	NodeHealthConditionHealthy NodeHealthConditionType = "Healthy"
 )
 
 // CheckerType represents the category of health checker
@@ -107,6 +110,7 @@ type CheckResult struct {
 	// For example: "PodStartup", "PodNetwork"
 	// +required
 	// +kubebuilder:validation:Pattern=`^[A-Z][a-zA-Z0-9]*$`
+	// +kubebuilder:validation:MaxLength=253
 	Name string `json:"name"`
 
 	// Status is the health status of this check
@@ -116,15 +120,16 @@ type CheckResult struct {
 
 	// Message provides additional details about the check result
 	// +optional
+	// +kubebuilder:validation:MaxLength=32768
 	Message string `json:"message,omitempty"`
 
 	// ErrorCode is the specific error code if the status is not Healthy
 	// +optional
 	// +kubebuilder:validation:Pattern=`^[A-Z][a-zA-Z0-9]*$`
+	// +kubebuilder:validation:MaxLength=253
 	ErrorCode string `json:"errorCode,omitempty"`
 }
 
-// +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object
 // +kubebuilder:object:root=true
 
 // CheckNodeHealthList contains a list of CheckNodeHealth resources

@@ -18,6 +18,8 @@ import (
 	"github.com/prometheus/common/expfmt"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
@@ -26,7 +28,7 @@ import (
 const (
 	// Kubernetes resource names.
 	// Note that these names must match with the applied manifests/overlays/test.
-	namespace      = "kube-system"
+	kubesystem     = "kube-system"
 	deploymentName = "cluster-health-monitor"
 
 	remoteMetricsPort = 9800  // remoteMetricsPort is the fixed port used by the service in the container.
@@ -80,7 +82,7 @@ func getKubeClient(kubeConfigPath string) (*kubernetes.Clientset, error) {
 }
 
 func getClusterHealthMonitorDeployment(clientset *kubernetes.Clientset) (*appsv1.Deployment, error) {
-	deployment, err := clientset.AppsV1().Deployments(namespace).Get(context.TODO(), deploymentName, metav1.GetOptions{})
+	deployment, err := clientset.AppsV1().Deployments(kubesystem).Get(context.TODO(), deploymentName, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get cluster health monitor deployment: %w", err)
 	}
@@ -88,7 +90,7 @@ func getClusterHealthMonitorDeployment(clientset *kubernetes.Clientset) (*appsv1
 }
 
 func getClusterHealthMonitorPod(clientset *kubernetes.Clientset) (*corev1.Pod, error) {
-	podList, err := clientset.CoreV1().Pods(namespace).List(context.TODO(), metav1.ListOptions{
+	podList, err := clientset.CoreV1().Pods(kubesystem).List(context.TODO(), metav1.ListOptions{
 		LabelSelector: "app=" + deploymentName,
 	})
 	if err != nil {
@@ -116,11 +118,11 @@ func setupMetricsPortforwarding(clientset *kubernetes.Clientset) (*gexec.Session
 	cmd := exec.Command("kubectl", "port-forward",
 		fmt.Sprintf("pod/%s", pod.Name),
 		fmt.Sprintf("%d:%d", localPort, remoteMetricsPort),
-		"-n", namespace)
+		"-n", kubesystem)
 	cmd.Env = os.Environ()
 	session, err := gexec.Start(cmd, GinkgoWriter, GinkgoWriter)
 	Expect(err).NotTo(HaveOccurred())
-	GinkgoWriter.Printf("Port-forwarding to pod %s in namespace %s on port %d:%d\n", pod.Name, namespace, localPort, remoteMetricsPort)
+	GinkgoWriter.Printf("Port-forwarding to pod %s in namespace %s on port %d:%d\n", pod.Name, kubesystem, localPort, remoteMetricsPort)
 	Eventually(session, "5s", "1s").Should(gbytes.Say("Forwarding from"), "Failed to establish port-forwarding")
 
 	return session, localPort
@@ -183,7 +185,7 @@ func getUnusedPort(basePort int) (int, error) {
 
 // getCoreDNSPodList lists all CoreDNS pods in the kube-system namespace.
 func getCoreDNSPodList(clientset *kubernetes.Clientset) (*corev1.PodList, error) {
-	podList, err := clientset.CoreV1().Pods("kube-system").List(context.TODO(), metav1.ListOptions{
+	podList, err := clientset.CoreV1().Pods(kubesystem).List(context.TODO(), metav1.ListOptions{
 		LabelSelector: "k8s-app=kube-dns",
 	})
 	if err != nil {
@@ -200,7 +202,7 @@ func deleteCoreDNSPods(clientset *kubernetes.Clientset) error {
 	}
 
 	for _, pod := range podList.Items {
-		err := clientset.CoreV1().Pods("kube-system").Delete(context.TODO(), pod.Name, metav1.DeleteOptions{})
+		err := clientset.CoreV1().Pods(kubesystem).Delete(context.TODO(), pod.Name, metav1.DeleteOptions{})
 		if err != nil {
 			return fmt.Errorf("failed to delete CoreDNS pod %s: %w", pod.Name, err)
 		}
@@ -208,30 +210,9 @@ func deleteCoreDNSPods(clientset *kubernetes.Clientset) error {
 	return nil
 }
 
-// getCoreDNSDeployment gets the CoreDNS deployment from the kube-system namespace.
-func getCoreDNSDeployment(clientset *kubernetes.Clientset) (*appsv1.Deployment, error) {
-	return clientset.AppsV1().Deployments("kube-system").Get(context.TODO(), "coredns", metav1.GetOptions{})
-}
-
-// updateCoreDNSDeploymentReplicas updates the replica count of the CoreDNS deployment.
-func updateCoreDNSDeploymentReplicas(clientset *kubernetes.Clientset, replicas int32) error {
-	deployment, err := getCoreDNSDeployment(clientset)
-	if err != nil {
-		return fmt.Errorf("failed to get CoreDNS deployment: %w", err)
-	}
-
-	deployment.Spec.Replicas = &replicas
-	_, err = clientset.AppsV1().Deployments("kube-system").Update(context.TODO(), deployment, metav1.UpdateOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to update CoreDNS deployment replicas: %w", err)
-	}
-
-	return nil
-}
-
 // getCoreDNSConfigMap gets the CoreDNS ConfigMap from the kube-system namespace.
 func getCoreDNSConfigMap(clientset *kubernetes.Clientset) (*corev1.ConfigMap, error) {
-	return clientset.CoreV1().ConfigMaps("kube-system").Get(context.TODO(), "coredns", metav1.GetOptions{})
+	return clientset.CoreV1().ConfigMaps(kubesystem).Get(context.TODO(), "coredns", metav1.GetOptions{})
 }
 
 // simulateCoreDNSHighLatency simulates high latency in DNS responses by modifying the CoreDNS ConfigMap.
@@ -249,7 +230,7 @@ func simulateCoreDNSHighLatency(clientset *kubernetes.Clientset) (string, error)
 	modifiedCorefile := strings.Replace(originalCorefile, "cache", "invalidplugin\n    cache", 1)
 	configMap.Data["Corefile"] = modifiedCorefile
 
-	_, err = clientset.CoreV1().ConfigMaps("kube-system").Update(context.TODO(), configMap, metav1.UpdateOptions{})
+	_, err = clientset.CoreV1().ConfigMaps(kubesystem).Update(context.TODO(), configMap, metav1.UpdateOptions{})
 	if err != nil {
 		return "", fmt.Errorf("failed to update CoreDNS ConfigMap: %w", err)
 	}
@@ -264,7 +245,7 @@ func restoreCoreDNSConfigMap(clientset *kubernetes.Clientset, originalCorefile s
 	}
 
 	configMap.Data["Corefile"] = originalCorefile
-	_, err = clientset.CoreV1().ConfigMaps("kube-system").Update(context.TODO(), configMap, metav1.UpdateOptions{})
+	_, err = clientset.CoreV1().ConfigMaps(kubesystem).Update(context.TODO(), configMap, metav1.UpdateOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to restore CoreDNS ConfigMap: %w", err)
 	}
@@ -272,32 +253,55 @@ func restoreCoreDNSConfigMap(clientset *kubernetes.Clientset, originalCorefile s
 }
 
 // isMockLocalDNSAvailable checks if the mock LocalDNS server is available.
-// It checks the resources deployed from the manifests/overlays/test/dnsmasq.yaml file.
 func isMockLocalDNSAvailable(clientset *kubernetes.Clientset) bool {
-	mockLocalDNS, err := clientset.AppsV1().DaemonSets("kube-system").Get(context.TODO(), "mock-localdns", metav1.GetOptions{})
+	mockLocalDNS, err := clientset.AppsV1().DaemonSets(mockLocalDNSDaemonSet().GetNamespace()).Get(
+		context.TODO(), mockLocalDNSDaemonSet().GetName(), metav1.GetOptions{})
 	if err != nil {
 		GinkgoWriter.Printf("Error getting mock-dns daemonset: %v\n", err)
 		return false
 	}
-	bindLocalDNS, err := clientset.AppsV1().DaemonSets("kube-system").Get(context.TODO(), "bind-localdns-ip", metav1.GetOptions{})
-	if err != nil {
-		GinkgoWriter.Printf("Error getting bind-localdns-ip daemonset: %v\n", err)
-		return false
+
+	return mockLocalDNS.Status.NumberAvailable == mockLocalDNS.Status.DesiredNumberScheduled
+}
+
+// enableMockLocalDNS creates the mock LocalDNS DaemonSet in the k8s cluster
+func enableMockLocalDNS(clientset *kubernetes.Clientset) error {
+	_, err := clientset.AppsV1().DaemonSets(mockLocalDNSDaemonSet().GetNamespace()).Create(
+		context.TODO(), mockLocalDNSDaemonSet(), metav1.CreateOptions{})
+	if err != nil && !errors.IsAlreadyExists(err) {
+		return fmt.Errorf("failed to create mock LocalDNS DaemonSet: %w", err)
 	}
-	return mockLocalDNS.Status.NumberAvailable == mockLocalDNS.Status.DesiredNumberScheduled &&
-		bindLocalDNS.Status.NumberAvailable == bindLocalDNS.Status.DesiredNumberScheduled
+
+	GinkgoWriter.Printf("Successfully enabled mock LocalDNS DaemonSet\n")
+	return nil
+}
+
+// disableMockLocalDNS deletes the mock LocalDNS DaemonSet from the k8s cluster
+func disableMockLocalDNS(clientset *kubernetes.Clientset) error {
+	err := clientset.AppsV1().DaemonSets(mockLocalDNSDaemonSet().GetNamespace()).Delete(
+		context.TODO(), mockLocalDNSDaemonSet().GetName(), metav1.DeleteOptions{})
+	if err != nil && !errors.IsNotFound(err) {
+		return fmt.Errorf("failed to delete mock LocalDNS DaemonSet: %w", err)
+	}
+
+	GinkgoWriter.Printf("Successfully disabled mock LocalDNS DaemonSet\n")
+	return nil
 }
 
 func verifyCoreDNSPodCheckerResultMetrics(localPort int, expectedChkNames []string, expectedType, expectedStatus, expectedErrorCode string) (bool, map[string]struct{}) {
 	return verifyCheckerResultMetricsHelper(podHealthResultMetricName, localPort, expectedChkNames, expectedType, expectedStatus, expectedErrorCode, []string{"pod_name"})
 }
 
-func verifyCheckerResultMetrics(localPort int, expectedChkNames []string, expectedType, expectedStatus, expectedErrorCode string) (bool, map[string]struct{}) {
+func verifyCheckerResultMetrics(localPort int, expectedChkNames []string, expectedType, expectedStatus string) (bool, map[string]struct{}) {
+	return verifyCheckerResultMetricsHelper(checkerResultMetricName, localPort, expectedChkNames, expectedType, expectedStatus, "", nil)
+}
+
+func verifyCheckerResultMetricsWithErrorCode(localPort int, expectedChkNames []string, expectedType, expectedStatus, expectedErrorCode string) (bool, map[string]struct{}) {
 	return verifyCheckerResultMetricsHelper(checkerResultMetricName, localPort, expectedChkNames, expectedType, expectedStatus, expectedErrorCode, nil)
 }
 
 // verifyCheckerResultMetricsHelper checks if all the checker result metrics match the expected type, status, and error code.
-// It returns true if all checker names match the criteria, false otherwise.
+// It returns true if all checker names match the criteria, false otherwise. If expectedErrorCode is an empty string, any error code is accepted.
 func verifyCheckerResultMetricsHelper(metricName string, localPort int, expectedChkNames []string, expectedType, expectedStatus, expectedErrorCode string, expectedLabels []string) (bool, map[string]struct{}) {
 	metricsData, err := getMetrics(localPort)
 	if err != nil {
@@ -321,7 +325,7 @@ func verifyCheckerResultMetricsHelper(metricName string, localPort int, expected
 
 		if labels[metricsCheckerTypeLabel] == expectedType &&
 			labels[metricsStatusLabel] == expectedStatus &&
-			labels[metricsErrorCodeLabel] == expectedErrorCode &&
+			(labels[metricsErrorCodeLabel] == expectedErrorCode || expectedErrorCode == "") &&
 			containExpectedLabels(labels, expectedLabels) {
 			foundCheckers[labels[metricsCheckerNameLabel]] = struct{}{}
 		}
@@ -351,30 +355,15 @@ func containExpectedLabels(labels map[string]string, expectedLabels []string) bo
 	return true
 }
 
-// removeLabelsFromAllNodes removes the given labels from all nodes in the cluster.
-func removeLabelsFromAllNodes(clientset kubernetes.Interface, labels map[string]string) {
-	Eventually(func() error {
-		nodeList, err := clientset.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
-		if err != nil {
-			return fmt.Errorf("failed to list nodes: %w", err)
+// containsAllLabels checks if the target map contains all key-value pairs from the required map.
+// If a required value is empty, only the key existence is checked.
+func containsAllLabels(target map[string]string, required map[string]string) bool {
+	for key, requiredValue := range required {
+		if actualValue, exists := target[key]; !exists || (requiredValue != "" && actualValue != requiredValue) {
+			return false
 		}
-
-		// Remove labels from all nodes.
-		for _, node := range nodeList.Items {
-			for key := range labels {
-				if _, exists := node.Labels[key]; exists {
-					delete(node.Labels, key)
-					GinkgoWriter.Printf("Removed label %s from node %s\n", key, node.Name)
-				}
-			}
-			_, err := clientset.CoreV1().Nodes().Update(context.TODO(), &node, metav1.UpdateOptions{})
-			if err != nil {
-				return fmt.Errorf("failed to update node %s: %w", node.Name, err)
-			}
-		}
-
-		return nil
-	}, "30s", "2s").ShouldNot(HaveOccurred(), "Failed to remove labels from nodes")
+	}
+	return true
 }
 
 // addLabelsToAllNodes applies the given labels to all nodes in the cluster.
@@ -407,7 +396,7 @@ func addLabelsToAllNodes(clientset kubernetes.Interface, labels map[string]strin
 
 // getMetricsServerDeployment gets the metrics server deployment from the kube-system namespace.
 func getMetricsServerDeployment(clientset *kubernetes.Clientset) (*appsv1.Deployment, error) {
-	return clientset.AppsV1().Deployments("kube-system").Get(context.TODO(), "metrics-server", metav1.GetOptions{})
+	return clientset.AppsV1().Deployments(kubesystem).Get(context.TODO(), "metrics-server", metav1.GetOptions{})
 }
 
 // updateMetricsServerDeploymentReplicas updates the replica count of the metrics server deployment.
@@ -418,10 +407,68 @@ func updateMetricsServerDeploymentReplicas(clientset *kubernetes.Clientset, repl
 	}
 
 	deployment.Spec.Replicas = &replicas
-	_, err = clientset.AppsV1().Deployments("kube-system").Update(context.TODO(), deployment, metav1.UpdateOptions{})
+	_, err = clientset.AppsV1().Deployments(kubesystem).Update(context.TODO(), deployment, metav1.UpdateOptions{})
 	if err != nil {
 		return fmt.Errorf("failed to update metrics server deployment replicas: %w", err)
 	}
 
 	return nil
+}
+
+// replaceRolePermissions replaces a role's permissions with new ones, returning the original permissions for restoration.
+func replaceRolePermissions(clientset kubernetes.Interface, namespace, roleName string, newRules []rbacv1.PolicyRule) ([]rbacv1.PolicyRule, error) {
+	role, err := clientset.RbacV1().Roles(namespace).Get(context.TODO(), roleName, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get role %s: %w", roleName, err)
+	}
+
+	// Backup original rules
+	originalRules := make([]rbacv1.PolicyRule, len(role.Rules))
+	copy(originalRules, role.Rules)
+
+	// Replace with new rules
+	role.Rules = newRules
+
+	_, err = clientset.RbacV1().Roles(namespace).Update(context.TODO(), role, metav1.UpdateOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to update role %s: %w", roleName, err)
+	}
+
+	GinkgoWriter.Printf("Replaced permissions for role %s in namespace %s\n", roleName, namespace)
+	return originalRules, nil
+}
+
+// checkLabelsExistOnAnyNode checks if the required labels exist on at least one node.
+func checkLabelsExistOnAnyNode(clientset kubernetes.Interface, requiredLabels map[string]string) (bool, error) {
+	nodeList, err := clientset.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
+	if err != nil {
+		return false, fmt.Errorf("failed to list nodes: %w", err)
+	}
+
+	for _, node := range nodeList.Items {
+		if containsAllLabels(node.Labels, requiredLabels) {
+			GinkgoWriter.Printf("Found node %s with all required labels: %v\n", node.Name, requiredLabels)
+			return true, nil
+		}
+	}
+
+	GinkgoWriter.Printf("No node found with all required labels: %v\n", requiredLabels)
+	return false, nil
+}
+
+// ensureLabelsExistOnAtLeastOneNode adds required labels to all nodes if they don't exist on any node.
+func ensureLabelsExistOnAtLeastOneNode(clientset kubernetes.Interface, requiredLabels map[string]string) {
+	Eventually(func() error {
+		labelsExist, err := checkLabelsExistOnAnyNode(clientset, requiredLabels)
+		if err != nil {
+			return fmt.Errorf("failed to check if required labels exist: %w", err)
+		}
+
+		if !labelsExist {
+			GinkgoWriter.Printf("Required labels not found on any node, adding to all nodes: %v\n", requiredLabels)
+			addLabelsToAllNodes(clientset, requiredLabels)
+		}
+
+		return nil
+	}, "30s", "2s").ShouldNot(HaveOccurred(), "Failed to ensure required labels exist on at least one node")
 }
