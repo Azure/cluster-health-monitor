@@ -277,7 +277,7 @@ jobs:
         run: go install github.com/onsi/ginkgo/v2/ginkgo
 
       - name: Run E2E Tests
-        run: ginkgo -v -p --race ./test/e2e/
+        run: ginkgo -v --race ./test/e2e/
 
   cleanup:
     name: "Cleanup Resources"

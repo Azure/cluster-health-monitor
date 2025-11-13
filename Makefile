@@ -55,7 +55,7 @@ docker-build-cluster-health-monitor: docker-buildx-builder
 
 .PHONY: test-e2e
 test-e2e:
-	ginkgo -v -p --race ./test/e2e/
+	ginkgo -v --race ./test/e2e/
 
 .PHONY: test-unit
 test-unit:
