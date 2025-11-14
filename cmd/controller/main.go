@@ -13,7 +13,7 @@ import (
 	ctrlmetricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
-	"github.com/Azure/cluster-health-monitor/pkg/controller"
+	"github.com/Azure/cluster-health-monitor/pkg/controller/checknodehealth"
 )
 
 var (
@@ -73,9 +73,10 @@ func main() {
 	}
 
 	// Setup controller
-	if err = (&controller.CheckNodeHealthReconciler{
+	if err = (&checknodehealth.CheckNodeHealthReconciler{
 		Client:       mgr.GetClient(),
 		Scheme:       mgr.GetScheme(),
+		PodLabel:     "checknodehealth", // Label to identify health check pods
 		PodImage:     podImage,
 		PodNamespace: podNamespace,
 	}).SetupWithManager(mgr); err != nil {
