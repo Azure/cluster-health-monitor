@@ -3,7 +3,6 @@ package checknodehealth
 import (
 	"context"
 	"fmt"
-	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -13,12 +12,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
-)
-
-const (
-	// PodPendingTimeout is the maximum time a pod can stay in Pending state
-	// before being marked as failed
-	PodPendingTimeout = 30 * time.Second
 )
 
 // CheckNodeHealthReconciler reconciles a CheckNodeHealth object
