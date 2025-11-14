@@ -38,26 +38,44 @@ var _ = Describe("DNS per pod checker metrics", Ordered, ContinueOnFailure, func
 
 	It("should report healthy status for CoreDNSPerPod checkers", func() {
 		By("Waiting for CoreDNSPerPod checker metrics to report healthy status")
+		time0Metrics, err := getMetrics(localPort)
+		Expect(err).NotTo(HaveOccurred())
 		Eventually(func() bool {
-			matched, foundCheckers := verifyCoreDNSPodCheckerResultMetrics(localPort, coreDNSPerPodCheckers, checkerTypeDNS, metricsHealthyStatus, metricsHealthyErrorCode)
-			if !matched {
-				GinkgoWriter.Printf("Expected CoreDNSPerPod checkers to be healthy: %v, found: %v\n", coreDNSPerPodCheckers, foundCheckers)
+			timeNMetrics, err := getMetrics(localPort)
+			Expect(err).NotTo(HaveOccurred())
+
+			allIncreased, increasedCheckers, err := verifyCheckerResultMetricsValueIncreased(time0Metrics, timeNMetrics,
+				podHealthResultMetricName, coreDNSPerPodCheckers, checkerTypeDNS, metricsHealthyStatus, metricsHealthyErrorCode,
+			)
+			Expect(err).NotTo(HaveOccurred())
+
+			if !allIncreased {
+				GinkgoWriter.Printf("Expected increase in healthy results for CoreDNSPerPod checkers: %v, Actual: %v\n", coreDNSPerPodCheckers, increasedCheckers)
 				return false
 			}
-			GinkgoWriter.Printf("Found healthy CoreDNSPerPod checker metric for %v\n", foundCheckers)
+			GinkgoWriter.Printf("Found increase in healthy results for CoreDNSPerPod checkers %v\n", increasedCheckers)
 			return true
 		}, "60s", "5s").Should(BeTrue(), "CoreDNSPerPod checker metrics did not report healthy status within the timeout period")
 	})
 
 	It("should report unhealthy status for CoreDNSPerPod checkers with minimal query timeout", func() {
 		By("Waiting for CoreDNSPerPod checker metrics to report unhealthy status")
+		time0Metrics, err := getMetrics(localPort)
+		Expect(err).NotTo(HaveOccurred())
 		Eventually(func() bool {
-			matched, foundCheckers := verifyCoreDNSPodCheckerResultMetrics(localPort, coreDNSPerPodCheckersWithMinimalTimeout, checkerTypeDNS, metricsUnhealthyStatus, podTimeoutErrorCode)
-			if !matched {
-				GinkgoWriter.Printf("Expected CoreDNSPerPod checkers to be unhealthy: %v, found: %v\n", coreDNSPerPodCheckersWithMinimalTimeout, foundCheckers)
+			timeNMetrics, err := getMetrics(localPort)
+			Expect(err).NotTo(HaveOccurred())
+
+			allIncreased, increasedCheckers, err := verifyCheckerResultMetricsValueIncreased(time0Metrics, timeNMetrics,
+				podHealthResultMetricName, coreDNSPerPodCheckersWithMinimalTimeout, checkerTypeDNS, metricsUnhealthyStatus, podTimeoutErrorCode,
+			)
+			Expect(err).NotTo(HaveOccurred())
+
+			if !allIncreased {
+				GinkgoWriter.Printf("Expected increase in unhealthy results for CoreDNSPerPod checkers: %v, Actual: %v\n", coreDNSPerPodCheckersWithMinimalTimeout, increasedCheckers)
 				return false
 			}
-			GinkgoWriter.Printf("Found unhealthy CoreDNSPerPod checker metric for %v\n", foundCheckers)
+			GinkgoWriter.Printf("Found increase in unhealthy results for CoreDNSPerPod checkers %v\n", increasedCheckers)
 			return true
 		}, "60s", "5s").Should(BeTrue(), "CoreDNSPerPod checker metrics did not report unhealthy status within the timeout period")
 	})
