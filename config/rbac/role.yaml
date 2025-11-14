@@ -1,0 +1,50 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: cluster-health-monitor-crd-manager
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - watch
+- apiGroups:
+  - chm.azure.com
+  resources:
+  - checknodehealths
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - chm.azure.com
+  resources:
+  - checknodehealths/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - chm.azure.com
+  resources:
+  - checknodehealths/status
+  verbs:
+  - get
+  - patch
+  - update
