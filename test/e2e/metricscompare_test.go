@@ -2,9 +2,36 @@ package e2e
 
 import (
 	"fmt"
+	"time"
 
+	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
 	dto "github.com/prometheus/client_model/go"
 )
+
+// waitForCheckerResultsMetricsValueIncrease is a helper function for the common pattern of waiting for metrics to increase. It gets initial
+// metrics, then polls for metrics increases using Eventually with the provided timeout and interval. It is compatible with the
+// cluster_health_monitor_pod_health_result_total and cluster_health_monitor_checker_result_total metrics.
+func waitForCheckerResultsMetricsValueIncrease(localPort int, metricName string, checkerNames []string, checkerType, status, errorCode string, timeout, interval time.Duration, failureMessage string) {
+	time0Metrics, err := getMetrics(localPort)
+	Expect(err).NotTo(HaveOccurred())
+	Eventually(func() bool {
+		timeNMetrics, err := getMetrics(localPort)
+		Expect(err).NotTo(HaveOccurred())
+
+		allIncreased, increasedCheckers, err := verifyCheckerResultMetricsValueIncreased(time0Metrics, timeNMetrics,
+			metricName, checkerNames, checkerType, status, errorCode,
+		)
+		Expect(err).NotTo(HaveOccurred())
+
+		if !allIncreased {
+			GinkgoWriter.Printf("Expected increase in %s results for checkers: %v, Actual: %v\n", status, checkerNames, increasedCheckers)
+			return false
+		}
+		GinkgoWriter.Printf("Found increase in %s results for checkers %v\n", status, increasedCheckers)
+		return true
+	}, timeout, interval).Should(BeTrue(), failureMessage)
+}
 
 // verifyCheckerResultMetricsValueIncreased is a helper function to verify if metrics corresponding to checker results have increased from
 // time0 to timeN. The function is compatible with the cluster_health_monitor_pod_health_result_total and cluster_health_monitor_checker_result_total

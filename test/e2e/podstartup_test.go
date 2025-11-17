@@ -1,6 +1,9 @@
 package e2e
 
 import (
+	"time"
+
+	"github.com/Azure/cluster-health-monitor/pkg/checker/podstartup"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gexec"
@@ -10,6 +13,8 @@ import (
 const (
 	checkerTypePodStartup                   = "PodStartup"
 	clusterHealthMonitorSynthPodManagerRole = "cluster-health-monitor-synth-pod-manager"
+
+	podCreationErrorCode = podstartup.ErrCodePodCreationError
 )
 
 var (
@@ -46,15 +51,10 @@ var _ = Describe("Pod startup checker", Ordered, ContinueOnFailure, func() {
 
 	It("should report healthy status for pod startup checker", func() {
 		By("Waiting for pod startup checker metrics to report healthy status")
-		Eventually(func() bool {
-			matched, foundCheckers := verifyCheckerResultMetricsWithErrorCode(localPort, podStartupCheckerNames, checkerTypePodStartup, metricsHealthyStatus, metricsHealthyErrorCode)
-			if !matched {
-				GinkgoWriter.Printf("Expected pod startup checkers to be healthy: %v, found: %v\n", podStartupCheckerNames, foundCheckers)
-				return false
-			}
-			GinkgoWriter.Printf("Found healthy pod startup checker metric for %v\n", foundCheckers)
-			return true
-		}, "60s", "5s").Should(BeTrue(), "Pod startup checker metrics did not report healthy status within the timeout period")
+		waitForCheckerResultsMetricsValueIncrease(localPort,
+			checkerResultMetricName, podStartupCheckerNames, checkerTypePodStartup, metricsHealthyStatus, metricsHealthyErrorCode,
+			60*time.Second, 5*time.Second,
+			"Pod startup checker metrics did not report healthy status within the timeout period")
 	})
 
 	It("should report unhealthy status when pods cannot be scheduled", func() {
@@ -82,29 +82,19 @@ var _ = Describe("Pod startup checker", Ordered, ContinueOnFailure, func() {
 		})
 
 		By("Waiting for pod startup checker to report unhealthy status")
-		Eventually(func() bool {
-			matched, foundCheckers := verifyCheckerResultMetrics(localPort, podStartupCheckerNames, checkerTypePodStartup, metricsUnhealthyStatus)
-			if !matched {
-				GinkgoWriter.Printf("Expected pod startup checkers to be unhealthy and pod startup duration exceeded: %v, found: %v\n", podStartupCheckerNames, foundCheckers)
-				return false
-			}
-			GinkgoWriter.Printf("Found unhealthy and pod startup duration exceeded pod startup checker metric for %v\n", foundCheckers)
-			return true
-		}, "60s", "5s").Should(BeTrue(), "Pod startup checker did not report unhealthy status within the timeout period")
+		waitForCheckerResultsMetricsValueIncrease(localPort,
+			checkerResultMetricName, podStartupCheckerNames, checkerTypePodStartup, metricsUnhealthyStatus, podCreationErrorCode,
+			60*time.Second, 5*time.Second,
+			"Pod startup checker did not report unhealthy status within the timeout period")
 
 		By("Restoring pod creation permissions to cluster-health-monitor")
 		_, err = replaceRolePermissions(clientset, kubesystem, clusterHealthMonitorSynthPodManagerRole, originalRules)
 		Expect(err).NotTo(HaveOccurred())
 
 		By("Waiting for pod startup checker to report healthy status after restoring permissions")
-		Eventually(func() bool {
-			matched, foundCheckers := verifyCheckerResultMetricsWithErrorCode(localPort, podStartupCheckerNames, checkerTypePodStartup, metricsHealthyStatus, metricsHealthyErrorCode)
-			if !matched {
-				GinkgoWriter.Printf("Expected pod startup checkers to be healthy: %v, found: %v\n", podStartupCheckerNames, foundCheckers)
-				return false
-			}
-			GinkgoWriter.Printf("Found healthy pod startup checker metric for %v\n", foundCheckers)
-			return true
-		}, "60s", "5s").Should(BeTrue(), "Pod startup checker did not return to healthy status after adding back label within the timeout period")
+		waitForCheckerResultsMetricsValueIncrease(localPort,
+			checkerResultMetricName, podStartupCheckerNames, checkerTypePodStartup, metricsHealthyStatus, metricsHealthyErrorCode,
+			60*time.Second, 5*time.Second,
+			"Pod startup checker did not return to healthy status after adding back label within the timeout period")
 	})
 })
