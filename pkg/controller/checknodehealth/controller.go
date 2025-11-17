@@ -111,26 +111,6 @@ func (r *CheckNodeHealthReconciler) markCompleted(ctx context.Context, cnh *chmv
 	return nil
 }
 
-func (r *CheckNodeHealthReconciler) markFailed(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, message string) error {
-	now := metav1.Now()
-	cnh.Status.FinishedAt = &now
-	cnh.Status.Conditions = []metav1.Condition{
-		{
-			Type:               "Healthy",
-			Status:             metav1.ConditionFalse,
-			LastTransitionTime: metav1.Now(),
-			Reason:             "ResourceUnavailable",
-			Message:            message,
-		},
-	}
-
-	if err := r.Status().Update(ctx, cnh); err != nil {
-		return fmt.Errorf("failed to patch status: %w", err)
-	}
-
-	return nil
-}
-
 func isCompleted(cnh *chmv1alpha1.CheckNodeHealth) bool {
 	return cnh.Status.FinishedAt != nil
 }
