@@ -82,7 +82,7 @@ func (r *CheckNodeHealthReconciler) markStarted(ctx context.Context, cnh *chmv1a
 			Type:               "Healthy",
 			Status:             metav1.ConditionUnknown,
 			Reason:             "unknown",
-			LastTransitionTime: metav1.Now(),
+			LastTransitionTime: now,
 		},
 	}
 
