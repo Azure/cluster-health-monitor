@@ -20,6 +20,7 @@ const (
 	checkerTypeDNS = string(config.CheckTypeDNS)
 
 	localDNSTimeoutErrorCode = dnscheck.ErrCodeLocalDNSTimeout
+	serviceTimeoutErrorCode  = dnscheck.ErrCodeServiceTimeout
 )
 
 var (
@@ -63,15 +64,24 @@ var _ = Describe("DNS checker metrics", Ordered, ContinueOnFailure, func() {
 		}, "60s", "5s").Should(BeTrue(), "Mock LocalDNS is not available")
 
 		By("Waiting for DNS checker metrics to report healthy status")
+		time0Metrics, err := getMetrics(localPort)
+		Expect(err).NotTo(HaveOccurred())
 		Eventually(func() bool {
-			matched, foundCheckers := verifyCheckerResultMetricsWithErrorCode(localPort, dnsCheckerNames, checkerTypeDNS, metricsHealthyStatus, metricsHealthyErrorCode)
-			if !matched {
-				GinkgoWriter.Printf("Expected DNS checkers to be healthy: %v, found: %v\n", dnsCheckerNames, foundCheckers)
+			timeNMetrics, err := getMetrics(localPort)
+			Expect(err).NotTo(HaveOccurred())
+
+			allIncreased, increasedCheckers, err := verifyCheckerResultMetricsValueIncreased(time0Metrics, timeNMetrics,
+				checkerResultMetricName, dnsCheckerNames, checkerTypeDNS, metricsHealthyStatus, metricsHealthyErrorCode,
+			)
+			Expect(err).NotTo(HaveOccurred())
+
+			if !allIncreased {
+				GinkgoWriter.Printf("Expected increase in healthy results for checkers: %v, Actual: %v\n", dnsCheckerNames, increasedCheckers)
 				return false
 			}
-			GinkgoWriter.Printf("Found healthy DNS checker metric for %v\n", foundCheckers)
+			GinkgoWriter.Printf("Found increase in healthy results for checkers %v\n", increasedCheckers)
 			return true
-		}, "60s", "5s").Should(BeTrue(), "DNS checker metrics did not report healthy status within the timeout period")
+		}, "60s", "5s").Should(BeTrue(), "Not all checkers reported increase in healthy results within the timeout period")
 	})
 
 	It("should report unhealthy status for CoreDNS checkers when DNS service has high latency", func() {
@@ -94,13 +104,22 @@ var _ = Describe("DNS checker metrics", Ordered, ContinueOnFailure, func() {
 		})
 
 		By("Waiting for DNS checker metrics to report unhealthy status")
+		time0Metrics, err := getMetrics(localPort)
+		Expect(err).NotTo(HaveOccurred())
 		Eventually(func() bool {
-			matched, foundCheckers := verifyCheckerResultMetrics(localPort, coreDNSCheckerNames, checkerTypeDNS, metricsUnhealthyStatus)
-			if !matched {
-				GinkgoWriter.Printf("Expected DNS checkers to be unhealthy: %v, found: %v\n", coreDNSCheckerNames, foundCheckers)
+			timeNMetrics, err := getMetrics(localPort)
+			Expect(err).NotTo(HaveOccurred())
+
+			allIncreased, increasedCheckers, err := verifyCheckerResultMetricsValueIncreased(time0Metrics, timeNMetrics,
+				checkerResultMetricName, coreDNSCheckerNames, checkerTypeDNS, metricsUnhealthyStatus, serviceTimeoutErrorCode,
+			)
+			Expect(err).NotTo(HaveOccurred())
+
+			if !allIncreased {
+				GinkgoWriter.Printf("Expected increase in unhealthy results for checkers: %v, Actual: %v\n", coreDNSCheckerNames, increasedCheckers)
 				return false
 			}
-			GinkgoWriter.Printf("Found unhealthy DNS checker metric for %v\n", foundCheckers)
+			GinkgoWriter.Printf("Found increase in unhealthy results for checkers %v\n", increasedCheckers)
 			return true
 		}, "60s", "5s").Should(BeTrue(), "DNS checker metrics did not report unhealthy status within the timeout period")
 	})
@@ -122,13 +141,22 @@ var _ = Describe("DNS checker metrics", Ordered, ContinueOnFailure, func() {
 		})
 
 		By("Waiting for LocalDNS checker metrics to report unhealthy status")
+		time0Metrics, err := getMetrics(localPort)
+		Expect(err).NotTo(HaveOccurred())
 		Eventually(func() bool {
-			matched, foundCheckers := verifyCheckerResultMetricsWithErrorCode(localPort, localDNSCheckerNames, checkerTypeDNS, metricsUnhealthyStatus, localDNSTimeoutErrorCode)
-			if !matched {
-				GinkgoWriter.Printf("Expected LocalDNS checker to be unhealthy, found: %v\n", foundCheckers)
+			timeNMetrics, err := getMetrics(localPort)
+			Expect(err).NotTo(HaveOccurred())
+
+			allIncreased, increasedCheckers, err := verifyCheckerResultMetricsValueIncreased(time0Metrics, timeNMetrics,
+				checkerResultMetricName, localDNSCheckerNames, checkerTypeDNS, metricsUnhealthyStatus, localDNSTimeoutErrorCode,
+			)
+			Expect(err).NotTo(HaveOccurred())
+
+			if !allIncreased {
+				GinkgoWriter.Printf("Expected increase in unhealthy results for LocalDNS checkers: %v, Actual: %v\n", localDNSCheckerNames, increasedCheckers)
 				return false
 			}
-			GinkgoWriter.Printf("Found unhealthy LocalDNS checker metric for %v\n", foundCheckers)
+			GinkgoWriter.Printf("Found increase in unhealthy results for LocalDNS checkers %v\n", increasedCheckers)
 			return true
 		}, "60s", "5s").Should(BeTrue(), "LocalDNS checker metrics did not report unhealthy status within the timeout period")
 	})
