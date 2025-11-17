@@ -1,6 +1,8 @@
 package e2e
 
 import (
+	"time"
+
 	"github.com/Azure/cluster-health-monitor/pkg/checker/metricsserver"
 	"github.com/Azure/cluster-health-monitor/pkg/config"
 	. "github.com/onsi/ginkgo/v2"
@@ -35,15 +37,10 @@ var _ = Describe("Metrics server checker", Ordered, ContinueOnFailure, func() {
 
 	It("should report healthy status for metrics server checker", func() {
 		By("Waiting for metrics server checker metrics to report healthy status")
-		Eventually(func() bool {
-			matched, foundCheckers := verifyCheckerResultMetricsWithErrorCode(localPort, metricsServerCheckerNames, checkerTypeMetricsServer, metricsHealthyStatus, metricsHealthyErrorCode)
-			if !matched {
-				GinkgoWriter.Printf("Expected metrics server checkers to be healthy: %v, found: %v\n", metricsServerCheckerNames, foundCheckers)
-				return false
-			}
-			GinkgoWriter.Printf("Found healthy metrics server checker metric for %v\n", foundCheckers)
-			return true
-		}, "60s", "5s").Should(BeTrue(), "Metrics server checker metrics did not report healthy status within the timeout period")
+		waitForCheckerResultsMetricsValueIncrease(localPort,
+			checkerResultMetricName, metricsServerCheckerNames, checkerTypeMetricsServer, metricsHealthyStatus, metricsHealthyErrorCode,
+			60*time.Second, 5*time.Second,
+			"Metrics server checker metrics did not report healthy status within the timeout period")
 	})
 
 	It("should report unhealthy status when metrics server deployment is scaled down", func() {
@@ -66,15 +63,10 @@ var _ = Describe("Metrics server checker", Ordered, ContinueOnFailure, func() {
 		}, "60s", "5s").Should(BeTrue(), "Metrics server deployment was not scaled down within the timeout period")
 
 		By("Waiting for metrics server checker to report unhealthy status")
-		Eventually(func() bool {
-			matched, foundCheckers := verifyCheckerResultMetricsWithErrorCode(localPort, metricsServerCheckerNames, checkerTypeMetricsServer, metricsUnhealthyStatus, metricsServerUnavailableErrorCode)
-			if !matched {
-				GinkgoWriter.Printf("Expected metrics server checkers to be unhealthy due to deployment scaling: %v, found: %v\n", metricsServerCheckerNames, foundCheckers)
-				return false
-			}
-			GinkgoWriter.Printf("Found unhealthy metrics server checker metric for %v\n", foundCheckers)
-			return true
-		}, "60s", "5s").Should(BeTrue(), "Metrics server checker did not report unhealthy status within the timeout period")
+		waitForCheckerResultsMetricsValueIncrease(localPort,
+			checkerResultMetricName, metricsServerCheckerNames, checkerTypeMetricsServer, metricsUnhealthyStatus, metricsServerUnavailableErrorCode,
+			60*time.Second, 5*time.Second,
+			"Metrics server checker did not report unhealthy status within the timeout period")
 
 		By("Restoring metrics server deployment to original replica count")
 		err = updateMetricsServerDeploymentReplicas(clientset, originalReplicas)
@@ -90,14 +82,9 @@ var _ = Describe("Metrics server checker", Ordered, ContinueOnFailure, func() {
 		}, "120s", "5s").Should(BeTrue(), "Metrics server deployment did not become ready within the timeout period")
 
 		By("Waiting for metrics server checker to report healthy status again")
-		Eventually(func() bool {
-			matched, foundCheckers := verifyCheckerResultMetricsWithErrorCode(localPort, metricsServerCheckerNames, checkerTypeMetricsServer, metricsHealthyStatus, metricsHealthyErrorCode)
-			if !matched {
-				GinkgoWriter.Printf("Expected metrics server checkers to be healthy after restoration: %v, found: %v\n", metricsServerCheckerNames, foundCheckers)
-				return false
-			}
-			GinkgoWriter.Printf("Found healthy metrics server checker metric for %v after restoration\n", foundCheckers)
-			return true
-		}, "60s", "5s").Should(BeTrue(), "Metrics server checker did not report healthy status after restoration within the timeout period")
+		waitForCheckerResultsMetricsValueIncrease(localPort,
+			checkerResultMetricName, metricsServerCheckerNames, checkerTypeMetricsServer, metricsHealthyStatus, metricsHealthyErrorCode,
+			60*time.Second, 5*time.Second,
+			"Metrics server checker did not report healthy status after restoration within the timeout period")
 	})
 })

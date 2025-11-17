@@ -31,14 +31,14 @@ const (
 // CheckNodeHealthReconciler reconciles a CheckNodeHealth object
 type CheckNodeHealthReconciler struct {
 	client.Client
-	Scheme       *runtime.Scheme
-	PodLabel     string // Label to identify health check pods
-	PodImage     string // Image for the health check pod
-	PodNamespace string // Namespace to create pods in
+	Scheme              *runtime.Scheme
+	CheckerPodLabel     string // Label to identify health check pods
+	CheckerPodImage     string // Image for the health check pod
+	CheckerPodNamespace string // Namespace to create pods in
 }
 
-// +kubebuilder:rbac:groups=chm.azure.com,resources=checknodehealths,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=chm.azure.com,resources=checknodehealths/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=clusterhealthmonitor.azure.com,resources=checknodehealths,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=clusterhealthmonitor.azure.com,resources=checknodehealths/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;create;delete,namespace=kube-system
 
 // SetupWithManager sets up the controller with the Manager
@@ -141,8 +141,8 @@ func (r *CheckNodeHealthReconciler) markStarted(ctx context.Context, cnh *chmv1a
 		{
 			Type:               "Healthy",
 			Status:             metav1.ConditionUnknown,
-			Reason:             ReasonCheckStarted,
-			LastTransitionTime: metav1.Now(),
+			Reason:             "unknown",
+			LastTransitionTime: now,
 		},
 	}
 
@@ -153,20 +153,17 @@ func (r *CheckNodeHealthReconciler) markStarted(ctx context.Context, cnh *chmv1a
 	return nil
 }
 
-func (r *CheckNodeHealthReconciler) markCompleted(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, pod *corev1.Pod) error {
+func (r *CheckNodeHealthReconciler) markCompleted(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth) error {
 	now := metav1.Now()
 	cnh.Status.FinishedAt = &now
-
-	// Determine the overall health status based on the new logic
-	healthyStatus, reason, message := r.determineHealthyCondition(cnh, pod)
-
+	// TODO: In real implementation, set condition based on actual check results
 	cnh.Status.Conditions = []metav1.Condition{
 		{
 			Type:               "Healthy",
-			Status:             healthyStatus,
-			LastTransitionTime: metav1.Now(),
-			Reason:             reason,
-			Message:            message,
+			Status:             metav1.ConditionTrue,
+			LastTransitionTime: now,
+			Reason:             "ChecksPassed",
+			Message:            "Health checks completed successfully",
 		},
 	}
 

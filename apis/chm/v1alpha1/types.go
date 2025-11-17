@@ -14,7 +14,6 @@ import (
 // CheckNodeHealth is a one-time health check resource for a specific node.
 // When created, the controller runs health checks on the target node and updates
 // the status with results. The resource is not modified after completion.
-// +kubebuilder:object:generate=true
 type CheckNodeHealth struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -24,7 +23,6 @@ type CheckNodeHealth struct {
 }
 
 // CheckNodeHealthSpec defines the desired state of CheckNodeHealth
-// +kubebuilder:object:generate=true
 type CheckNodeHealthSpec struct {
 	// NodeRef references the node to check
 	// +required
@@ -32,7 +30,6 @@ type CheckNodeHealthSpec struct {
 }
 
 // NodeReference contains a reference to a node
-// +kubebuilder:object:generate=true
 type NodeReference struct {
 	// Name is the name of the node
 	// +required
@@ -42,7 +39,6 @@ type NodeReference struct {
 }
 
 // CheckNodeHealthStatus defines the observed state of CheckNodeHealth
-// +kubebuilder:object:generate=true
 type CheckNodeHealthStatus struct {
 	// StartedAt is the timestamp when the health checks started
 	// +required

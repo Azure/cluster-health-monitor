@@ -8,7 +8,7 @@ import (
 
 const (
 	// GroupName is the group name for the CRD
-	GroupName = "chm.azure.com"
+	GroupName = "clusterhealthmonitor.azure.com"
 	// Version is the version for the CRD
 	Version = "v1alpha1"
 )
