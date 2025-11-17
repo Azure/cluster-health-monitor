@@ -20,6 +20,12 @@ const (
 	// PodPendingTimeout is the maximum time a pod can stay in Pending state
 	// before being marked as failed
 	PodPendingTimeout = 10 * time.Minute
+
+	// Condition reasons for CheckNodeHealth
+	ReasonCheckStarted = "CheckStarted"
+	ReasonCheckPassed  = "CheckPassed"
+	ReasonCheckFailed  = "CheckFailed"
+	ReasonCheckUnknown = "CheckUnknown"
 )
 
 // CheckNodeHealthReconciler reconciles a CheckNodeHealth object
@@ -92,21 +98,11 @@ func (r *CheckNodeHealthReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, pod *corev1.Pod) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
 
-	// Check if pod succeeded
-	if pod.Status.Phase == corev1.PodSucceeded {
-		logger.Info("Health check pod succeeded, marking as completed")
-		if err := r.markCompleted(ctx, cnh); err != nil {
+	// Check if pod succeeded or failed (completed)
+	if pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
+		logger.Info("Health check pod completed, marking as completed", "phase", pod.Status.Phase)
+		if err := r.markCompleted(ctx, cnh, pod); err != nil {
 			logger.Error(err, "Failed to mark as completed")
-			return ctrl.Result{}, err
-		}
-		return ctrl.Result{}, nil
-	}
-
-	// Check if pod failed
-	if pod.Status.Phase == corev1.PodFailed {
-		logger.Info("Health check pod failed, marking as failed")
-		if err := r.markFailed(ctx, cnh, "Pod failed to execute health checks"); err != nil {
-			logger.Error(err, "Failed to mark as failed")
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{}, nil
@@ -145,7 +141,7 @@ func (r *CheckNodeHealthReconciler) markStarted(ctx context.Context, cnh *chmv1a
 		{
 			Type:               "Healthy",
 			Status:             metav1.ConditionUnknown,
-			Reason:             "unknown",
+			Reason:             ReasonCheckStarted,
 			LastTransitionTime: metav1.Now(),
 		},
 	}
@@ -157,16 +153,20 @@ func (r *CheckNodeHealthReconciler) markStarted(ctx context.Context, cnh *chmv1a
 	return nil
 }
 
-func (r *CheckNodeHealthReconciler) markCompleted(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth) error {
+func (r *CheckNodeHealthReconciler) markCompleted(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, pod *corev1.Pod) error {
 	now := metav1.Now()
 	cnh.Status.FinishedAt = &now
+
+	// Determine the overall health status based on the new logic
+	healthyStatus, reason, message := r.determineHealthyCondition(cnh, pod)
+
 	cnh.Status.Conditions = []metav1.Condition{
 		{
 			Type:               "Healthy",
-			Status:             metav1.ConditionTrue,
+			Status:             healthyStatus,
 			LastTransitionTime: metav1.Now(),
-			Reason:             "ChecksPasseddd",
-			Message:            "Health checks completed successfully",
+			Reason:             reason,
+			Message:            message,
 		},
 	}
 
@@ -185,7 +185,7 @@ func (r *CheckNodeHealthReconciler) markFailed(ctx context.Context, cnh *chmv1al
 			Type:               "Healthy",
 			Status:             metav1.ConditionFalse,
 			LastTransitionTime: metav1.Now(),
-			Reason:             "ResourceUnavailable",
+			Reason:             ReasonCheckFailed,
 			Message:            message,
 		},
 	}
@@ -195,6 +195,77 @@ func (r *CheckNodeHealthReconciler) markFailed(ctx context.Context, cnh *chmv1al
 	}
 
 	return nil
+}
+
+// determineHealthyCondition determines the Healthy condition status based on pod exit codes and Results
+func (r *CheckNodeHealthReconciler) determineHealthyCondition(cnh *chmv1alpha1.CheckNodeHealth, pod *corev1.Pod) (metav1.ConditionStatus, string, string) {
+	// Rule 1: Check if any container exit code == 10, or any Result.Status == "Unknown"
+	if r.hasContainerExitCode10(pod) {
+		return metav1.ConditionUnknown, ReasonCheckUnknown, "Health check pod failed to connect to API server to update status"
+	}
+
+	if r.hasUnknownResult(cnh) {
+		return metav1.ConditionUnknown, ReasonCheckUnknown, "At least one health check result has Unknown status"
+	}
+
+	// Rule 2: Check if any Result.Status == "Unhealthy"
+	if r.hasUnhealthyResult(cnh) {
+		return metav1.ConditionFalse, ReasonCheckFailed, "At least one health check result is Unhealthy"
+	}
+
+	// Rule 3: All Results.Status == "Healthy" (or no results yet)
+	if r.allResultsHealthy(cnh) {
+		return metav1.ConditionTrue, ReasonCheckPassed, "All health checks completed successfully"
+	}
+
+	// Default case - should not happen if logic is correct
+	return metav1.ConditionUnknown, ReasonCheckUnknown, "Unable to determine health status"
+}
+
+// hasContainerExitCode10 checks if any container in the pod exited with code 10
+func (r *CheckNodeHealthReconciler) hasContainerExitCode10(pod *corev1.Pod) bool {
+	for _, containerStatus := range pod.Status.ContainerStatuses {
+		if containerStatus.State.Terminated != nil && containerStatus.State.Terminated.ExitCode == 10 {
+			return true
+		}
+	}
+	return false
+}
+
+// hasUnknownResult checks if any result has Unknown status
+func (r *CheckNodeHealthReconciler) hasUnknownResult(cnh *chmv1alpha1.CheckNodeHealth) bool {
+	for _, result := range cnh.Status.Results {
+		if result.Status == chmv1alpha1.CheckStatusUnknown {
+			return true
+		}
+	}
+	return false
+}
+
+// hasUnhealthyResult checks if any result has Unhealthy status
+func (r *CheckNodeHealthReconciler) hasUnhealthyResult(cnh *chmv1alpha1.CheckNodeHealth) bool {
+	for _, result := range cnh.Status.Results {
+		if result.Status == chmv1alpha1.CheckStatusUnhealthy {
+			return true
+		}
+	}
+	return false
+}
+
+// allResultsHealthy checks if all results have Healthy status (or there are no results)
+func (r *CheckNodeHealthReconciler) allResultsHealthy(cnh *chmv1alpha1.CheckNodeHealth) bool {
+	// If no results, consider as healthy (checks haven't populated results yet)
+	if len(cnh.Status.Results) == 0 {
+		return true
+	}
+
+	// All results must be healthy
+	for _, result := range cnh.Status.Results {
+		if result.Status != chmv1alpha1.CheckStatusHealthy {
+			return false
+		}
+	}
+	return true
 }
 
 func isCompleted(cnh *chmv1alpha1.CheckNodeHealth) bool {
