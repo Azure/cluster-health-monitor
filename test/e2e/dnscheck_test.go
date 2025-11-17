@@ -3,6 +3,7 @@ package e2e
 
 import (
 	"os/exec"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -20,6 +21,7 @@ const (
 	checkerTypeDNS = string(config.CheckTypeDNS)
 
 	localDNSTimeoutErrorCode = dnscheck.ErrCodeLocalDNSTimeout
+	serviceTimeoutErrorCode  = dnscheck.ErrCodeServiceTimeout
 )
 
 var (
@@ -63,15 +65,10 @@ var _ = Describe("DNS checker metrics", Ordered, ContinueOnFailure, func() {
 		}, "60s", "5s").Should(BeTrue(), "Mock LocalDNS is not available")
 
 		By("Waiting for DNS checker metrics to report healthy status")
-		Eventually(func() bool {
-			matched, foundCheckers := verifyCheckerResultMetricsWithErrorCode(localPort, dnsCheckerNames, checkerTypeDNS, metricsHealthyStatus, metricsHealthyErrorCode)
-			if !matched {
-				GinkgoWriter.Printf("Expected DNS checkers to be healthy: %v, found: %v\n", dnsCheckerNames, foundCheckers)
-				return false
-			}
-			GinkgoWriter.Printf("Found healthy DNS checker metric for %v\n", foundCheckers)
-			return true
-		}, "60s", "5s").Should(BeTrue(), "DNS checker metrics did not report healthy status within the timeout period")
+		waitForCheckerResultsMetricsValueIncrease(localPort,
+			checkerResultMetricName, dnsCheckerNames, checkerTypeDNS, metricsHealthyStatus, metricsHealthyErrorCode,
+			60*time.Second, 5*time.Second,
+			"Not all checkers reported increase in healthy results within the timeout period")
 	})
 
 	It("should report unhealthy status for CoreDNS checkers when DNS service has high latency", func() {
@@ -94,15 +91,10 @@ var _ = Describe("DNS checker metrics", Ordered, ContinueOnFailure, func() {
 		})
 
 		By("Waiting for DNS checker metrics to report unhealthy status")
-		Eventually(func() bool {
-			matched, foundCheckers := verifyCheckerResultMetrics(localPort, coreDNSCheckerNames, checkerTypeDNS, metricsUnhealthyStatus)
-			if !matched {
-				GinkgoWriter.Printf("Expected DNS checkers to be unhealthy: %v, found: %v\n", coreDNSCheckerNames, foundCheckers)
-				return false
-			}
-			GinkgoWriter.Printf("Found unhealthy DNS checker metric for %v\n", foundCheckers)
-			return true
-		}, "60s", "5s").Should(BeTrue(), "DNS checker metrics did not report unhealthy status within the timeout period")
+		waitForCheckerResultsMetricsValueIncrease(localPort,
+			checkerResultMetricName, coreDNSCheckerNames, checkerTypeDNS, metricsUnhealthyStatus, serviceTimeoutErrorCode,
+			60*time.Second, 5*time.Second,
+			"DNS checker metrics did not report unhealthy status within the timeout period")
 	})
 
 	It("should report unhealthy status with timeout for LocalDNS checkers when LocalDNS is unreachable", func() {
@@ -122,15 +114,10 @@ var _ = Describe("DNS checker metrics", Ordered, ContinueOnFailure, func() {
 		})
 
 		By("Waiting for LocalDNS checker metrics to report unhealthy status")
-		Eventually(func() bool {
-			matched, foundCheckers := verifyCheckerResultMetricsWithErrorCode(localPort, localDNSCheckerNames, checkerTypeDNS, metricsUnhealthyStatus, localDNSTimeoutErrorCode)
-			if !matched {
-				GinkgoWriter.Printf("Expected LocalDNS checker to be unhealthy, found: %v\n", foundCheckers)
-				return false
-			}
-			GinkgoWriter.Printf("Found unhealthy LocalDNS checker metric for %v\n", foundCheckers)
-			return true
-		}, "60s", "5s").Should(BeTrue(), "LocalDNS checker metrics did not report unhealthy status within the timeout period")
+		waitForCheckerResultsMetricsValueIncrease(localPort,
+			checkerResultMetricName, localDNSCheckerNames, checkerTypeDNS, metricsUnhealthyStatus, localDNSTimeoutErrorCode,
+			60*time.Second, 5*time.Second,
+			"LocalDNS checker metrics did not report unhealthy status within the timeout period")
 	})
 })
 
