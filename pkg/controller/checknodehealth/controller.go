@@ -60,6 +60,8 @@ func (r *CheckNodeHealthReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, err
 	}
 
+	//TODO: more logic to create and monitor health check pod
+
 	if err := r.markCompleted(ctx, cnh); err != nil {
 		klog.ErrorS(err, "Failed to mark as completed", "name", cnh.Name)
 		return ctrl.Result{}, err
@@ -94,11 +96,12 @@ func (r *CheckNodeHealthReconciler) markStarted(ctx context.Context, cnh *chmv1a
 func (r *CheckNodeHealthReconciler) markCompleted(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth) error {
 	now := metav1.Now()
 	cnh.Status.FinishedAt = &now
+	// TODO: In real implementation, set condition based on actual check results
 	cnh.Status.Conditions = []metav1.Condition{
 		{
 			Type:               "Healthy",
 			Status:             metav1.ConditionTrue,
-			LastTransitionTime: metav1.Now(),
+			LastTransitionTime: now,
 			Reason:             "ChecksPassed",
 			Message:            "Health checks completed successfully",
 		},
