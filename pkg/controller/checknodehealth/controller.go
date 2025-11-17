@@ -23,8 +23,8 @@ type CheckNodeHealthReconciler struct {
 	PodNamespace string // Namespace to create pods in
 }
 
-// +kubebuilder:rbac:groups=chm.azure.com,resources=checknodehealths,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=chm.azure.com,resources=checknodehealths/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=clusterhealthmonitor.azure.com,resources=checknodehealths,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=clusterhealthmonitor.azure.com,resources=checknodehealths/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;create;delete,namespace=kube-system
 
 // SetupWithManager sets up the controller with the Manager

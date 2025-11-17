@@ -58,7 +58,7 @@ func main() {
 		},
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "checknodehealth.chm.azure.com",
+		LeaderElectionID:       "checknodehealth.clusterhealthmonitor.azure.com",
 	})
 	if err != nil {
 		klog.ErrorS(err, "Unable to create manager")
