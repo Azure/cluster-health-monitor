@@ -1,6 +1,8 @@
 package e2e
 
 import (
+	"time"
+
 	"github.com/Azure/cluster-health-monitor/pkg/checker/metricsserver"
 	"github.com/Azure/cluster-health-monitor/pkg/config"
 	. "github.com/onsi/ginkgo/v2"
@@ -35,24 +37,10 @@ var _ = Describe("Metrics server checker", Ordered, ContinueOnFailure, func() {
 
 	It("should report healthy status for metrics server checker", func() {
 		By("Waiting for metrics server checker metrics to report healthy status")
-		time0Metrics, err := getMetrics(localPort)
-		Expect(err).NotTo(HaveOccurred())
-		Eventually(func() bool {
-			timeNMetrics, err := getMetrics(localPort)
-			Expect(err).NotTo(HaveOccurred())
-
-			allIncreased, increasedCheckers, err := verifyCheckerResultMetricsValueIncreased(time0Metrics, timeNMetrics,
-				checkerResultMetricName, metricsServerCheckerNames, checkerTypeMetricsServer, metricsHealthyStatus, metricsHealthyErrorCode,
-			)
-			Expect(err).NotTo(HaveOccurred())
-
-			if !allIncreased {
-				GinkgoWriter.Printf("Expected increase in healthy results for metrics server checkers: %v, Actual: %v\n", metricsServerCheckerNames, increasedCheckers)
-				return false
-			}
-			GinkgoWriter.Printf("Found increase in healthy results for metrics server checkers %v\n", increasedCheckers)
-			return true
-		}, "60s", "5s").Should(BeTrue(), "Metrics server checker metrics did not report healthy status within the timeout period")
+		waitForCheckerResultsMetricsValueIncrease(localPort,
+			checkerResultMetricName, metricsServerCheckerNames, checkerTypeMetricsServer, metricsHealthyStatus, metricsHealthyErrorCode,
+			60*time.Second, 5*time.Second,
+			"Metrics server checker metrics did not report healthy status within the timeout period")
 	})
 
 	It("should report unhealthy status when metrics server deployment is scaled down", func() {
@@ -75,24 +63,10 @@ var _ = Describe("Metrics server checker", Ordered, ContinueOnFailure, func() {
 		}, "60s", "5s").Should(BeTrue(), "Metrics server deployment was not scaled down within the timeout period")
 
 		By("Waiting for metrics server checker to report unhealthy status")
-		time0Metrics, err := getMetrics(localPort)
-		Expect(err).NotTo(HaveOccurred())
-		Eventually(func() bool {
-			timeNMetrics, err := getMetrics(localPort)
-			Expect(err).NotTo(HaveOccurred())
-
-			allIncreased, increasedCheckers, err := verifyCheckerResultMetricsValueIncreased(time0Metrics, timeNMetrics,
-				checkerResultMetricName, metricsServerCheckerNames, checkerTypeMetricsServer, metricsUnhealthyStatus, metricsServerUnavailableErrorCode,
-			)
-			Expect(err).NotTo(HaveOccurred())
-
-			if !allIncreased {
-				GinkgoWriter.Printf("Expected increase in unhealthy results for metrics server checkers: %v, Actual: %v\n", metricsServerCheckerNames, increasedCheckers)
-				return false
-			}
-			GinkgoWriter.Printf("Found increase in unhealthy results for metrics server checkers %v\n", increasedCheckers)
-			return true
-		}, "60s", "5s").Should(BeTrue(), "Metrics server checker did not report unhealthy status within the timeout period")
+		waitForCheckerResultsMetricsValueIncrease(localPort,
+			checkerResultMetricName, metricsServerCheckerNames, checkerTypeMetricsServer, metricsUnhealthyStatus, metricsServerUnavailableErrorCode,
+			60*time.Second, 5*time.Second,
+			"Metrics server checker did not report unhealthy status within the timeout period")
 
 		By("Restoring metrics server deployment to original replica count")
 		err = updateMetricsServerDeploymentReplicas(clientset, originalReplicas)
@@ -108,23 +82,9 @@ var _ = Describe("Metrics server checker", Ordered, ContinueOnFailure, func() {
 		}, "120s", "5s").Should(BeTrue(), "Metrics server deployment did not become ready within the timeout period")
 
 		By("Waiting for metrics server checker to report healthy status again")
-		time0Metrics, err = getMetrics(localPort)
-		Expect(err).NotTo(HaveOccurred())
-		Eventually(func() bool {
-			timeNMetrics, err := getMetrics(localPort)
-			Expect(err).NotTo(HaveOccurred())
-
-			allIncreased, increasedCheckers, err := verifyCheckerResultMetricsValueIncreased(time0Metrics, timeNMetrics,
-				checkerResultMetricName, metricsServerCheckerNames, checkerTypeMetricsServer, metricsHealthyStatus, metricsHealthyErrorCode,
-			)
-			Expect(err).NotTo(HaveOccurred())
-
-			if !allIncreased {
-				GinkgoWriter.Printf("Expected increase in healthy results for metrics server checkers after restoration: %v, Actual: %v\n", metricsServerCheckerNames, increasedCheckers)
-				return false
-			}
-			GinkgoWriter.Printf("Found increase in healthy results for metrics server checkers %v after restoration\n", increasedCheckers)
-			return true
-		}, "60s", "5s").Should(BeTrue(), "Metrics server checker did not report healthy status after restoration within the timeout period")
+		waitForCheckerResultsMetricsValueIncrease(localPort,
+			checkerResultMetricName, metricsServerCheckerNames, checkerTypeMetricsServer, metricsHealthyStatus, metricsHealthyErrorCode,
+			60*time.Second, 5*time.Second,
+			"Metrics server checker did not report healthy status after restoration within the timeout period")
 	})
 })
