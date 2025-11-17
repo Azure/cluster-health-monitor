@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"context"
+	"time"
 
 	"github.com/Azure/cluster-health-monitor/pkg/checker/apiserver"
 	"github.com/Azure/cluster-health-monitor/pkg/config"
@@ -40,15 +41,10 @@ var _ = Describe("API server checker", Ordered, ContinueOnFailure, func() {
 
 	It("should report healthy status for API server checker", func() {
 		By("Waiting for API server checker metrics to report healthy status")
-		Eventually(func() bool {
-			matched, foundCheckers := verifyCheckerResultMetricsWithErrorCode(localPort, apiServerCheckerNames, checkerTypeAPIServer, metricsHealthyStatus, metricsHealthyErrorCode)
-			if !matched {
-				GinkgoWriter.Printf("Expected API server checkers to be healthy: %v, found: %v\n", apiServerCheckerNames, foundCheckers)
-				return false
-			}
-			GinkgoWriter.Printf("Found healthy API server checker metric for %v\n", foundCheckers)
-			return true
-		}, "60s", "5s").Should(BeTrue(), "API server checker metrics did not report healthy status within the timeout period")
+		waitForCheckerResultsMetricsValueIncrease(localPort,
+			checkerResultMetricName, apiServerCheckerNames, checkerTypeAPIServer, metricsHealthyStatus, metricsHealthyErrorCode,
+			60*time.Second, 5*time.Second,
+			"API server checker metrics did not report healthy status within the timeout period")
 	})
 
 	It("should report unhealthy status when configmap creation fails", func() {
@@ -74,14 +70,9 @@ var _ = Describe("API server checker", Ordered, ContinueOnFailure, func() {
 		})
 
 		By("Waiting for API server checker to report unhealthy status")
-		Eventually(func() bool {
-			matched, foundCheckers := verifyCheckerResultMetricsWithErrorCode(localPort, apiServerCheckerNames, checkerTypeAPIServer, metricsUnhealthyStatus, apiServerCreateErrorCode)
-			if !matched {
-				GinkgoWriter.Printf("Expected API server checkers to be unhealthy due to configmap creation error: %v, found: %v\n", apiServerCheckerNames, foundCheckers)
-				return false
-			}
-			GinkgoWriter.Printf("Found unhealthy API server checker metric for %v with configmap create error\n", foundCheckers)
-			return true
-		}, "60s", "5s").Should(BeTrue(), "API server checker did not report unhealthy status within the timeout period")
+		waitForCheckerResultsMetricsValueIncrease(localPort,
+			checkerResultMetricName, apiServerCheckerNames, checkerTypeAPIServer, metricsUnhealthyStatus, apiServerCreateErrorCode,
+			60*time.Second, 5*time.Second,
+			"API server checker did not report unhealthy status within the timeout period")
 	})
 })

@@ -2,6 +2,8 @@
 package e2e
 
 import (
+	"time"
+
 	"github.com/Azure/cluster-health-monitor/pkg/checker/dnscheck"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -38,27 +40,17 @@ var _ = Describe("DNS per pod checker metrics", Ordered, ContinueOnFailure, func
 
 	It("should report healthy status for CoreDNSPerPod checkers", func() {
 		By("Waiting for CoreDNSPerPod checker metrics to report healthy status")
-		Eventually(func() bool {
-			matched, foundCheckers := verifyCoreDNSPodCheckerResultMetrics(localPort, coreDNSPerPodCheckers, checkerTypeDNS, metricsHealthyStatus, metricsHealthyErrorCode)
-			if !matched {
-				GinkgoWriter.Printf("Expected CoreDNSPerPod checkers to be healthy: %v, found: %v\n", coreDNSPerPodCheckers, foundCheckers)
-				return false
-			}
-			GinkgoWriter.Printf("Found healthy CoreDNSPerPod checker metric for %v\n", foundCheckers)
-			return true
-		}, "60s", "5s").Should(BeTrue(), "CoreDNSPerPod checker metrics did not report healthy status within the timeout period")
+		waitForCheckerResultsMetricsValueIncrease(localPort,
+			podHealthResultMetricName, coreDNSPerPodCheckers, checkerTypeDNS, metricsHealthyStatus, metricsHealthyErrorCode,
+			60*time.Second, 5*time.Second,
+			"CoreDNSPerPod checker metrics did not report healthy status within the timeout period")
 	})
 
 	It("should report unhealthy status for CoreDNSPerPod checkers with minimal query timeout", func() {
 		By("Waiting for CoreDNSPerPod checker metrics to report unhealthy status")
-		Eventually(func() bool {
-			matched, foundCheckers := verifyCoreDNSPodCheckerResultMetrics(localPort, coreDNSPerPodCheckersWithMinimalTimeout, checkerTypeDNS, metricsUnhealthyStatus, podTimeoutErrorCode)
-			if !matched {
-				GinkgoWriter.Printf("Expected CoreDNSPerPod checkers to be unhealthy: %v, found: %v\n", coreDNSPerPodCheckersWithMinimalTimeout, foundCheckers)
-				return false
-			}
-			GinkgoWriter.Printf("Found unhealthy CoreDNSPerPod checker metric for %v\n", foundCheckers)
-			return true
-		}, "60s", "5s").Should(BeTrue(), "CoreDNSPerPod checker metrics did not report unhealthy status within the timeout period")
+		waitForCheckerResultsMetricsValueIncrease(localPort,
+			podHealthResultMetricName, coreDNSPerPodCheckersWithMinimalTimeout, checkerTypeDNS, metricsUnhealthyStatus, podTimeoutErrorCode,
+			60*time.Second, 5*time.Second,
+			"CoreDNSPerPod checker metrics did not report unhealthy status within the timeout period")
 	})
 })
