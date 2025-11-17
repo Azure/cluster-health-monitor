@@ -27,7 +27,10 @@ func init() {
 }
 
 const (
-	defaultConfigPath = "/etc/cluster-health-monitor/config.yaml"
+	defaultConfigPath = "/etc/config.yaml"
+	// TODO: make configurable
+	podImage     = "ubuntu:latest"
+	podNamespace = "kube-system"
 )
 
 func main() {
@@ -35,14 +38,10 @@ func main() {
 	var metricsAddr string
 	var enableLeaderElection bool
 	var probeAddr string
-	var podImage string
-	var podNamespace string
 
 	flag.StringVar(&configPath, "config", defaultConfigPath, "Path to the configuration file")
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to")
-	flag.StringVar(&podImage, "pod-image", "ubuntu:latest", "Container image for health check pods")
-	flag.StringVar(&podNamespace, "pod-namespace", "default", "Namespace to create health check pods in")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
