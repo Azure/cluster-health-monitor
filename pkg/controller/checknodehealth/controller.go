@@ -17,10 +17,10 @@ import (
 // CheckNodeHealthReconciler reconciles a CheckNodeHealth object
 type CheckNodeHealthReconciler struct {
 	client.Client
-	Scheme       *runtime.Scheme
-	PodLabel     string // Label to identify health check pods
-	PodImage     string // Image for the health check pod
-	PodNamespace string // Namespace to create pods in
+	Scheme              *runtime.Scheme
+	CheckerPodLabel     string // Label to identify health check pods
+	CheckerPodImage     string // Image for the health check pod
+	CheckerPodNamespace string // Namespace to create pods in
 }
 
 // +kubebuilder:rbac:groups=clusterhealthmonitor.azure.com,resources=checknodehealths,verbs=get;list;watch;create;update;patch;delete
