@@ -115,6 +115,11 @@ func (r *CheckNodeHealthReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 // determineCheckResult determines the overall result of the CheckNodeHealth based on pod status
 func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, pod *corev1.Pod) (ctrl.Result, error) {
+	if err := r.updatePodstartCheckerResult(ctx, cnh, pod); err != nil {
+		klog.ErrorS(err, "Failed to update PodStartup check result")
+		return ctrl.Result{}, err
+	}
+
 	// Check if pod succeeded or failed (completed)
 	if pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
 		klog.InfoS("Health check pod completed, marking as completed", "phase", pod.Status.Phase)

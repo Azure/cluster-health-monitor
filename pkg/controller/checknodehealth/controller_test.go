@@ -78,8 +78,8 @@ func TestReconcile(t *testing.T) {
 					Name:      "check-node-health-test-check",
 					Namespace: "default",
 					Labels: map[string]string{
-					CheckNodeHealthLabel: "test-check", // Required label for pod identification
-				},
+						CheckNodeHealthLabel: "test-check", // Required label for pod identification
+					},
 				},
 				Status: corev1.PodStatus{Phase: corev1.PodSucceeded},
 			},
