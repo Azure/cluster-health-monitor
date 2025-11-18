@@ -30,11 +30,11 @@ func setupTest() (*CheckNodeHealthReconciler, client.Client, *runtime.Scheme) {
 		Build()
 
 	reconciler := &CheckNodeHealthReconciler{
-		Client:       fakeClient,
-		Scheme:       scheme,
-		PodLabel:     "checknodehealth", // Set the pod label for testing
-		PodImage:     "ubuntu:latest",
-		PodNamespace: "default",
+		Client:              fakeClient,
+		Scheme:              scheme,
+		CheckerPodLabel:     "checknodehealth", // Set the pod label for testing
+		CheckerPodImage:     "ubuntu:latest",
+		CheckerPodNamespace: "default",
 	}
 
 	return reconciler, fakeClient, scheme

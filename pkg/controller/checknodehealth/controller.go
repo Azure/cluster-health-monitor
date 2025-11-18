@@ -8,10 +8,11 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
-	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
 )
@@ -19,7 +20,10 @@ import (
 const (
 	// PodPendingTimeout is the maximum time a pod can stay in Pending state
 	// before being marked as failed
-	PodPendingTimeout = 10 * time.Minute
+	PodPendingTimeout = time.Minute
+
+	// CheckNodeHealthFinalizer is the finalizer used to ensure proper cleanup
+	CheckNodeHealthFinalizer = "checknodehealth.clusterhealthmonitor.azure.com/finalizer"
 
 	// Condition reasons for CheckNodeHealth
 	ReasonCheckStarted = "CheckStarted"
@@ -39,6 +43,7 @@ type CheckNodeHealthReconciler struct {
 
 // +kubebuilder:rbac:groups=clusterhealthmonitor.azure.com,resources=checknodehealths,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=clusterhealthmonitor.azure.com,resources=checknodehealths/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=clusterhealthmonitor.azure.com,resources=checknodehealths/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;create;delete,namespace=kube-system
 
 // SetupWithManager sets up the controller with the Manager
@@ -56,8 +61,6 @@ func (r *CheckNodeHealthReconciler) SetupWithManager(mgr ctrl.Manager) error {
 // This controller creates a pod on the target node to execute health checks.
 // The pod updates the CheckNodeHealth status when checks complete.
 func (r *CheckNodeHealthReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	logger := log.FromContext(ctx)
-
 	// Fetch the CheckNodeHealth instance
 	cnh := &chmv1alpha1.CheckNodeHealth{}
 	if err := r.Get(ctx, req.NamespacedName, cnh); err != nil {
@@ -65,28 +68,39 @@ func (r *CheckNodeHealthReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	logger.Info("Reconciling CheckNodeHealth", "name", cnh.Name, "node", cnh.Spec.NodeRef.Name)
+	klog.InfoS("Reconciling CheckNodeHealth", "name", cnh.Name, "node", cnh.Spec.NodeRef.Name)
 
-	// Check if already completed - if so, cleanup pod and skip
-	if isCompleted(cnh) {
-		logger.V(1).Info("CheckNodeHealth already completed")
-		// Clean up the pod if it still exists
-		if err := r.cleanupPod(ctx, cnh); err != nil {
-			logger.Error(err, "Failed to cleanup pod")
+	// Handle deletion
+	if cnh.DeletionTimestamp != nil {
+		return r.handleDeletion(ctx, cnh)
+	}
+
+	// Ensure finalizer is present
+	if !controllerutil.ContainsFinalizer(cnh, CheckNodeHealthFinalizer) {
+		controllerutil.AddFinalizer(cnh, CheckNodeHealthFinalizer)
+		if err := r.Update(ctx, cnh); err != nil {
+			klog.ErrorS(err, "Failed to add finalizer")
+			return ctrl.Result{}, err
 		}
-		return ctrl.Result{}, nil
+		klog.V(1).InfoS("Added finalizer, continuing with reconcile")
+	}
+
+	// Check if already completed - if so, start cleanup process
+	if isCompleted(cnh) {
+		klog.V(1).InfoS("CheckNodeHealth already completed, starting cleanup")
+		return r.handleCompletion(ctx, cnh)
 	}
 
 	// Check if pod exists and get its status, or create one if it doesn't exist
 	pod, err := r.ensureHealthCheckPod(ctx, cnh)
 	if err != nil {
-		logger.Error(err, "Failed to ensure health check pod")
+		klog.ErrorS(err, "Failed to ensure health check pod")
 		return ctrl.Result{}, err
 	}
 
 	// Mark the CheckNodeHealth as started
 	if err := r.markStarted(ctx, cnh); err != nil {
-		logger.Error(err, "Failed to mark as started")
+		klog.ErrorS(err, "Failed to mark as started")
 		return ctrl.Result{}, err
 	}
 
@@ -96,15 +110,24 @@ func (r *CheckNodeHealthReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 // determineCheckResult determines the overall result of the CheckNodeHealth based on pod status
 func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, pod *corev1.Pod) (ctrl.Result, error) {
-	logger := log.FromContext(ctx)
-
 	// Check if pod succeeded or failed (completed)
 	if pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
-		logger.Info("Health check pod completed, marking as completed", "phase", pod.Status.Phase)
+		klog.InfoS("Health check pod completed, marking as completed", "phase", pod.Status.Phase)
+
+		// Step 1: Mark as completed first (this records the result)
 		if err := r.markCompleted(ctx, cnh, pod); err != nil {
-			logger.Error(err, "Failed to mark as completed")
+			klog.ErrorS(err, "Failed to mark as completed")
 			return ctrl.Result{}, err
 		}
+
+		// Step 2: Delete the pod
+		if err := r.cleanupPod(ctx, cnh); err != nil {
+			klog.ErrorS(err, "Failed to cleanup completed pod, will retry")
+			// Don't return error - let reconcile handle cleanup via handleCompletion
+			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+		}
+
+		klog.InfoS("Successfully marked as completed and deleted pod")
 		return ctrl.Result{}, nil
 	}
 
@@ -112,20 +135,30 @@ func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cn
 	if pod.Status.Phase == corev1.PodPending {
 		if r.isPodPendingTimeout(cnh, pod) {
 			message := fmt.Sprintf("Pod stuck in Pending state for more than %v", PodPendingTimeout)
-			logger.Info("Health check pod pending timeout, marking as failed", "timeout", PodPendingTimeout)
+			klog.InfoS("Health check pod pending timeout, marking as failed", "timeout", PodPendingTimeout)
+
+			// Step 1: Mark as failed first (this records the result)
 			if err := r.markFailed(ctx, cnh, message); err != nil {
-				logger.Error(err, "Failed to mark as failed")
+				klog.ErrorS(err, "Failed to mark as failed")
 				return ctrl.Result{}, err
 			}
+
+			// Step 2: Delete the stuck pod
+			if err := r.cleanupPod(ctx, cnh); err != nil {
+				klog.ErrorS(err, "Failed to cleanup timed out pod, will retry")
+				// Don't return error - let reconcile handle cleanup via handleCompletion
+				return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+			}
+
 			return ctrl.Result{}, nil
 		}
 		// Pod is still pending but within timeout, requeue after a reasonable interval
-		logger.V(1).Info("Health check pod still pending", "phase", pod.Status.Phase)
+		klog.V(1).InfoS("Health check pod still pending", "phase", pod.Status.Phase)
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
 	// Pod is still running, will reconcile again when pod status changes
-	logger.V(1).Info("Health check pod not finished yet", "phase", pod.Status.Phase)
+	klog.V(1).InfoS("Health check pod not finished yet", "phase", pod.Status.Phase)
 	return ctrl.Result{}, nil
 }
 
@@ -141,7 +174,7 @@ func (r *CheckNodeHealthReconciler) markStarted(ctx context.Context, cnh *chmv1a
 		{
 			Type:               "Healthy",
 			Status:             metav1.ConditionUnknown,
-			Reason:             "unknown",
+			Reason:             ReasonCheckStarted,
 			LastTransitionTime: now,
 		},
 	}
@@ -153,17 +186,20 @@ func (r *CheckNodeHealthReconciler) markStarted(ctx context.Context, cnh *chmv1a
 	return nil
 }
 
-func (r *CheckNodeHealthReconciler) markCompleted(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth) error {
+func (r *CheckNodeHealthReconciler) markCompleted(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, pod *corev1.Pod) error {
 	now := metav1.Now()
 	cnh.Status.FinishedAt = &now
-	// TODO: In real implementation, set condition based on actual check results
+
+	// Determine the overall health status based on the new logic
+	healthyStatus, reason, message := r.determineHealthyCondition(cnh, pod)
+
 	cnh.Status.Conditions = []metav1.Condition{
 		{
 			Type:               "Healthy",
-			Status:             metav1.ConditionTrue,
+			Status:             healthyStatus,
 			LastTransitionTime: now,
-			Reason:             "ChecksPassed",
-			Message:            "Health checks completed successfully",
+			Reason:             reason,
+			Message:            message,
 		},
 	}
 
@@ -267,4 +303,39 @@ func (r *CheckNodeHealthReconciler) allResultsHealthy(cnh *chmv1alpha1.CheckNode
 
 func isCompleted(cnh *chmv1alpha1.CheckNodeHealth) bool {
 	return cnh.Status.FinishedAt != nil
+}
+
+// handleDeletion handles the deletion of CheckNodeHealth resources with proper cleanup
+func (r *CheckNodeHealthReconciler) handleDeletion(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth) (ctrl.Result, error) {
+	klog.InfoS("Handling CheckNodeHealth deletion", "name", cnh.Name)
+
+	// Clean up the pod
+	if err := r.cleanupPod(ctx, cnh); err != nil {
+		klog.ErrorS(err, "Failed to cleanup pod during deletion")
+		// Return error to retry - don't remove finalizer yet
+		return ctrl.Result{}, err
+	}
+
+	// Remove finalizer to allow deletion
+	controllerutil.RemoveFinalizer(cnh, CheckNodeHealthFinalizer)
+	if err := r.Update(ctx, cnh); err != nil {
+		klog.ErrorS(err, "Failed to remove finalizer")
+		return ctrl.Result{}, err
+	}
+
+	klog.InfoS("CheckNodeHealth deletion completed", "name", cnh.Name)
+	return ctrl.Result{}, nil
+}
+
+// handleCompletion handles completed checks by cleaning up any remaining pods
+// This handles the case where pod deletion failed in determineCheckResult
+// For completed checks, ensure any remaining pods are cleaned up
+func (r *CheckNodeHealthReconciler) handleCompletion(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth) (ctrl.Result, error) {
+	if err := r.cleanupPod(ctx, cnh); err != nil {
+		klog.ErrorS(err, "Failed to cleanup remaining pods")
+		return ctrl.Result{}, err
+	}
+
+	klog.V(1).InfoS("CheckNodeHealth completion cleanup finished")
+	return ctrl.Result{}, nil
 }
