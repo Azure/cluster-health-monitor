@@ -3,6 +3,7 @@ package checknodehealth
 import (
 	"context"
 	"fmt"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -12,6 +13,23 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
+)
+
+const (
+	// CheckNodeHealthFinalizer is the finalizer used to ensure proper cleanup
+	CheckNodeHealthFinalizer = "checknodehealth.clusterhealthmonitor.azure.com/finalizer"
+
+	// CheckNodeHealthLabel is the label key used to identify check node health pods
+	CheckNodeHealthLabel = "clusterhealthmonitor.azure.com/checknodehealth"
+
+	// NodeLabel is the label key used to identify which node the pod is checking
+	NodeLabel = "clusterhealthmonitor.azure.com/node"
+
+	// Condition reasons for CheckNodeHealth
+	ReasonCheckStarted = "CheckStarted"
+	ReasonCheckPassed  = "CheckPassed"
+	ReasonCheckFailed  = "CheckFailed"
+	ReasonCheckUnknown = "CheckUnknown"
 )
 
 // CheckNodeHealthReconciler reconciles a CheckNodeHealth object
@@ -54,18 +72,43 @@ func (r *CheckNodeHealthReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, nil
 	}
 
+	// Check if pod exists and get its status, or create one if it doesn't exist
+	pod, err := r.ensureHealthCheckPod(ctx, cnh)
+	if err != nil {
+		klog.ErrorS(err, "Failed to ensure health check pod")
+		return ctrl.Result{}, err
+	}
+
 	// Mark the CheckNodeHealth as started
 	if err := r.markStarted(ctx, cnh); err != nil {
 		klog.ErrorS(err, "Failed to mark as started", "name", cnh.Name)
 		return ctrl.Result{}, err
 	}
 
-	//TODO: more logic to create and monitor health check pod
+	// Determine the overall result based on pod status
+	return r.determineCheckResult(ctx, cnh, pod)
+}
 
-	if err := r.markCompleted(ctx, cnh); err != nil {
-		klog.ErrorS(err, "Failed to mark as completed", "name", cnh.Name)
-		return ctrl.Result{}, err
+func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, pod *corev1.Pod) (ctrl.Result, error) {
+	// Check if pod succeeded or failed (completed)
+	if pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
+		klog.InfoS("Health check pod completed, marking as completed", "phase", pod.Status.Phase)
+
+		if err := r.markCompleted(ctx, cnh); err != nil {
+			klog.ErrorS(err, "Failed to mark as completed")
+			return ctrl.Result{}, err
+		}
+
+		return ctrl.Result{}, nil
 	}
+
+	if pod.Status.Phase == corev1.PodPending {
+		klog.V(1).InfoS("Health check pod still pending", "phase", pod.Status.Phase)
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	}
+
+	// Pod is still running, will reconcile again when pod status changes
+	klog.V(1).InfoS("Health check pod not finished yet", "phase", pod.Status.Phase)
 	return ctrl.Result{}, nil
 }
 
