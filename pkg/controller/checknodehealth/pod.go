@@ -19,7 +19,7 @@ func (r *CheckNodeHealthReconciler) cleanupPod(ctx context.Context, cnh *chmv1al
 	podList := &corev1.PodList{}
 	listOpts := []client.ListOption{
 		client.InNamespace(r.CheckerPodNamespace),
-		client.MatchingLabels{r.CheckerPodLabel: cnh.Name},
+		client.MatchingLabels{CheckNodeHealthLabel: cnh.Name},
 	}
 
 	if err := r.List(ctx, podList, listOpts...); err != nil {
@@ -46,13 +46,8 @@ func (r *CheckNodeHealthReconciler) buildHealthCheckPod(cnh *chmv1alpha1.CheckNo
 	podName := getHealthCheckPodName(cnh)
 	labels := map[string]string{
 		"app":                "cluster-health-monitor",
-		"checknodehealth":    cnh.Name,
-		"chm.azure.com/node": cnh.Spec.NodeRef.Name,
-	}
-
-	// Add the configurable pod label for identification
-	if r.CheckerPodLabel != "" {
-		labels[r.CheckerPodLabel] = cnh.Name
+		CheckNodeHealthLabel: cnh.Name,
+		NodeLabel:            cnh.Spec.NodeRef.Name,
 	}
 
 	pod := &corev1.Pod{
@@ -66,8 +61,10 @@ func (r *CheckNodeHealthReconciler) buildHealthCheckPod(cnh *chmv1alpha1.CheckNo
 			NodeName:      cnh.Spec.NodeRef.Name, // Schedule on specific node
 			Containers: []corev1.Container{
 				{
-					Name:    "health-checker",
-					Image:   r.CheckerPodImage,
+					Name:  "node-health-checker",
+					Image: r.CheckerPodImage,
+
+					//TODO: this is placeholder command; replace with actual health check logic
 					Command: []string{"/bin/sh", "-c"},
 					Args:    []string{"sleep 10"},
 				},
@@ -75,11 +72,12 @@ func (r *CheckNodeHealthReconciler) buildHealthCheckPod(cnh *chmv1alpha1.CheckNo
 		},
 	}
 
-	// Set CheckNodeHealth as owner
+	// Set CheckNodeHealth as owner reference to establish parent-child relationship
+	// This enables automatic pod cleanup when the CheckNodeHealth CR is deleted (garbage collection)
+	// and allows the controller to receive pod events for reconciliation
 	if err := controllerutil.SetControllerReference(cnh, pod, r.Scheme); err != nil {
 		// This shouldn't fail in normal circumstances, but if it does,
-		// we'll return a pod without owner reference rather than nil
-		// The caller should handle this gracefully
+		// we'll return an error rather than creating a pod without proper ownership
 		return nil, err
 	}
 
@@ -91,7 +89,7 @@ func (r *CheckNodeHealthReconciler) ensureHealthCheckPod(ctx context.Context, cn
 	podList := &corev1.PodList{}
 	listOpts := []client.ListOption{
 		client.InNamespace(r.CheckerPodNamespace),
-		client.MatchingLabels{r.CheckerPodLabel: cnh.Name},
+		client.MatchingLabels{CheckNodeHealthLabel: cnh.Name},
 	}
 
 	if err := r.List(ctx, podList, listOpts...); err != nil {
@@ -135,5 +133,5 @@ func (r *CheckNodeHealthReconciler) isPodPendingTimeout(cnh *chmv1alpha1.CheckNo
 }
 
 func getHealthCheckPodName(cnh *chmv1alpha1.CheckNodeHealth) string {
-	return fmt.Sprintf("health-check-%s", cnh.Name)
+	return fmt.Sprintf("check-node-health-%s", cnh.Name)
 }

@@ -32,7 +32,6 @@ func setupTest() (*CheckNodeHealthReconciler, client.Client, *runtime.Scheme) {
 	reconciler := &CheckNodeHealthReconciler{
 		Client:              fakeClient,
 		Scheme:              scheme,
-		CheckerPodLabel:     "checknodehealth", // Set the pod label for testing
 		CheckerPodImage:     "ubuntu:latest",
 		CheckerPodNamespace: "default",
 	}
@@ -76,11 +75,11 @@ func TestReconcile(t *testing.T) {
 			},
 			existingPod: &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      "health-check-test-check",
+					Name:      "check-node-health-test-check",
 					Namespace: "default",
 					Labels: map[string]string{
-						"checknodehealth": "test-check", // Required label for pod identification
-					},
+					CheckNodeHealthLabel: "test-check", // Required label for pod identification
+				},
 				},
 				Status: corev1.PodStatus{Phase: corev1.PodSucceeded},
 			},
@@ -98,10 +97,10 @@ func TestReconcile(t *testing.T) {
 			},
 			existingPod: &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      "health-check-test-check",
+					Name:      "check-node-health-test-check",
 					Namespace: "default",
 					Labels: map[string]string{
-						"checknodehealth": "test-check", // Required label for pod identification
+						CheckNodeHealthLabel: "test-check",
 					},
 				},
 				Status: corev1.PodStatus{Phase: corev1.PodFailed},
@@ -142,10 +141,10 @@ func TestReconcile(t *testing.T) {
 			},
 			existingPod: &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      "health-check-test-check",
+					Name:      "check-node-health-test-check",
 					Namespace: "default",
 					Labels: map[string]string{
-						"checknodehealth": "test-check", // Required label for pod identification
+						CheckNodeHealthLabel: "test-check", // Required label for pod identification
 					},
 				},
 				Status: corev1.PodStatus{Phase: corev1.PodRunning},
@@ -188,7 +187,7 @@ func TestReconcile(t *testing.T) {
 			}
 
 			// Verify pod creation
-			podName := "health-check-test-check"
+			podName := "check-node-health-test-check"
 			pod := &corev1.Pod{}
 			err = fakeClient.Get(ctx, client.ObjectKey{
 				Name:      podName,
@@ -231,17 +230,17 @@ func TestGetHealthCheckPodName(t *testing.T) {
 		{
 			name:        "simple name",
 			cnhName:     "test-check",
-			expectedPod: "health-check-test-check",
+			expectedPod: "check-node-health-test-check",
 		},
 		{
 			name:        "complex name",
 			cnhName:     "my-complex-node-check-123",
-			expectedPod: "health-check-my-complex-node-check-123",
+			expectedPod: "check-node-health-my-complex-node-check-123",
 		},
 		{
 			name:        "single char",
 			cnhName:     "a",
-			expectedPod: "health-check-a",
+			expectedPod: "check-node-health-a",
 		},
 	}
 

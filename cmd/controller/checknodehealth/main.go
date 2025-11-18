@@ -66,7 +66,6 @@ func main() {
 	if err = (&checknodehealth.CheckNodeHealthReconciler{
 		Client:              mgr.GetClient(),
 		Scheme:              mgr.GetScheme(),
-		CheckerPodLabel:     "checknodehealth", // Label to identify health check pods
 		CheckerPodImage:     podImage,
 		CheckerPodNamespace: podNamespace,
 	}).SetupWithManager(mgr); err != nil {

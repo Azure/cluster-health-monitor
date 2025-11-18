@@ -25,6 +25,12 @@ const (
 	// CheckNodeHealthFinalizer is the finalizer used to ensure proper cleanup
 	CheckNodeHealthFinalizer = "checknodehealth.clusterhealthmonitor.azure.com/finalizer"
 
+	// CheckNodeHealthLabel is the label key used to identify check node health pods
+	CheckNodeHealthLabel = "clusterhealthmonitor.azure.com/checknodehealth"
+
+	// NodeLabel is the label key used to identify which node the pod is checking
+	NodeLabel = "clusterhealthmonitor.azure.com/node"
+
 	// Condition reasons for CheckNodeHealth
 	ReasonCheckStarted = "CheckStarted"
 	ReasonCheckPassed  = "CheckPassed"
@@ -36,7 +42,6 @@ const (
 type CheckNodeHealthReconciler struct {
 	client.Client
 	Scheme              *runtime.Scheme
-	CheckerPodLabel     string // Label to identify health check pods
 	CheckerPodImage     string // Image for the health check pod
 	CheckerPodNamespace string // Namespace to create pods in
 }
