@@ -49,7 +49,6 @@ func TestReconcile(t *testing.T) {
 		expectedPodCreated  bool
 		expectedPodNodeName string
 		expectedPodImage    string
-		validateFunc        func(t *testing.T, fakeClient client.Client, cnh *chmv1alpha1.CheckNodeHealth)
 	}{
 		{
 			name: "creates pod for new CheckNodeHealth",
@@ -212,11 +211,6 @@ func TestReconcile(t *testing.T) {
 				if podExists {
 					t.Error("Expected no pod to be created")
 				}
-			}
-
-			// Run custom validation if provided
-			if tt.validateFunc != nil {
-				tt.validateFunc(t, fakeClient, tt.existingCnh)
 			}
 		})
 	}
