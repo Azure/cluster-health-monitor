@@ -16,9 +16,6 @@ import (
 )
 
 const (
-	// CheckNodeHealthFinalizer is the finalizer used to ensure proper cleanup
-	CheckNodeHealthFinalizer = "checknodehealth.clusterhealthmonitor.azure.com/finalizer"
-
 	// CheckNodeHealthLabel is the label key used to identify check node health pods
 	CheckNodeHealthLabel = "clusterhealthmonitor.azure.com/checknodehealth"
 
