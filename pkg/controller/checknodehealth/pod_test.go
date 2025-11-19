@@ -8,7 +8,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-func TestGetHealthCheckPodName(t *testing.T) {
+func TestGenerateHealthCheckPodName(t *testing.T) {
 	tests := []struct {
 		name        string
 		cnhName     string
@@ -40,7 +40,7 @@ func TestGetHealthCheckPodName(t *testing.T) {
 			cnh := &chmv1alpha1.CheckNodeHealth{
 				ObjectMeta: metav1.ObjectMeta{Name: tt.cnhName},
 			}
-			podName := getHealthCheckPodName(cnh)
+			podName := generateHealthCheckPodName(cnh)
 
 			// Verify the result length never exceeds the limit
 			if len(podName) > 253 {

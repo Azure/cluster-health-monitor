@@ -56,7 +56,7 @@ func (r *CheckNodeHealthReconciler) ensureHealthCheckPod(ctx context.Context, cn
 }
 
 func (r *CheckNodeHealthReconciler) buildHealthCheckPod(cnh *chmv1alpha1.CheckNodeHealth) (*corev1.Pod, error) {
-	podName := getHealthCheckPodName(cnh)
+	podName := generateHealthCheckPodName(cnh)
 	labels := map[string]string{
 		"app":                "cluster-health-monitor",
 		CheckNodeHealthLabel: cnh.Name,
@@ -96,7 +96,7 @@ func (r *CheckNodeHealthReconciler) buildHealthCheckPod(cnh *chmv1alpha1.CheckNo
 	return pod, nil
 }
 
-func getHealthCheckPodName(cnh *chmv1alpha1.CheckNodeHealth) string {
+func generateHealthCheckPodName(cnh *chmv1alpha1.CheckNodeHealth) string {
 	desiredName := fmt.Sprintf("%s%s", podNamePrefix, cnh.Name)
 
 	// If the name is too long, truncate it
