@@ -47,7 +47,6 @@ func (r *CheckNodeHealthReconciler) buildHealthCheckPod(cnh *chmv1alpha1.CheckNo
 	labels := map[string]string{
 		"app":                "cluster-health-monitor",
 		CheckNodeHealthLabel: cnh.Name,
-		NodeLabel:            cnh.Spec.NodeRef.Name,
 	}
 
 	pod := &corev1.Pod{
