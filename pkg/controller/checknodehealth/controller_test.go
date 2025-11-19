@@ -116,6 +116,7 @@ func TestReconcile(t *testing.T) {
 					NodeRef: chmv1alpha1.NodeReference{Name: "test-node"},
 				},
 				Status: chmv1alpha1.CheckNodeHealthStatus{
+					// FinishedAt != nil means the resource is completed
 					FinishedAt: &metav1.Time{Time: metav1.Now().Time},
 				},
 			},
