@@ -12,6 +12,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
 
+const (
+	// maxPodNameLength is the maximum allowed length for Kubernetes pod names
+	maxPodNameLength = 253
+	// podNamePrefix is the prefix used for health check pod names
+	podNamePrefix = "check-node-health-"
+)
+
 func (r *CheckNodeHealthReconciler) ensureHealthCheckPod(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth) (*corev1.Pod, error) {
 	// Check if pods already exist using label selector
 	podList := &corev1.PodList{}
@@ -90,5 +97,12 @@ func (r *CheckNodeHealthReconciler) buildHealthCheckPod(cnh *chmv1alpha1.CheckNo
 }
 
 func getHealthCheckPodName(cnh *chmv1alpha1.CheckNodeHealth) string {
-	return fmt.Sprintf("check-node-health-%s", cnh.Name)
+	desiredName := fmt.Sprintf("%s%s", podNamePrefix, cnh.Name)
+
+	// If the name is too long, truncate it
+	if len(desiredName) > maxPodNameLength {
+		desiredName = desiredName[:maxPodNameLength]
+	}
+
+	return desiredName
 }

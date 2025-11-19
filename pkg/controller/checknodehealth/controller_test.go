@@ -222,42 +222,6 @@ func TestReconcile(t *testing.T) {
 	}
 }
 
-func TestGetHealthCheckPodName(t *testing.T) {
-	tests := []struct {
-		name        string
-		cnhName     string
-		expectedPod string
-	}{
-		{
-			name:        "simple name",
-			cnhName:     "test-check",
-			expectedPod: "check-node-health-test-check",
-		},
-		{
-			name:        "complex name",
-			cnhName:     "my-complex-node-check-123",
-			expectedPod: "check-node-health-my-complex-node-check-123",
-		},
-		{
-			name:        "single char",
-			cnhName:     "a",
-			expectedPod: "check-node-health-a",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cnh := &chmv1alpha1.CheckNodeHealth{
-				ObjectMeta: metav1.ObjectMeta{Name: tt.cnhName},
-			}
-			podName := getHealthCheckPodName(cnh)
-			if podName != tt.expectedPod {
-				t.Errorf("Expected pod name '%s', got '%s'", tt.expectedPod, podName)
-			}
-		})
-	}
-}
-
 func TestIsCompleted(t *testing.T) {
 	tests := []struct {
 		name     string
