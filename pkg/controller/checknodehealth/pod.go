@@ -70,7 +70,7 @@ func (r *CheckNodeHealthReconciler) buildHealthCheckPod(cnh *chmv1alpha1.CheckNo
 					Name:  "node-health-checker",
 					Image: r.CheckerPodImage,
 
-					//TODO: this is placeholder command; replace with actual health check logic
+					//TODO: this is placeholder command for test; replace with actual health check logic
 					Command: []string{"/bin/sh", "-c"},
 					Args:    []string{"sleep 10"},
 				},

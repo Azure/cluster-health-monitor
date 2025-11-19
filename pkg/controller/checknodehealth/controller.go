@@ -21,12 +21,6 @@ const (
 
 	// NodeLabel is the label key used to identify which node the pod is checking
 	NodeLabel = "clusterhealthmonitor.azure.com/node"
-
-	// Condition reasons for CheckNodeHealth
-	ReasonCheckStarted = "CheckStarted"
-	ReasonCheckPassed  = "CheckPassed"
-	ReasonCheckFailed  = "CheckFailed"
-	ReasonCheckUnknown = "CheckUnknown"
 )
 
 // CheckNodeHealthReconciler reconciles a CheckNodeHealth object
