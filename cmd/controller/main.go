@@ -73,11 +73,10 @@ func main() {
 
 	// Setup controller
 	if err = (&checknodehealth.CheckNodeHealthReconciler{
-		Client:       mgr.GetClient(),
-		Scheme:       mgr.GetScheme(),
-		PodLabel:     "checknodehealth", // Label to identify health check pods
-		PodImage:     podImage,
-		PodNamespace: podNamespace,
+		Client:              mgr.GetClient(),
+		Scheme:              mgr.GetScheme(),
+		CheckerPodImage:     podImage,
+		CheckerPodNamespace: podNamespace,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Unable to create controller", "controller", "CheckNodeHealth")
 		os.Exit(1)
