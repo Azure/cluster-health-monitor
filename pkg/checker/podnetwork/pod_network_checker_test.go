@@ -3,6 +3,7 @@ package podnetwork
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/Azure/cluster-health-monitor/pkg/checker"
@@ -71,11 +72,11 @@ func TestPodNetworkChecker_getEligibleCoreDNSPods(t *testing.T) {
 			}
 
 			clientset := fake.NewSimpleClientset(objects...)
-			podChecker := NewNodeNetworkChecker(clientset, "10.0.2.1")
+			podChecker := NewPodNetworkChecker(clientset, tt.nodeName)
 
 			ctx := context.Background()
 
-			pods, err := podChecker.getEligibleCoreDNSPods(ctx, tt.nodeName)
+			pods, err := podChecker.getEligibleCoreDNSPods(ctx)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -101,17 +102,20 @@ func TestPodNetworkChecker_Check_NoEligiblePods(t *testing.T) {
 	objects = append(objects, service)
 
 	clientset := fake.NewSimpleClientset(objects...)
-	podChecker := NewNodeNetworkChecker(clientset, "10.0.2.1")
+	podChecker := NewPodNetworkChecker(clientset, "node1")
 
 	ctx := context.Background()
-	result := podChecker.Check(ctx, "node1")
+	result, err := podChecker.Run(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
-	if result.Status != checker.StatusSkipped {
-		t.Errorf("expected status %s, got %s", checker.StatusSkipped, result.Status)
+	if result.Status != checker.StatusUnknown {
+		t.Errorf("expected status %s, got %s", checker.StatusUnknown, result.Status)
 	}
 
 	if result.Detail.Message == "" {
-		t.Error("skipped result should have detail message")
+		t.Error("unknown result should have detail message")
 	}
 }
 
@@ -124,17 +128,21 @@ func TestPodNetworkChecker_Check_APIError(t *testing.T) {
 		return true, nil, errors.New("API server error")
 	})
 
-	podChecker := NewNodeNetworkChecker(clientset, "10.0.2.1")
+	podChecker := NewPodNetworkChecker(clientset, "node1")
 
 	ctx := context.Background()
-	result := podChecker.Check(ctx, "node1")
-
-	if result.Status != checker.StatusUnhealthy {
-		t.Errorf("expected status %s, got %s", checker.StatusUnhealthy, result.Status)
+	result, err := podChecker.Run(ctx)
+	if err == nil {
+		t.Fatalf("expected error, got none")
 	}
 
-	if result.Detail.Code != ErrorCodeCoreDNSPodsRetrievalFailed {
-		t.Errorf("expected error code %s, got %s", ErrorCodeCoreDNSPodsRetrievalFailed, result.Detail.Code)
+	if result != nil {
+		t.Errorf("expected nil result when error occurs, got %+v", result)
+	}
+
+	expectedError := "failed to get CoreDNS pods"
+	if !strings.Contains(err.Error(), expectedError) {
+		t.Errorf("expected error to contain %q, got %v", expectedError, err)
 	}
 }
 
@@ -152,17 +160,20 @@ func TestPodNetworkChecker_Check_SinglePod(t *testing.T) {
 	objects = append(objects, service)
 
 	clientset := fake.NewSimpleClientset(objects...)
-	podChecker := NewNodeNetworkChecker(clientset, "10.0.2.1")
+	podChecker := NewPodNetworkChecker(clientset, "node1")
 
 	ctx := context.Background()
-	result := podChecker.Check(ctx, "node1")
+	result, err := podChecker.Run(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
-	if result.Status != checker.StatusSkipped {
-		t.Errorf("expected status %s, got %s", checker.StatusSkipped, result.Status)
+	if result.Status != checker.StatusUnknown {
+		t.Errorf("expected status %s, got %s", checker.StatusUnknown, result.Status)
 	}
 
 	if result.Detail.Message == "" {
-		t.Error("skipped result should have detail message")
+		t.Error("unknown result should have detail message")
 	}
 }
 
@@ -185,10 +196,13 @@ func TestPodNetworkChecker_Check_ServiceError(t *testing.T) {
 		return true, nil, errors.New("service lookup error")
 	})
 
-	podChecker := NewNodeNetworkChecker(clientset, "10.0.2.1")
+	podChecker := NewPodNetworkChecker(clientset, "node1")
 
 	ctx := context.Background()
-	result := podChecker.Check(ctx, "node1")
+	result, err := podChecker.Run(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if result.Status != checker.StatusUnhealthy {
 		t.Errorf("expected status %s, got %s", checker.StatusUnhealthy, result.Status)
