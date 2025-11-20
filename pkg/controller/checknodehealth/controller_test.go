@@ -47,8 +47,10 @@ func TestReconcile(t *testing.T) {
 		expectedResult      ctrl.Result
 		expectError         bool
 		expectedPodCreated  bool
+		expectedPodDeleted  bool
 		expectedPodNodeName string
 		expectedPodImage    string
+		validateFunc        func(t *testing.T, fakeClient client.Client, cnh *chmv1alpha1.CheckNodeHealth)
 	}{
 		{
 			name: "creates pod for new CheckNodeHealth",
@@ -61,11 +63,12 @@ func TestReconcile(t *testing.T) {
 			expectedResult:      ctrl.Result{},
 			expectError:         false,
 			expectedPodCreated:  true,
+			expectedPodDeleted:  false,
 			expectedPodNodeName: "test-node",
 			expectedPodImage:    "ubuntu:latest",
 		},
 		{
-			name: "handles pod succeeded",
+			name: "handles pod succeeded and cleans up",
 			existingCnh: &chmv1alpha1.CheckNodeHealth{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-check"},
 				Spec: chmv1alpha1.CheckNodeHealthSpec{
@@ -85,9 +88,20 @@ func TestReconcile(t *testing.T) {
 			expectedResult:     ctrl.Result{},
 			expectError:        false,
 			expectedPodCreated: false, // Pod already exists
+			expectedPodDeleted: true,  // Pod should be cleaned up
+			validateFunc: func(t *testing.T, fakeClient client.Client, cnh *chmv1alpha1.CheckNodeHealth) {
+				// Verify CheckNodeHealth is marked as completed
+				updatedCnh := &chmv1alpha1.CheckNodeHealth{}
+				err := fakeClient.Get(context.Background(), client.ObjectKey{Name: cnh.Name}, updatedCnh)
+				if err != nil {
+					t.Errorf("Failed to get updated CheckNodeHealth: %v", err)
+				} else if updatedCnh.Status.FinishedAt == nil {
+					t.Error("Expected CheckNodeHealth to be marked as completed")
+				}
+			},
 		},
 		{
-			name: "handles pod failed",
+			name: "handles pod failed and cleans up",
 			existingCnh: &chmv1alpha1.CheckNodeHealth{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-check"},
 				Spec: chmv1alpha1.CheckNodeHealthSpec{
@@ -107,6 +121,17 @@ func TestReconcile(t *testing.T) {
 			expectedResult:     ctrl.Result{},
 			expectError:        false,
 			expectedPodCreated: false, // Pod already exists
+			expectedPodDeleted: true,  // Pod should be cleaned up
+			validateFunc: func(t *testing.T, fakeClient client.Client, cnh *chmv1alpha1.CheckNodeHealth) {
+				// Verify CheckNodeHealth is marked as completed
+				updatedCnh := &chmv1alpha1.CheckNodeHealth{}
+				err := fakeClient.Get(context.Background(), client.ObjectKey{Name: cnh.Name}, updatedCnh)
+				if err != nil {
+					t.Errorf("Failed to get updated CheckNodeHealth: %v", err)
+				} else if updatedCnh.Status.FinishedAt == nil {
+					t.Error("Expected CheckNodeHealth to be marked as completed")
+				}
+			},
 		},
 		{
 			name: "skips completed CheckNodeHealth",
@@ -123,6 +148,7 @@ func TestReconcile(t *testing.T) {
 			expectedResult:     ctrl.Result{},
 			expectError:        false,
 			expectedPodCreated: false,
+			expectedPodDeleted: false,
 		},
 		{
 			name:               "handles non-existent CheckNodeHealth",
@@ -130,9 +156,10 @@ func TestReconcile(t *testing.T) {
 			expectedResult:     ctrl.Result{},
 			expectError:        false,
 			expectedPodCreated: false,
+			expectedPodDeleted: false,
 		},
 		{
-			name: "handles pod running",
+			name: "handles pod running without cleanup",
 			existingCnh: &chmv1alpha1.CheckNodeHealth{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-check"},
 				Spec: chmv1alpha1.CheckNodeHealthSpec{
@@ -152,6 +179,7 @@ func TestReconcile(t *testing.T) {
 			expectedResult:     ctrl.Result{},
 			expectError:        false,
 			expectedPodCreated: false, // Pod already exists
+			expectedPodDeleted: false, // Running pod should not be deleted
 		},
 	}
 
@@ -186,7 +214,7 @@ func TestReconcile(t *testing.T) {
 				t.Errorf("Expected result: %v, got: %v", tt.expectedResult, result)
 			}
 
-			// Verify pod creation
+			// Verify pod creation/deletion
 			podName := "check-node-health-test-check"
 			pod := &corev1.Pod{}
 			err = fakeClient.Get(ctx, client.ObjectKey{
@@ -207,11 +235,27 @@ func TestReconcile(t *testing.T) {
 						t.Errorf("Expected pod image '%s', got '%s'", tt.expectedPodImage, pod.Spec.Containers[0].Image)
 					}
 				}
-			} else if tt.existingPod == nil {
-				// Only check for non-existence if we didn't create an existing pod
+			}
+
+			if tt.expectedPodDeleted {
+				if podExists {
+					t.Errorf("Expected pod to be deleted, but it still exists")
+				}
+			} else if tt.existingPod != nil {
+				// Pod should still exist if we're not expecting deletion
+				if !podExists {
+					t.Errorf("Expected pod to remain, but it was deleted")
+				}
+			} else if !tt.expectedPodCreated {
+				// Only check for non-existence if we didn't create an existing pod and don't expect creation
 				if podExists {
 					t.Error("Expected no pod to be created")
 				}
+			}
+
+			// Run custom validation if provided
+			if tt.validateFunc != nil && tt.existingCnh != nil {
+				tt.validateFunc(t, fakeClient, tt.existingCnh)
 			}
 		})
 	}
