@@ -20,7 +20,8 @@ import (
 const (
 	// PodPendingTimeout is the maximum time a pod can stay in Pending state
 	// before being marked as failed
-	PodPendingTimeout = time.Minute
+	// The pod already has been being bond to the target node, so it should be pending for a short time only
+	PodPendingTimeout = 30 * time.Second
 
 	// CheckNodeHealthFinalizer is the finalizer used to ensure proper cleanup
 	CheckNodeHealthFinalizer = "checknodehealth.clusterhealthmonitor.azure.com/finalizer"
@@ -29,10 +30,11 @@ const (
 	CheckNodeHealthLabel = "clusterhealthmonitor.azure.com/checknodehealth"
 
 	// Condition reasons for CheckNodeHealth
-	ReasonCheckStarted = "CheckStarted"
-	ReasonCheckPassed  = "CheckPassed"
-	ReasonCheckFailed  = "CheckFailed"
-	ReasonCheckUnknown = "CheckUnknown"
+	ReasonCheckStarted      = "CheckStarted"
+	ReasonCheckPassed       = "CheckPassed"
+	ReasonCheckFailed       = "CheckFailed"
+	ReasonCheckUnknown      = "CheckUnknown"
+	ReasonPodStartupTimeout = "PodStartupTimeout"
 )
 
 // CheckNodeHealthReconciler reconciles a CheckNodeHealth object
@@ -88,6 +90,7 @@ func (r *CheckNodeHealthReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 
 	// Check if already completed - if so, start cleanup process
+	// the case happends where pod deletion failed in determineCheckResult
 	if isCompleted(cnh) {
 		klog.V(1).InfoS("CheckNodeHealth already completed, starting cleanup")
 		return r.handleCompletion(ctx, cnh)
@@ -137,8 +140,7 @@ func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cn
 		// Step 2: Delete the pod
 		if err := r.cleanupPod(ctx, cnh); err != nil {
 			klog.ErrorS(err, "Failed to cleanup completed pod, will retry")
-			// Don't return error - let reconcile handle cleanup via handleCompletion
-			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+			return ctrl.Result{}, nil
 		}
 
 		klog.InfoS("Successfully marked as completed and deleted pod")
@@ -152,7 +154,7 @@ func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cn
 			klog.InfoS("Health check pod pending timeout, marking as failed", "timeout", PodPendingTimeout)
 
 			// Step 1: Mark as failed first (this records the result)
-			if err := r.markFailed(ctx, cnh, message); err != nil {
+			if err := r.markFailed(ctx, cnh, ReasonPodStartupTimeout, message); err != nil {
 				klog.ErrorS(err, "Failed to mark as failed")
 				return ctrl.Result{}, err
 			}
@@ -160,8 +162,7 @@ func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cn
 			// Step 2: Delete the stuck pod
 			if err := r.cleanupPod(ctx, cnh); err != nil {
 				klog.ErrorS(err, "Failed to cleanup timed out pod, will retry")
-				// Don't return error - let reconcile handle cleanup via handleCompletion
-				return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+				return ctrl.Result{}, nil
 			}
 
 			return ctrl.Result{}, nil
@@ -224,14 +225,14 @@ func (r *CheckNodeHealthReconciler) markCompleted(ctx context.Context, cnh *chmv
 	return nil
 }
 
-func (r *CheckNodeHealthReconciler) markFailed(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, message string) error {
+func (r *CheckNodeHealthReconciler) markFailed(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, reason, message string) error {
 	now := metav1.Now()
 	cnh.Status.FinishedAt = &now
 	cnh.Status.Conditions = []metav1.Condition{
 		{
 			Type:               "Healthy",
 			Status:             metav1.ConditionFalse,
-			LastTransitionTime: metav1.Now(),
+			LastTransitionTime: now,
 			Reason:             ReasonCheckFailed,
 			Message:            message,
 		},
@@ -342,8 +343,6 @@ func (r *CheckNodeHealthReconciler) handleDeletion(ctx context.Context, cnh *chm
 }
 
 // handleCompletion handles completed checks by cleaning up any remaining pods
-// This handles the case where pod deletion failed in determineCheckResult
-// For completed checks, ensure any remaining pods are cleaned up
 func (r *CheckNodeHealthReconciler) handleCompletion(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth) (ctrl.Result, error) {
 	if err := r.cleanupPod(ctx, cnh); err != nil {
 		klog.ErrorS(err, "Failed to cleanup remaining pods")
