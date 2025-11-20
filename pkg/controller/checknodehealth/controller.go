@@ -18,16 +18,18 @@ import (
 const (
 	// PodPendingTimeout is the maximum time a pod can stay in Pending state
 	// before being marked as failed
-	PodPendingTimeout = time.Minute
+	// The pod already has been being bond to the target node, so it should be pending for a short time only
+	PodPendingTimeout = 30 * time.Second
 
 	// CheckNodeHealthLabel is the label key used to identify check node health pods
 	CheckNodeHealthLabel = "clusterhealthmonitor.azure.com/checknodehealth"
 
 	// Condition reasons for CheckNodeHealth
-	ReasonCheckStarted = "CheckStarted"
-	ReasonCheckPassed  = "CheckPassed"
-	ReasonCheckFailed  = "CheckFailed"
-	ReasonCheckUnknown = "CheckUnknown"
+	ReasonCheckStarted      = "CheckStarted"
+	ReasonCheckPassed       = "CheckPassed"
+	ReasonCheckFailed       = "CheckFailed"
+	ReasonCheckUnknown      = "CheckUnknown"
+	ReasonPodStartupTimeout = "PodStartupTimeout"
 )
 
 // CheckNodeHealthReconciler reconciles a CheckNodeHealth object
@@ -95,16 +97,15 @@ func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cn
 
 		// update status first, then cleanup pod. The order is important.
 		// If we clean up the pod first and then update status as completed, when the reconcile runs again, it cannot find the pod and will create a new one.
-		// Step 1: Mark as completed first (this records the result)
+		// Step 1: Mark as completed first
 		if err := r.markCompleted(ctx, cnh); err != nil {
 			klog.ErrorS(err, "Failed to mark as completed")
 			return ctrl.Result{}, err
 		}
 		// Step 2: Delete the pod
 		if err := r.cleanupPod(ctx, cnh); err != nil {
-			klog.ErrorS(err, "Failed to cleanup completed pod, will retry")
-			// Don't return error - let reconcile handle cleanup via handleCompletion
-			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+			klog.ErrorS(err, "Failed to cleanup completed pod")
+			return ctrl.Result{}, err
 		}
 
 		return ctrl.Result{}, nil
@@ -117,17 +118,16 @@ func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cn
 
 			// update status first, then cleanup pod. The order is important.
 			// If we clean up the pod first and then update status as failed, when the reconcile runs again, it cannot find the pod and will create a new one.
-			// Step 1: Mark as failed first (this records the result)
-			if err := r.markFailed(ctx, cnh, message); err != nil {
+			// Step 1: Mark as failed first
+			if err := r.markFailed(ctx, cnh, ReasonPodStartupTimeout, message); err != nil {
 				klog.ErrorS(err, "Failed to mark as failed")
 				return ctrl.Result{}, err
 			}
 
 			// Step 2: Delete the stuck pod
 			if err := r.cleanupPod(ctx, cnh); err != nil {
-				klog.ErrorS(err, "Failed to cleanup timed out pod, will retry")
-				// Don't return error - let reconcile handle cleanup via handleCompletion
-				return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+				klog.ErrorS(err, "Failed to cleanup timed out pod")
+				return ctrl.Result{}, err
 			}
 
 			return ctrl.Result{}, nil
@@ -190,15 +190,15 @@ func isCompleted(cnh *chmv1alpha1.CheckNodeHealth) bool {
 	return cnh.Status.FinishedAt != nil
 }
 
-func (r *CheckNodeHealthReconciler) markFailed(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, message string) error {
+func (r *CheckNodeHealthReconciler) markFailed(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, reason string, message string) error {
 	now := metav1.Now()
 	cnh.Status.FinishedAt = &now
 	cnh.Status.Conditions = []metav1.Condition{
 		{
 			Type:               "Healthy",
 			Status:             metav1.ConditionFalse,
-			LastTransitionTime: metav1.Now(),
-			Reason:             ReasonCheckFailed,
+			LastTransitionTime: now,
+			Reason:             reason,
 			Message:            message,
 		},
 	}
