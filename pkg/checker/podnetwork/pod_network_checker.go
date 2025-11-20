@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/Azure/cluster-health-monitor/pkg/checker"
-	"github.com/Azure/cluster-health-monitor/pkg/utils/dns"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -26,7 +25,7 @@ const (
 type PodNetworkChecker struct {
 	clientset kubernetes.Interface
 	nodeName  string
-	resolver  dns.Resolver
+	dnsPinger dnsPinger
 }
 
 // NewPodNetworkChecker creates a new PodNetwork checker instance
@@ -34,7 +33,7 @@ func NewPodNetworkChecker(clientset kubernetes.Interface, nodeName string) *PodN
 	return &PodNetworkChecker{
 		clientset: clientset,
 		nodeName:  nodeName,
-		resolver:  dns.NewResolver(),
+		dnsPinger: newDNSPinger(),
 	}
 }
 
@@ -55,8 +54,18 @@ func (p *PodNetworkChecker) Run(ctx context.Context) (*checker.Result, error) {
 
 	klog.InfoS("Found CoreDNS pods for testing", "checker", "PodNetwork", "node", p.nodeName, "count", len(coreDNSPods))
 
+	// Get kube-dns service IP
+	service, err := p.clientset.CoreV1().Services(coreDNSNamespace).Get(ctx, "kube-dns", metav1.GetOptions{})
+	if err != nil {
+		klog.ErrorS(err, "Failed to get kube-dns service", "checker", "PodNetwork", "node", p.nodeName)
+		return nil, fmt.Errorf("failed to get kube-dns service: %w", err)
+	}
+
+	clusterDNSIP := service.Spec.ClusterIP
+	klog.InfoS("Retrieved cluster DNS service IP", "checker", "PodNetwork", "ip", clusterDNSIP)
+
 	podToPodSuccess := p.checkDNSPodConnectivity(ctx, coreDNSPods)
-	clusterSvcError := p.checkDNSSvcConnectivity(ctx)
+	clusterSvcError := p.checkDNSSvcConnectivity(ctx, clusterDNSIP)
 	return p.evaluateResults(len(coreDNSPods), podToPodSuccess, clusterSvcError), nil
 }
 
@@ -114,18 +123,19 @@ func isPodReady(pod corev1.Pod) bool {
 	return false
 }
 
-// checkDNSPodConnectivity tests DNS queries against individual CoreDNS pod IPs
+// checkDNSPodConnectivity tests network connectivity to individual CoreDNS pod IPs
+// by sending DNS queries and verifying that any response packet is received
 func (p *PodNetworkChecker) checkDNSPodConnectivity(ctx context.Context, pods []corev1.Pod) int {
 	var successCount int
 
 	for _, pod := range pods {
-		klog.V(2).InfoS("Testing DNS query to CoreDNS pod", "checker", "PodNetwork", "pod", pod.Name, "ip", pod.Status.PodIP)
+		klog.V(2).InfoS("Checking DNS connectivity to CoreDNS pod", "checker", "PodNetwork", "pod", pod.Name, "ip", pod.Status.PodIP)
 
-		_, err := p.resolver.LookupHost(ctx, pod.Status.PodIP, "google.com", time.Second*5)
+		err := p.dnsPinger.ping(ctx, pod.Status.PodIP, kubernetesSvcDNSName, time.Second*5)
 		if err != nil {
-			klog.V(2).ErrorS(err, "DNS query to CoreDNS pod failed", "checker", "PodNetwork", "pod", pod.Name, "ip", pod.Status.PodIP)
+			klog.V(2).ErrorS(err, "DNS connectivity to CoreDNS pod failed", "checker", "PodNetwork", "pod", pod.Name, "ip", pod.Status.PodIP)
 		} else {
-			klog.V(2).InfoS("DNS query to CoreDNS pod succeeded", "checker", "PodNetwork", "pod", pod.Name, "ip", pod.Status.PodIP)
+			klog.V(2).InfoS("DNS connectivity to CoreDNS pod succeeded", "checker", "PodNetwork", "pod", pod.Name, "ip", pod.Status.PodIP)
 			successCount++
 		}
 	}
@@ -133,24 +143,18 @@ func (p *PodNetworkChecker) checkDNSPodConnectivity(ctx context.Context, pods []
 	return successCount
 }
 
-// checkDNSSvcConnectivity tests DNS query using cluster DNS service IP
-func (p *PodNetworkChecker) checkDNSSvcConnectivity(ctx context.Context) error {
-	// Get kube-dns service to find cluster DNS IP
-	service, err := p.clientset.CoreV1().Services(coreDNSNamespace).Get(ctx, "kube-dns", metav1.GetOptions{})
-	if err != nil {
-		return fmt.Errorf("failed to get kube-dns service: %w", err)
-	}
+// checkDNSSvcConnectivity tests network connectivity to cluster DNS service IP
+// by sending DNS queries and verifying that any response packet is received
+func (p *PodNetworkChecker) checkDNSSvcConnectivity(ctx context.Context, clusterDNSIP string) error {
+	klog.V(2).InfoS("Testing DNS connectivity to cluster DNS service", "checker", "PodNetwork", "ip", clusterDNSIP)
 
-	clusterDNSIP := service.Spec.ClusterIP
-	klog.V(2).InfoS("Testing DNS query to cluster DNS service", "checker", "PodNetwork", "ip", clusterDNSIP)
-
-	_, err = p.resolver.LookupHost(ctx, clusterDNSIP, "google.com", time.Second*5)
+	err := p.dnsPinger.ping(ctx, clusterDNSIP, kubernetesSvcDNSName, time.Second*5)
 	if err != nil {
-		klog.V(2).InfoS("DNS query to cluster DNS service failed", "checker", "PodNetwork", "ip", clusterDNSIP, "error", err)
+		klog.V(2).InfoS("DNS connectivity to cluster DNS service failed", "checker", "PodNetwork", "ip", clusterDNSIP, "error", err)
 		return err
 	}
 
-	klog.V(2).InfoS("DNS query to cluster DNS service succeeded", "checker", "PodNetwork", "ip", clusterDNSIP)
+	klog.V(2).InfoS("DNS connectivity to cluster DNS service succeeded", "checker", "PodNetwork", "ip", clusterDNSIP)
 	return nil
 }
 

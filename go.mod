@@ -3,7 +3,7 @@ module github.com/Azure/cluster-health-monitor
 go 1.24.9
 
 require (
-	github.com/miekg/dns v1.1.66
+	github.com/miekg/dns v1.1.68
 	github.com/onsi/ginkgo/v2 v2.23.4
 	github.com/onsi/gomega v1.37.0
 	github.com/prometheus/client_golang v1.22.0
