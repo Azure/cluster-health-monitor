@@ -3,9 +3,11 @@ package checknodehealth
 import (
 	"context"
 	"fmt"
+	"time"
 
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -18,6 +20,34 @@ const (
 	// podNamePrefix is the prefix used for health check pod names
 	podNamePrefix = "check-node-health-"
 )
+
+func (r *CheckNodeHealthReconciler) cleanupPod(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth) error {
+	// Find all pods with the specific label that matches this CR
+	podList := &corev1.PodList{}
+	listOpts := []client.ListOption{
+		client.InNamespace(r.CheckerPodNamespace),
+		client.MatchingLabels{CheckNodeHealthLabel: cnh.Name},
+	}
+
+	if err := r.List(ctx, podList, listOpts...); err != nil {
+		return fmt.Errorf("failed to list pods: %w", err)
+	}
+
+	// Delete all matching pods
+	for _, pod := range podList.Items {
+		klog.InfoS("Deleting health check pod", "pod", pod.Name, "cr", cnh.Name)
+		if err := r.Delete(ctx, &pod); err != nil && !apierrors.IsNotFound(err) {
+			klog.ErrorS(err, "Failed to delete pod", "pod", pod.Name)
+			return fmt.Errorf("failed to delete pod %s: %w", pod.Name, err)
+		}
+	}
+
+	if len(podList.Items) > 0 {
+		klog.InfoS("Cleaned up health check pods", "count", len(podList.Items), "cr", cnh.Name)
+	}
+
+	return nil
+}
 
 func (r *CheckNodeHealthReconciler) ensureHealthCheckPod(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth) (*corev1.Pod, error) {
 	// Check if pods already exist using label selector
@@ -94,6 +124,17 @@ func (r *CheckNodeHealthReconciler) buildHealthCheckPod(cnh *chmv1alpha1.CheckNo
 	}
 
 	return pod, nil
+}
+
+func (r *CheckNodeHealthReconciler) isPodPendingTimeout(cnh *chmv1alpha1.CheckNodeHealth, pod *corev1.Pod) bool {
+	// If StartedAt is not set, we can't determine timeout
+	if cnh.Status.StartedAt == nil {
+		return false
+	}
+
+	// Check if the pod has been pending since StartedAt
+	pendingDuration := time.Since(cnh.Status.StartedAt.Time)
+	return pendingDuration > PodPendingTimeout
 }
 
 func generateHealthCheckPodName(cnh *chmv1alpha1.CheckNodeHealth) string {
