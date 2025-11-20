@@ -100,6 +100,13 @@ func (r *CheckNodeHealthReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, err
 	}
 
+	// Check if pod exists and get its status, or create one if it doesn't exist
+	pod, err = r.ensureHealthCheckPod(ctx, cnh)
+	if err != nil {
+		klog.ErrorS(err, "Failed to ensure health check pod")
+		return ctrl.Result{}, err
+	}
+
 	// Mark the CheckNodeHealth as started
 	if err := r.markStarted(ctx, cnh); err != nil {
 		klog.ErrorS(err, "Failed to mark as started")

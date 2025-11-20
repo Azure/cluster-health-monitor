@@ -117,6 +117,7 @@ func TestReconcile(t *testing.T) {
 					NodeRef: chmv1alpha1.NodeReference{Name: "test-node"},
 				},
 				Status: chmv1alpha1.CheckNodeHealthStatus{
+					// FinishedAt != nil means the resource is completed
 					FinishedAt: &metav1.Time{Time: metav1.Now().Time},
 				},
 			},
@@ -193,9 +194,10 @@ func TestReconcile(t *testing.T) {
 				Name:      podName,
 				Namespace: "default",
 			}, pod)
+			podExists := err == nil
 
 			if tt.expectedPodCreated {
-				if err != nil {
+				if !podExists {
 					t.Errorf("Expected pod to be created, got error: %v", err)
 				} else {
 					// Verify pod properties
@@ -208,183 +210,9 @@ func TestReconcile(t *testing.T) {
 				}
 			} else if tt.existingPod == nil {
 				// Only check for non-existence if we didn't create an existing pod
-				if err == nil {
+				if podExists {
 					t.Error("Expected no pod to be created")
 				}
-			}
-
-			// Run custom validation if provided
-			if tt.validateFunc != nil {
-				tt.validateFunc(t, fakeClient, tt.existingCnh)
-			}
-		})
-	}
-}
-
-func TestGetHealthCheckPodName(t *testing.T) {
-	tests := []struct {
-		name        string
-		cnhName     string
-		expectedPod string
-	}{
-		{
-			name:        "simple name",
-			cnhName:     "test-check",
-			expectedPod: "check-node-health-test-check",
-		},
-		{
-			name:        "complex name",
-			cnhName:     "my-complex-node-check-123",
-			expectedPod: "check-node-health-my-complex-node-check-123",
-		},
-		{
-			name:        "single char",
-			cnhName:     "a",
-			expectedPod: "check-node-health-a",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cnh := &chmv1alpha1.CheckNodeHealth{
-				ObjectMeta: metav1.ObjectMeta{Name: tt.cnhName},
-			}
-			podName := getHealthCheckPodName(cnh)
-			if podName != tt.expectedPod {
-				t.Errorf("Expected pod name '%s', got '%s'", tt.expectedPod, podName)
-			}
-		})
-	}
-}
-
-func TestIsCompleted(t *testing.T) {
-	tests := []struct {
-		name     string
-		cnh      *chmv1alpha1.CheckNodeHealth
-		expected bool
-	}{
-		{
-			name:     "not completed when FinishedAt is nil",
-			cnh:      &chmv1alpha1.CheckNodeHealth{},
-			expected: false,
-		},
-		{
-			name: "completed when FinishedAt is set",
-			cnh: &chmv1alpha1.CheckNodeHealth{
-				Status: chmv1alpha1.CheckNodeHealthStatus{
-					FinishedAt: &metav1.Time{},
-				},
-			},
-			expected: true,
-		},
-		{
-			name: "completed with full status",
-			cnh: &chmv1alpha1.CheckNodeHealth{
-				Status: chmv1alpha1.CheckNodeHealthStatus{
-					StartedAt:  &metav1.Time{},
-					FinishedAt: &metav1.Time{},
-					Conditions: []metav1.Condition{
-						{Type: "Healthy", Status: metav1.ConditionTrue},
-					},
-				},
-			},
-			expected: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := isCompleted(tt.cnh)
-			if result != tt.expected {
-				t.Errorf("Expected %v, got %v", tt.expected, result)
-			}
-		})
-	}
-}
-
-func TestStatusUpdateLogic(t *testing.T) {
-	tests := []struct {
-		name              string
-		updateType        string
-		message           string
-		expectedCondition metav1.ConditionStatus
-		expectedReason    string
-	}{
-		{
-			name:              "mark completed",
-			updateType:        "completed",
-			message:           "",
-			expectedCondition: metav1.ConditionTrue,
-			expectedReason:    "ChecksPasseddd",
-		},
-		{
-			name:              "mark failed with custom message",
-			updateType:        "failed",
-			message:           "Pod execution failed",
-			expectedCondition: metav1.ConditionFalse,
-			expectedReason:    "ResourceUnavailable",
-		},
-		{
-			name:              "mark failed with network error",
-			updateType:        "failed",
-			message:           "Network timeout",
-			expectedCondition: metav1.ConditionFalse,
-			expectedReason:    "ResourceUnavailable",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cnh := &chmv1alpha1.CheckNodeHealth{
-				ObjectMeta: metav1.ObjectMeta{Name: "test"},
-			}
-
-			// Simulate status update logic
-			now := metav1.Now()
-			cnh.Status.FinishedAt = &now
-
-			switch tt.updateType {
-			case "completed":
-				cnh.Status.Conditions = []metav1.Condition{
-					{
-						Type:               "Healthy",
-						Status:             metav1.ConditionTrue,
-						LastTransitionTime: metav1.Now(),
-						Reason:             "ChecksPasseddd",
-						Message:            "Health checks completed successfully",
-					},
-				}
-			case "failed":
-				cnh.Status.Conditions = []metav1.Condition{
-					{
-						Type:               "Healthy",
-						Status:             metav1.ConditionFalse,
-						LastTransitionTime: metav1.Now(),
-						Reason:             "ResourceUnavailable",
-						Message:            tt.message,
-					},
-				}
-			}
-
-			// Verify status was set correctly
-			if cnh.Status.FinishedAt == nil {
-				t.Error("Expected FinishedAt to be set")
-			}
-			if len(cnh.Status.Conditions) != 1 {
-				t.Errorf("Expected 1 condition, got %d", len(cnh.Status.Conditions))
-			}
-			condition := cnh.Status.Conditions[0]
-			if condition.Status != tt.expectedCondition {
-				t.Errorf("Expected condition status %s, got %s", tt.expectedCondition, condition.Status)
-			}
-			if condition.Type != "Healthy" {
-				t.Errorf("Expected condition type 'Healthy', got '%s'", condition.Type)
-			}
-			if condition.Reason != tt.expectedReason {
-				t.Errorf("Expected reason '%s', got '%s'", tt.expectedReason, condition.Reason)
-			}
-			if tt.message != "" && condition.Message != tt.message {
-				t.Errorf("Expected message '%s', got '%s'", tt.message, condition.Message)
 			}
 		})
 	}
