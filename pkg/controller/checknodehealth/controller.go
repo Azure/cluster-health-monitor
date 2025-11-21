@@ -112,7 +112,7 @@ func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cn
 	}
 
 	if pod.Status.Phase == corev1.PodPending {
-		if r.isPodPendingTimeout(cnh, pod) {
+		if r.isPodPendingTimeout(pod) {
 			message := fmt.Sprintf("Pod stuck in Pending state for more than %v", PodPendingTimeout)
 			klog.InfoS("Health check pod pending timeout, marking as failed", "timeout", PodPendingTimeout)
 

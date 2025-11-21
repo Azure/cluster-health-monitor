@@ -126,14 +126,9 @@ func (r *CheckNodeHealthReconciler) buildHealthCheckPod(cnh *chmv1alpha1.CheckNo
 	return pod, nil
 }
 
-func (r *CheckNodeHealthReconciler) isPodPendingTimeout(cnh *chmv1alpha1.CheckNodeHealth, pod *corev1.Pod) bool {
-	// If StartedAt is not set, we can't determine timeout
-	if cnh.Status.StartedAt == nil {
-		return false
-	}
-
-	// Check if the pod has been pending since StartedAt
-	pendingDuration := time.Since(cnh.Status.StartedAt.Time)
+func (r *CheckNodeHealthReconciler) isPodPendingTimeout(pod *corev1.Pod) bool {
+	// Check if the pod has been pending since its creation time
+	pendingDuration := time.Since(pod.CreationTimestamp.Time)
 	return pendingDuration > PodPendingTimeout
 }
 
