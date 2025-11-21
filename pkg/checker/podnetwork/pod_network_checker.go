@@ -47,17 +47,19 @@ func (p *PodNetworkChecker) Run(ctx context.Context) (*checker.Result, error) {
 	}
 
 	if len(coreDNSPods) == 0 {
-		klog.InfoS("No eligible CoreDNS pods found for testing", "checker", "PodNetwork", "node", p.nodeName)
-		return checker.Unknown("No CoreDNS pods available for pod-to-pod network testing"), nil
+		klog.InfoS("No eligible CoreDNS pods found for checking", "checker", "PodNetwork", "node", p.nodeName)
+		return checker.Unknown("No CoreDNS pods available for pod-to-pod network checking"), nil
 	}
 
-	klog.InfoS("Found CoreDNS pods for testing", "checker", "PodNetwork", "node", p.nodeName, "count", len(coreDNSPods))
+	klog.InfoS("Found CoreDNS pods for checking", "checker", "PodNetwork", "node", p.nodeName, "count", len(coreDNSPods))
 
 	// Get kube-dns service IP
 	service, err := p.clientset.CoreV1().Services(coreDNSNamespace).Get(ctx, "kube-dns", metav1.GetOptions{})
 	if err != nil {
 		klog.ErrorS(err, "Failed to get kube-dns service", "checker", "PodNetwork", "node", p.nodeName)
-		return nil, fmt.Errorf("failed to get kube-dns service: %w", err)
+		// Treat API failures as network connectivity issues
+		message := fmt.Sprintf("Failed to get kube-dns service: %v", err)
+		return checker.Unhealthy(ErrorCodeNetworkConnectivityFailed, message), nil
 	}
 
 	clusterDNSIP := service.Spec.ClusterIP
@@ -84,7 +86,7 @@ func (p *PodNetworkChecker) getEligibleCoreDNSPods(ctx context.Context) ([]corev
 
 	var eligiblePods []corev1.Pod
 	for _, pod := range pods.Items {
-		// Skip pods on the target node (where we're testing)
+		// Skip pods on the target node (where we're checking)
 		if pod.Spec.NodeName == p.nodeName {
 			klog.V(4).InfoS("Skipping CoreDNS pod on target node", "checker", "PodNetwork", "pod", pod.Name, "node", pod.Spec.NodeName)
 			continue
@@ -125,7 +127,7 @@ func isPodReady(pod corev1.Pod) bool {
 // checkDNSPodConnectivity tests network connectivity to individual CoreDNS pod IPs
 // by sending DNS queries and verifying that any response packet is received
 func (p *PodNetworkChecker) checkDNSPodConnectivity(ctx context.Context, pods []corev1.Pod) int {
-	var successCount int
+	var succCount int
 
 	for _, pod := range pods {
 		klog.V(2).InfoS("Checking DNS connectivity to CoreDNS pod", "checker", "PodNetwork", "pod", pod.Name, "ip", pod.Status.PodIP)
@@ -135,17 +137,17 @@ func (p *PodNetworkChecker) checkDNSPodConnectivity(ctx context.Context, pods []
 			klog.V(2).ErrorS(err, "DNS connectivity to CoreDNS pod failed", "checker", "PodNetwork", "pod", pod.Name, "ip", pod.Status.PodIP)
 		} else {
 			klog.V(2).InfoS("DNS connectivity to CoreDNS pod succeeded", "checker", "PodNetwork", "pod", pod.Name, "ip", pod.Status.PodIP)
-			successCount++
+			succCount++
 		}
 	}
 
-	return successCount
+	return succCount
 }
 
 // checkDNSSvcConnectivity tests network connectivity to cluster DNS service IP
 // by sending DNS queries and verifying that any response packet is received
 func (p *PodNetworkChecker) checkDNSSvcConnectivity(ctx context.Context, clusterDNSIP string) error {
-	klog.V(2).InfoS("Testing DNS connectivity to cluster DNS service", "checker", "PodNetwork", "ip", clusterDNSIP)
+	klog.V(2).InfoS("checking DNS connectivity to cluster DNS service", "checker", "PodNetwork", "ip", clusterDNSIP)
 
 	err := p.dnsPinger.ping(ctx, clusterDNSIP, kubernetesSvcDNSName, time.Second*5)
 	if err != nil {
@@ -175,29 +177,28 @@ func (p *PodNetworkChecker) evaluateResults(totalPods, podToPodSuccess int, clus
 	// Case 1: If only one available pod, return Unknown (insufficient data for conclusive test)
 	if totalPods <= 1 {
 		klog.InfoS("PodNetwork check result: Unknown - only one CoreDNS pod available, insufficient for conclusive network test", "checker", "PodNetwork")
-		return checker.Unknown("Only less one CoreDNS pod available, insufficient for conclusive pod-to-pod network testing")
+		return checker.Unknown("Only less one CoreDNS pod available, insufficient for conclusive pod-to-pod network checking")
 	}
 
-	var message string
 	if clusterSvcSuccess && podToPodSuccess > 0 {
 		// Case 2: Both cluster DNS and pod-to-pod connectivity work
 		klog.InfoS("PodNetwork check result: Healthy - both cluster DNS and pod-to-pod connectivity working", "checker", "PodNetwork")
-		message = "Pod-to-pod network connectivity and cluster DNS service are functioning properly"
 		return checker.Healthy()
 	}
 
-	if podToPodSuccess == 0 && clusterSvcSuccess {
+	var message string
+	if clusterSvcSuccess && podToPodSuccess == 0 {
 		// Case 3: Pod connectivity issues but service works
 		klog.InfoS("PodNetwork check result: Unhealthy - pod connectivity failure", "checker", "PodNetwork")
 		message = "Pod-to-pod network connectivity failure detected; cluster DNS service is reachable"
 	}
-	if podToPodSuccess > 0 && !clusterSvcSuccess {
+	if !clusterSvcSuccess && podToPodSuccess > 0 {
 		// Case 4: Service issues but pod connectivity works
 		klog.InfoS("PodNetwork check result: Unhealthy - cluster DNS service failure", "checker", "PodNetwork")
 		message = "Cluster DNS service connectivity failure detected; pod-to-pod network connectivity is functioning"
 	}
 
-	if podToPodSuccess == 0 && !clusterSvcSuccess {
+	if !clusterSvcSuccess && podToPodSuccess == 0 {
 		// Case 5: Complete network failure
 		klog.InfoS("PodNetwork check result: Unhealthy - complete network failure", "checker", "PodNetwork")
 		message = "Complete pod network failure detected; both pod-to-pod connectivity and cluster DNS service are unreachable"

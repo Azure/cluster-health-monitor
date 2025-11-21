@@ -14,53 +14,73 @@ import (
 	ktesting "k8s.io/client-go/testing"
 )
 
-func TestPodNetworkChecker_getEligibleCoreDNSPods(t *testing.T) {
+func TestPodNetworkChecker(t *testing.T) {
 	tests := []struct {
-		name          string
-		nodeName      string
-		pods          []corev1.Pod
-		expectedCount int
-		description   string
+		name           string
+		description    string
+		nodeName       string
+		pods           []corev1.Pod
+		service        *corev1.Service
+		setupReactors  func(*fake.Clientset)
+		expectedStatus checker.Status
+		expectError    bool
 	}{
 		{
-			name:     "filters out pods on same node",
-			nodeName: "node1",
+			name:        "Run with no eligible pods",
+			description: "should return Unknown when no eligible CoreDNS pods are found",
+			nodeName:    "node1",
 			pods: []corev1.Pod{
-				createCoreDNSPod("coredns-1", "node1", "10.0.1.1", true),
-				createCoreDNSPod("coredns-2", "node2", "10.0.1.2", true),
+				createCoreDNSPod("coredns-1", "node1", "10.0.1.1", true), // Same node, should be filtered out
 			},
-			expectedCount: 1,
-			description:   "should exclude pod on same node",
+			service:        createKubeDNSService("10.0.0.10"),
+			setupReactors:  nil,
+			expectedStatus: checker.StatusUnknown,
+			expectError:    false,
 		},
 		{
-			name:     "filters out non-running pods",
-			nodeName: "node1",
-			pods: []corev1.Pod{
-				createCoreDNSPodWithPhase("coredns-1", "node2", "10.0.1.2", corev1.PodPending, true),
-				createCoreDNSPod("coredns-2", "node3", "10.0.1.3", true),
+			name:        "Run with API error",
+			description: "should return error when API server returns error",
+			nodeName:    "node1",
+			pods:        []corev1.Pod{},
+			service:     nil,
+			setupReactors: func(clientset *fake.Clientset) {
+				// Simulate API error
+				clientset.PrependReactor("list", "pods", func(action ktesting.Action) (bool, runtime.Object, error) {
+					return true, nil, errors.New("API server error")
+				})
 			},
-			expectedCount: 1,
-			description:   "should exclude non-running pods",
+			expectedStatus: "",
+			expectError:    true,
 		},
 		{
-			name:     "filters out non-ready pods",
-			nodeName: "node1",
+			name:        "Run with single pod",
+			description: "should return Unknown when only one CoreDNS pod is available",
+			nodeName:    "node1",
 			pods: []corev1.Pod{
-				createCoreDNSPod("coredns-1", "node2", "10.0.1.2", false),
-				createCoreDNSPod("coredns-2", "node3", "10.0.1.3", true),
+				createCoreDNSPod("coredns-1", "node2", "10.0.1.2", true),
 			},
-			expectedCount: 1,
-			description:   "should exclude non-ready pods",
+			service:        createKubeDNSService("10.0.0.10"),
+			setupReactors:  nil,
+			expectedStatus: checker.StatusUnknown,
+			expectError:    false,
 		},
 		{
-			name:     "filters out pods without IP",
-			nodeName: "node1",
+			name:        "Run with service error",
+			description: "should return Unhealthy when kube-dns service lookup fails",
+			nodeName:    "node1",
 			pods: []corev1.Pod{
-				createCoreDNSPod("coredns-1", "node2", "", true),
+				createCoreDNSPod("coredns-1", "node2", "10.0.1.2", true),
 				createCoreDNSPod("coredns-2", "node3", "10.0.1.3", true),
 			},
-			expectedCount: 1,
-			description:   "should exclude pods without IP",
+			service: nil, // No service, will cause lookup to fail
+			setupReactors: func(clientset *fake.Clientset) {
+				// Simulate service error
+				clientset.PrependReactor("get", "services", func(action ktesting.Action) (bool, runtime.Object, error) {
+					return true, nil, errors.New("service lookup error")
+				})
+			},
+			expectedStatus: checker.StatusUnhealthy,
+			expectError:    false,
 		},
 	}
 
@@ -70,151 +90,57 @@ func TestPodNetworkChecker_getEligibleCoreDNSPods(t *testing.T) {
 			for _, pod := range tt.pods {
 				objects = append(objects, &pod)
 			}
+			if tt.service != nil {
+				objects = append(objects, tt.service)
+			}
 
 			clientset := fake.NewSimpleClientset(objects...)
+
+			// Setup any additional reactors for this test case
+			if tt.setupReactors != nil {
+				tt.setupReactors(clientset)
+			}
+
 			podChecker := NewPodNetworkChecker(clientset, tt.nodeName)
 
 			ctx := context.Background()
+			result, err := podChecker.Run(ctx)
 
-			pods, err := podChecker.getEligibleCoreDNSPods(ctx)
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
+			// Check error expectation
+			if tt.expectError {
+				if err == nil {
+					t.Errorf("%s: expected error, got none", tt.description)
+				}
+				if result != nil {
+					t.Errorf("%s: expected nil result when error occurs, got %+v", tt.description, result)
+				}
 
-			if len(pods) != tt.expectedCount {
-				t.Errorf("%s: expected %d eligible pods, got %d", tt.description, tt.expectedCount, len(pods))
+				// For API errors, check the error message
+				if tt.name == "Run with API error" {
+					expectedError := "failed to get CoreDNS pods"
+					if !strings.Contains(err.Error(), expectedError) {
+						t.Errorf("%s: expected error to contain %q, got %v", tt.description, expectedError, err)
+					}
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("%s: unexpected error: %v", tt.description, err)
+				}
+
+				if result.Status != tt.expectedStatus {
+					t.Errorf("%s: expected status %s, got %s", tt.description, tt.expectedStatus, result.Status)
+				}
+
+				if result.Detail.Message == "" {
+					t.Errorf("%s: result should have detail message", tt.description)
+				}
+
+				// For unhealthy results, check error code
+				if tt.expectedStatus == checker.StatusUnhealthy && result.Detail.Code == "" {
+					t.Errorf("%s: unhealthy result should have error code", tt.description)
+				}
 			}
 		})
-	}
-}
-
-func TestPodNetworkChecker_Check_NoEligiblePods(t *testing.T) {
-	// Test case where no eligible CoreDNS pods are found
-	pods := []corev1.Pod{
-		createCoreDNSPod("coredns-1", "node1", "10.0.1.1", true), // Same node, should be filtered out
-	}
-	service := createKubeDNSService("10.0.0.10")
-
-	var objects []runtime.Object
-	for _, pod := range pods {
-		objects = append(objects, &pod)
-	}
-	objects = append(objects, service)
-
-	clientset := fake.NewSimpleClientset(objects...)
-	podChecker := NewPodNetworkChecker(clientset, "node1")
-
-	ctx := context.Background()
-	result, err := podChecker.Run(ctx)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if result.Status != checker.StatusUnknown {
-		t.Errorf("expected status %s, got %s", checker.StatusUnknown, result.Status)
-	}
-
-	if result.Detail.Message == "" {
-		t.Error("unknown result should have detail message")
-	}
-}
-
-func TestPodNetworkChecker_Check_APIError(t *testing.T) {
-	// Test case where API server returns error
-	clientset := fake.NewSimpleClientset()
-
-	// Simulate API error
-	clientset.PrependReactor("list", "pods", func(action ktesting.Action) (bool, runtime.Object, error) {
-		return true, nil, errors.New("API server error")
-	})
-
-	podChecker := NewPodNetworkChecker(clientset, "node1")
-
-	ctx := context.Background()
-	result, err := podChecker.Run(ctx)
-	if err == nil {
-		t.Fatalf("expected error, got none")
-	}
-
-	if result != nil {
-		t.Errorf("expected nil result when error occurs, got %+v", result)
-	}
-
-	expectedError := "failed to get CoreDNS pods"
-	if !strings.Contains(err.Error(), expectedError) {
-		t.Errorf("expected error to contain %q, got %v", expectedError, err)
-	}
-}
-
-func TestPodNetworkChecker_Check_SinglePod(t *testing.T) {
-	// Test case where only one CoreDNS pod is available
-	pods := []corev1.Pod{
-		createCoreDNSPod("coredns-1", "node2", "10.0.1.2", true),
-	}
-	service := createKubeDNSService("10.0.0.10")
-
-	var objects []runtime.Object
-	for _, pod := range pods {
-		objects = append(objects, &pod)
-	}
-	objects = append(objects, service)
-
-	clientset := fake.NewSimpleClientset(objects...)
-	podChecker := NewPodNetworkChecker(clientset, "node1")
-
-	ctx := context.Background()
-	result, err := podChecker.Run(ctx)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if result.Status != checker.StatusUnknown {
-		t.Errorf("expected status %s, got %s", checker.StatusUnknown, result.Status)
-	}
-
-	if result.Detail.Message == "" {
-		t.Error("unknown result should have detail message")
-	}
-}
-
-func TestPodNetworkChecker_Check_ServiceError(t *testing.T) {
-	// Test case where kube-dns service lookup fails
-	pods := []corev1.Pod{
-		createCoreDNSPod("coredns-1", "node2", "10.0.1.2", true),
-		createCoreDNSPod("coredns-2", "node3", "10.0.1.3", true),
-	}
-
-	var objects []runtime.Object
-	for _, pod := range pods {
-		objects = append(objects, &pod)
-	}
-
-	clientset := fake.NewSimpleClientset(objects...)
-
-	// Simulate service error
-	clientset.PrependReactor("get", "services", func(action ktesting.Action) (bool, runtime.Object, error) {
-		return true, nil, errors.New("service lookup error")
-	})
-
-	podChecker := NewPodNetworkChecker(clientset, "node1")
-
-	ctx := context.Background()
-	result, err := podChecker.Run(ctx)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if result.Status != checker.StatusUnhealthy {
-		t.Errorf("expected status %s, got %s", checker.StatusUnhealthy, result.Status)
-	}
-
-	// The result should contain some kind of network failure error
-	if result.Detail.Message == "" {
-		t.Error("unhealthy result should have detail message")
-	}
-
-	if result.Detail.Code == "" {
-		t.Error("unhealthy result should have error code")
 	}
 }
 

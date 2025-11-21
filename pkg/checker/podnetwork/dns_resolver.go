@@ -13,7 +13,7 @@ import (
 type dnsPinger interface {
 	// ping pings a DNS server by sending a query and waiting for any response
 	// It doesn't care about the actual DNS response content, only that a packet is received
-	ping(ctx context.Context, dnsIP, domain string, queryTimeout time.Duration) error
+	ping(ctx context.Context, dnsSvcIP, domain string, queryTimeout time.Duration) error
 }
 
 // simpleDNSPinger implements the dnsPinger interface using miekg/dns.
@@ -27,7 +27,7 @@ func newDNSPinger() dnsPinger {
 // ping pings a DNS server by sending a query and waiting for any response
 // It's like a network ping but using DNS packets instead of ICMP
 // Uses the miekg/dns library for cleaner DNS packet handling
-func (p *simpleDNSPinger) ping(ctx context.Context, dnsIP, domain string, queryTimeout time.Duration) error {
+func (p *simpleDNSPinger) ping(ctx context.Context, dnsSvcIP, domain string, queryTimeout time.Duration) error {
 	// Create DNS query: type=A for the specified domain, result doesn't matter
 	m := new(dns.Msg)
 	m.SetQuestion(dns.Fqdn(domain), dns.TypeA)
@@ -37,9 +37,9 @@ func (p *simpleDNSPinger) ping(ctx context.Context, dnsIP, domain string, queryT
 	c.Timeout = queryTimeout
 
 	// Ensure we use the correct address format
-	dnsAddr := dnsIP
-	if !hasPort(dnsIP) {
-		dnsAddr = net.JoinHostPort(dnsIP, "53")
+	dnsAddr := dnsSvcIP
+	if !hasPort(dnsSvcIP) {
+		dnsAddr = net.JoinHostPort(dnsSvcIP, "53")
 	}
 
 	// Send query
