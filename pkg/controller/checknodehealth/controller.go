@@ -24,6 +24,7 @@ const (
 	// CheckNodeHealthLabel is the label key used to identify check node health pods
 	CheckNodeHealthLabel = "clusterhealthmonitor.azure.com/checknodehealth"
 
+	// ConditionTypeHealthy is the condition type used to indicate a healthy state.
 	ConditionTypeHealthy = "Healthy"
 
 	// Condition reasons for CheckNodeHealth
