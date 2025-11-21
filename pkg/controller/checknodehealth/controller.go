@@ -69,7 +69,7 @@ func (r *CheckNodeHealthReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	klog.InfoS("Reconciling CheckNodeHealth", "name", cnh.Name, "node", cnh.Spec.NodeRef.Name)
 
 	// Check if already completed - if so, cleanup pod and skip
-	// the case happends where pod deletion failed in determineCheckResult
+	// the case happens where pod deletion failed in determineCheckResult
 	if isCompleted(cnh) {
 		klog.InfoS("CheckNodeHealth already completed", "name", cnh.Name)
 		return r.handleCompletion(ctx, cnh)
