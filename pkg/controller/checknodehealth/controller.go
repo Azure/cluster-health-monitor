@@ -24,6 +24,8 @@ const (
 	// CheckNodeHealthLabel is the label key used to identify check node health pods
 	CheckNodeHealthLabel = "clusterhealthmonitor.azure.com/checknodehealth"
 
+	ConditionTypeHealthy = "Healthy"
+
 	// Condition reasons for CheckNodeHealth
 	ReasonCheckStarted      = "CheckStarted"
 	ReasonCheckPassed       = "CheckPassed"
@@ -151,7 +153,7 @@ func (r *CheckNodeHealthReconciler) markStarted(ctx context.Context, cnh *chmv1a
 	cnh.Status.StartedAt = &now
 	cnh.Status.Conditions = []metav1.Condition{
 		{
-			Type:               "Healthy",
+			Type:               ConditionTypeHealthy,
 			Status:             metav1.ConditionUnknown,
 			Reason:             ReasonCheckStarted,
 			LastTransitionTime: now,
@@ -171,7 +173,7 @@ func (r *CheckNodeHealthReconciler) markCompleted(ctx context.Context, cnh *chmv
 	// TODO: In real implementation, set condition based on actual check results
 	cnh.Status.Conditions = []metav1.Condition{
 		{
-			Type:               "Healthy",
+			Type:               ConditionTypeHealthy,
 			Status:             metav1.ConditionTrue,
 			LastTransitionTime: now,
 			Reason:             ReasonCheckPassed,
@@ -180,7 +182,7 @@ func (r *CheckNodeHealthReconciler) markCompleted(ctx context.Context, cnh *chmv
 	}
 
 	if err := r.Status().Update(ctx, cnh); err != nil {
-		return fmt.Errorf("failed to patch status: %w", err)
+		return fmt.Errorf("failed to update status: %w", err)
 	}
 
 	return nil
@@ -195,7 +197,7 @@ func (r *CheckNodeHealthReconciler) markFailed(ctx context.Context, cnh *chmv1al
 	cnh.Status.FinishedAt = &now
 	cnh.Status.Conditions = []metav1.Condition{
 		{
-			Type:               "Healthy",
+			Type:               ConditionTypeHealthy,
 			Status:             metav1.ConditionFalse,
 			LastTransitionTime: now,
 			Reason:             reason,
@@ -204,7 +206,7 @@ func (r *CheckNodeHealthReconciler) markFailed(ctx context.Context, cnh *chmv1al
 	}
 
 	if err := r.Status().Update(ctx, cnh); err != nil {
-		return fmt.Errorf("failed to patch status: %w", err)
+		return fmt.Errorf("failed to update status: %w", err)
 	}
 
 	return nil
