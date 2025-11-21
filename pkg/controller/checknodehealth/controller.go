@@ -26,6 +26,8 @@ const (
 	// CheckNodeHealthFinalizer is the finalizer used to ensure proper cleanup
 	CheckNodeHealthFinalizer = "checknodehealth.clusterhealthmonitor.azure.com/finalizer"
 
+	ConditionTypeHealthy = "Healthy"
+
 	// CheckNodeHealthLabel is the label key used to identify check node health pods
 	CheckNodeHealthLabel = "clusterhealthmonitor.azure.com/checknodehealth"
 
@@ -149,7 +151,7 @@ func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cn
 
 	// Check if pod is stuck in Pending state for too long
 	if pod.Status.Phase == corev1.PodPending {
-		if r.isPodPendingTimeout(cnh, pod) {
+		if r.isPodPendingTimeout(pod) {
 			message := fmt.Sprintf("Pod stuck in Pending state for more than %v", PodPendingTimeout)
 			klog.InfoS("Health check pod pending timeout, marking as failed", "timeout", PodPendingTimeout)
 
@@ -187,7 +189,7 @@ func (r *CheckNodeHealthReconciler) markStarted(ctx context.Context, cnh *chmv1a
 	cnh.Status.StartedAt = &now
 	cnh.Status.Conditions = []metav1.Condition{
 		{
-			Type:               "Healthy",
+			Type:               ConditionTypeHealthy,
 			Status:             metav1.ConditionUnknown,
 			Reason:             ReasonCheckStarted,
 			LastTransitionTime: now,
@@ -210,7 +212,7 @@ func (r *CheckNodeHealthReconciler) markCompleted(ctx context.Context, cnh *chmv
 
 	cnh.Status.Conditions = []metav1.Condition{
 		{
-			Type:               "Healthy",
+			Type:               ConditionTypeHealthy,
 			Status:             healthyStatus,
 			LastTransitionTime: now,
 			Reason:             reason,
@@ -219,7 +221,7 @@ func (r *CheckNodeHealthReconciler) markCompleted(ctx context.Context, cnh *chmv
 	}
 
 	if err := r.Status().Update(ctx, cnh); err != nil {
-		return fmt.Errorf("failed to patch status: %w", err)
+		return fmt.Errorf("failed to update status: %w", err)
 	}
 
 	return nil
@@ -230,7 +232,7 @@ func (r *CheckNodeHealthReconciler) markFailed(ctx context.Context, cnh *chmv1al
 	cnh.Status.FinishedAt = &now
 	cnh.Status.Conditions = []metav1.Condition{
 		{
-			Type:               "Healthy",
+			Type:               ConditionTypeHealthy,
 			Status:             metav1.ConditionFalse,
 			LastTransitionTime: now,
 			Reason:             ReasonCheckFailed,
@@ -239,7 +241,7 @@ func (r *CheckNodeHealthReconciler) markFailed(ctx context.Context, cnh *chmv1al
 	}
 
 	if err := r.Status().Update(ctx, cnh); err != nil {
-		return fmt.Errorf("failed to patch status: %w", err)
+		return fmt.Errorf("failed to update status: %w", err)
 	}
 
 	return nil

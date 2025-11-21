@@ -133,7 +133,7 @@ func (r *CheckNodeHealthReconciler) updatePodstartCheckerResult(ctx context.Cont
 	}
 
 	// Check if pod is pending for too long
-	if pod.Status.Phase == corev1.PodPending && r.isPodPendingTimeout(cnh, pod) {
+	if pod.Status.Phase == corev1.PodPending && r.isPodPendingTimeout(pod) {
 		return r.markPodStartupUnhealthy(ctx, cnh, "Pod stuck in Pending state for more than 1 minute")
 	}
 
@@ -219,14 +219,9 @@ func (r *CheckNodeHealthReconciler) updateCheckResult(cnh *chmv1alpha1.CheckNode
 }
 
 // isPodPendingTimeout checks if the pod has been pending for too long
-func (r *CheckNodeHealthReconciler) isPodPendingTimeout(cnh *chmv1alpha1.CheckNodeHealth, pod *corev1.Pod) bool {
-	// If StartedAt is not set, we can't determine timeout
-	if cnh.Status.StartedAt == nil {
-		return false
-	}
-
-	// Check if the pod has been pending since StartedAt
-	pendingDuration := time.Since(cnh.Status.StartedAt.Time)
+func (r *CheckNodeHealthReconciler) isPodPendingTimeout(pod *corev1.Pod) bool {
+	// Check if the pod has been pending since its creation time
+	pendingDuration := time.Since(pod.CreationTimestamp.Time)
 	return pendingDuration > PodPendingTimeout
 }
 
