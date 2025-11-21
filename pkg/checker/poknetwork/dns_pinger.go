@@ -10,6 +10,7 @@ import (
 )
 
 // dnsPinger is an interface for DNS ping functionality.
+// It allows for easier testing/mocking.
 type dnsPinger interface {
 	// ping pings a DNS server by sending a query and waiting for any response
 	// It doesn't care about the actual DNS response content, only that a packet is received
@@ -24,9 +25,7 @@ func newDNSPinger() dnsPinger {
 	return &simpleDNSPinger{}
 }
 
-// ping pings a DNS server by sending a query and waiting for any response
-// It's like a network ping but using DNS packets instead of ICMP
-// Uses the miekg/dns library for cleaner DNS packet handling
+// ping uses the miekg/dns library for cleaner DNS packet handling
 func (p *simpleDNSPinger) ping(ctx context.Context, dnsSvcIP, domain string, queryTimeout time.Duration) error {
 	// Create DNS query: type=A for the specified domain, result doesn't matter
 	m := new(dns.Msg)
