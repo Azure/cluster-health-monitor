@@ -18,7 +18,7 @@ import (
 const (
 	// PodPendingTimeout is the maximum time a pod can stay in Pending state
 	// before being marked as failed
-	// The pod already has been being bond to the target node, so it should be pending for a short time only
+	// The pod has already been bound to the target node, so it should be pending for a short time only
 	PodPendingTimeout = 30 * time.Second
 
 	// CheckNodeHealthLabel is the label key used to identify check node health pods
