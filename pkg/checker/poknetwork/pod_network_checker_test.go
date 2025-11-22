@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Azure/cluster-health-monitor/pkg/checker"
 	corev1 "k8s.io/api/core/v1"
@@ -14,6 +15,22 @@ import (
 	ktesting "k8s.io/client-go/testing"
 )
 
+// mockDNSPinger is a mock implementation of dnsPinger for testing
+type mockDNSPinger struct {
+	// podIPResults maps pod IP to error (nil means success)
+	podIPResults map[string]error
+	// serviceIPResult is the result for cluster DNS service IP
+	serviceIPResult error
+}
+
+func (m *mockDNSPinger) ping(ctx context.Context, dnsSvcIP, domain string, queryTimeout time.Duration) error {
+	// Check if this is a pod IP or service IP
+	if result, ok := m.podIPResults[dnsSvcIP]; ok {
+		return result
+	}
+	return m.serviceIPResult
+}
+
 func TestPodNetworkChecker(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -22,6 +39,7 @@ func TestPodNetworkChecker(t *testing.T) {
 		pods           []corev1.Pod
 		service        *corev1.Service
 		setupReactors  func(*fake.Clientset)
+		mockDNSPinger  *mockDNSPinger
 		expectedStatus checker.Status
 		expectError    bool
 	}{
@@ -34,6 +52,7 @@ func TestPodNetworkChecker(t *testing.T) {
 			},
 			service:        createKubeDNSService("10.0.0.10"),
 			setupReactors:  nil,
+			mockDNSPinger:  nil,
 			expectedStatus: checker.StatusUnknown,
 			expectError:    false,
 		},
@@ -49,24 +68,31 @@ func TestPodNetworkChecker(t *testing.T) {
 					return true, nil, errors.New("API server error")
 				})
 			},
+			mockDNSPinger:  nil,
 			expectedStatus: "",
 			expectError:    true,
 		},
 		{
 			name:        "Run with single pod",
-			description: "should return Unknown when only one CoreDNS pod is available",
+			description: "should return Unknown when only one CoreDNS pod is available (case 1)",
 			nodeName:    "node1",
 			pods: []corev1.Pod{
 				createCoreDNSPod("coredns-1", "node2", "10.0.1.2", true),
 			},
-			service:        createKubeDNSService("10.0.0.10"),
-			setupReactors:  nil,
+			service:       createKubeDNSService("10.0.0.10"),
+			setupReactors: nil,
+			mockDNSPinger: &mockDNSPinger{
+				podIPResults: map[string]error{
+					"10.0.1.2": nil, // Pod succeeds
+				},
+				serviceIPResult: nil, // Service succeeds
+			},
 			expectedStatus: checker.StatusUnknown,
 			expectError:    false,
 		},
 		{
 			name:        "Run with service error",
-			description: "should return Unknown when kube-dns service lookup fails",
+			description: "should return error when kube-dns service lookup fails",
 			nodeName:    "node1",
 			pods: []corev1.Pod{
 				createCoreDNSPod("coredns-1", "node2", "10.0.1.2", true),
@@ -79,8 +105,89 @@ func TestPodNetworkChecker(t *testing.T) {
 					return true, nil, errors.New("service lookup error")
 				})
 			},
+			mockDNSPinger:  nil,
 			expectedStatus: "",
 			expectError:    true,
+		},
+		{
+			name:        "Case 2: Healthy - both cluster DNS and pod-to-pod work",
+			description: "should return Healthy when cluster DNS service works AND at least one pod-to-pod test succeeds",
+			nodeName:    "node1",
+			pods: []corev1.Pod{
+				createCoreDNSPod("coredns-1", "node2", "10.0.1.2", true),
+				createCoreDNSPod("coredns-2", "node3", "10.0.1.3", true),
+			},
+			service:       createKubeDNSService("10.0.0.10"),
+			setupReactors: nil,
+			mockDNSPinger: &mockDNSPinger{
+				podIPResults: map[string]error{
+					"10.0.1.2": nil,                       // Pod 1 succeeds
+					"10.0.1.3": errors.New("ping failed"), // Pod 2 fails
+				},
+				serviceIPResult: nil, // Service succeeds
+			},
+			expectedStatus: checker.StatusHealthy,
+			expectError:    false,
+		},
+		{
+			name:        "Case 3: Unhealthy - cluster DNS works but all pod-to-pod fail",
+			description: "should return Unhealthy when cluster DNS service works BUT all pod-to-pod tests fail (pod connectivity issues)",
+			nodeName:    "node1",
+			pods: []corev1.Pod{
+				createCoreDNSPod("coredns-1", "node2", "10.0.1.2", true),
+				createCoreDNSPod("coredns-2", "node3", "10.0.1.3", true),
+			},
+			service:       createKubeDNSService("10.0.0.10"),
+			setupReactors: nil,
+			mockDNSPinger: &mockDNSPinger{
+				podIPResults: map[string]error{
+					"10.0.1.2": errors.New("ping failed"), // Pod 1 fails
+					"10.0.1.3": errors.New("ping failed"), // Pod 2 fails
+				},
+				serviceIPResult: nil, // Service succeeds
+			},
+			expectedStatus: checker.StatusUnhealthy,
+			expectError:    false,
+		},
+		{
+			name:        "Case 4: Unhealthy - cluster DNS fails but at least one pod-to-pod succeeds",
+			description: "should return Unhealthy when cluster DNS service fails BUT at least one pod-to-pod test succeeds (service issues)",
+			nodeName:    "node1",
+			pods: []corev1.Pod{
+				createCoreDNSPod("coredns-1", "node2", "10.0.1.2", true),
+				createCoreDNSPod("coredns-2", "node3", "10.0.1.3", true),
+			},
+			service:       createKubeDNSService("10.0.0.10"),
+			setupReactors: nil,
+			mockDNSPinger: &mockDNSPinger{
+				podIPResults: map[string]error{
+					"10.0.1.2": nil,                       // Pod 1 succeeds
+					"10.0.1.3": errors.New("ping failed"), // Pod 2 fails
+				},
+				serviceIPResult: errors.New("service ping failed"), // Service fails
+			},
+			expectedStatus: checker.StatusUnhealthy,
+			expectError:    false,
+		},
+		{
+			name:        "Case 5: Unhealthy - both cluster DNS and all pod-to-pod fail",
+			description: "should return Unhealthy when cluster DNS service fails AND all pod-to-pod tests fail (complete network failure)",
+			nodeName:    "node1",
+			pods: []corev1.Pod{
+				createCoreDNSPod("coredns-1", "node2", "10.0.1.2", true),
+				createCoreDNSPod("coredns-2", "node3", "10.0.1.3", true),
+			},
+			service:       createKubeDNSService("10.0.0.10"),
+			setupReactors: nil,
+			mockDNSPinger: &mockDNSPinger{
+				podIPResults: map[string]error{
+					"10.0.1.2": errors.New("ping failed"), // Pod 1 fails
+					"10.0.1.3": errors.New("ping failed"), // Pod 2 fails
+				},
+				serviceIPResult: errors.New("service ping failed"), // Service fails
+			},
+			expectedStatus: checker.StatusUnhealthy,
+			expectError:    false,
 		},
 	}
 
@@ -102,6 +209,11 @@ func TestPodNetworkChecker(t *testing.T) {
 			}
 
 			podChecker := NewPodNetworkChecker(clientset, tt.nodeName)
+
+			// Replace dnsPinger with mock if provided
+			if tt.mockDNSPinger != nil {
+				podChecker.dnsPinger = tt.mockDNSPinger
+			}
 
 			ctx := context.Background()
 			result, err := podChecker.Run(ctx)
@@ -131,7 +243,8 @@ func TestPodNetworkChecker(t *testing.T) {
 					t.Errorf("%s: expected status %s, got %s", tt.description, tt.expectedStatus, result.Status)
 				}
 
-				if result.Detail.Message == "" {
+				// For unhealthy or unknown results, check detail message
+				if (tt.expectedStatus == checker.StatusUnhealthy || tt.expectedStatus == checker.StatusUnknown) && result.Detail.Message == "" {
 					t.Errorf("%s: result should have detail message", tt.description)
 				}
 
