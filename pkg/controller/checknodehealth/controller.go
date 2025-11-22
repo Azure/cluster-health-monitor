@@ -11,6 +11,7 @@ import (
 	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
 )
@@ -20,6 +21,9 @@ const (
 	// before being marked as failed
 	// The pod has already been bound to the target node, so it should be pending for a short time only
 	PodPendingTimeout = 30 * time.Second
+
+	// CheckNodeHealthFinalizer is the finalizer used to ensure proper cleanup checker pods
+	CheckNodeHealthFinalizer = "checknodehealth.clusterhealthmonitor.azure.com/finalizer"
 
 	// CheckNodeHealthLabel is the label key used to identify check node health pods
 	CheckNodeHealthLabel = "clusterhealthmonitor.azure.com/checknodehealth"
@@ -68,6 +72,21 @@ func (r *CheckNodeHealthReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 
 	klog.InfoS("Reconciling CheckNodeHealth", "name", cnh.Name, "node", cnh.Spec.NodeRef.Name)
+
+	// Handle deletion
+	if cnh.DeletionTimestamp != nil {
+		return r.handleDeletion(ctx, cnh)
+	}
+
+	// Ensure finalizer is present
+	if !controllerutil.ContainsFinalizer(cnh, CheckNodeHealthFinalizer) {
+		controllerutil.AddFinalizer(cnh, CheckNodeHealthFinalizer)
+		if err := r.Update(ctx, cnh); err != nil {
+			klog.ErrorS(err, "Failed to add finalizer")
+			return ctrl.Result{}, err
+		}
+		klog.V(1).InfoS("Added finalizer, continuing with reconcile")
+	}
 
 	// Check if already completed - if so, cleanup pod and skip
 	// This case happens when pod deletion failed in determineCheckResult
@@ -221,5 +240,27 @@ func (r *CheckNodeHealthReconciler) handleCompletion(ctx context.Context, cnh *c
 	}
 
 	klog.V(1).InfoS("CheckNodeHealth completion cleanup finished")
+	return ctrl.Result{}, nil
+}
+
+// handleDeletion handles the deletion of CheckNodeHealth resources with proper cleanup
+func (r *CheckNodeHealthReconciler) handleDeletion(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth) (ctrl.Result, error) {
+	klog.InfoS("Handling CheckNodeHealth deletion", "name", cnh.Name)
+
+	// Clean up the pod
+	if err := r.cleanupPod(ctx, cnh); err != nil {
+		klog.ErrorS(err, "Failed to cleanup pod during deletion")
+		// Return error to retry - don't remove finalizer yet
+		return ctrl.Result{}, err
+	}
+
+	// Remove finalizer to allow deletion
+	controllerutil.RemoveFinalizer(cnh, CheckNodeHealthFinalizer)
+	if err := r.Update(ctx, cnh); err != nil {
+		klog.ErrorS(err, "Failed to remove finalizer")
+		return ctrl.Result{}, err
+	}
+
+	klog.InfoS("CheckNodeHealth deletion completed", "name", cnh.Name)
 	return ctrl.Result{}, nil
 }
