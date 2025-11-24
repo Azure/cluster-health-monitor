@@ -60,7 +60,7 @@ func (p *PodNetworkChecker) Run(ctx context.Context) (*checker.Result, error) {
 	service, err := p.clientset.CoreV1().Services(coreDNSNamespace).Get(ctx, "kube-dns", metav1.GetOptions{})
 	if err != nil {
 		klog.ErrorS(err, "Failed to get kube-dns service", "checker", "PodNetwork", "node", p.nodeName)
-		return nil, fmt.Errorf("Failed to get kube-dns service: %v", err)
+		return nil, fmt.Errorf("failed to get kube-dns service: %v", err)
 	}
 
 	clusterDNSIP := service.Spec.ClusterIP
