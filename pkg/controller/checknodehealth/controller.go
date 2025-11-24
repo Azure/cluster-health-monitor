@@ -28,7 +28,7 @@ const (
 
 	ConditionTypeHealthy = "Healthy"
 
-	// CheckNodeHealthLabel is the label key used to identify check node health pods
+	// CheckNodeHealthFinalizer is the finalizer used to ensure proper cleanup checker pods
 	CheckNodeHealthLabel = "clusterhealthmonitor.azure.com/checknodehealth"
 
 	// Condition reasons for CheckNodeHealth

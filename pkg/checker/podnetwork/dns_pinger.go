@@ -10,6 +10,7 @@ import (
 )
 
 // dnsPinger is an interface for DNS ping functionality.
+// It allows for easier testing/mocking.
 type dnsPinger interface {
 	// ping pings a DNS server by sending a query and waiting for any response
 	// It doesn't care about the actual DNS response content, only that a packet is received
@@ -38,7 +39,7 @@ func (p *simpleDNSPinger) ping(ctx context.Context, dnsSvcIP, domain string, que
 
 	// Ensure we use the correct address format
 	dnsAddr := dnsSvcIP
-	if !hasPort(dnsSvcIP) {
+	if !addressHasPort(dnsSvcIP) {
 		dnsAddr = net.JoinHostPort(dnsSvcIP, "53")
 	}
 
@@ -56,8 +57,8 @@ func (p *simpleDNSPinger) ping(ctx context.Context, dnsSvcIP, domain string, que
 	return nil
 }
 
-// hasPort checks if the address already includes a port
-func hasPort(addr string) bool {
+// addressHasPort checks if the address already includes a port
+func addressHasPort(addr string) bool {
 	_, _, err := net.SplitHostPort(addr)
 	return err == nil
 }

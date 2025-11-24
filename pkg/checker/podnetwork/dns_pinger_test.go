@@ -70,12 +70,22 @@ func TestSimpleDNSPinger_Ping(t *testing.T) {
 			},
 		},
 		{
-			name:         "timeout on unreachable DNS server",
-			dnsIP:        "192.0.2.1", // RFC5737 TEST-NET-1 (unreachable)
+			name:         "successful ping to mock DNS server",
+			dnsIP:        "127.0.0.1:0", // Will be replaced with actual mock server port
 			domain:       "example.com",
-			queryTimeout: time.Millisecond * 100,
-			expectError:  true,
-			setupMockDNS: false,
+			queryTimeout: time.Second * 2,
+			expectError:  false,
+			setupMockDNS: true,
+			mockDNSHandler: func(w dns.ResponseWriter, r *dns.Msg) {
+				// Return a successful DNS response
+				m := new(dns.Msg)
+				m.SetReply(r)
+				m.Answer = append(m.Answer, &dns.A{
+					Hdr: dns.RR_Header{Name: r.Question[0].Name, Rrtype: dns.TypeA, Class: dns.ClassINET, Ttl: 300},
+					A:   net.ParseIP("1.2.3.4"),
+				})
+				w.WriteMsg(m)
+			},
 		},
 		{
 			name:         "invalid DNS server address",

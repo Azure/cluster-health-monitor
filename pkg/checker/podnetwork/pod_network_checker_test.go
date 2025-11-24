@@ -66,7 +66,7 @@ func TestPodNetworkChecker(t *testing.T) {
 		},
 		{
 			name:        "Run with service error",
-			description: "should return Unhealthy when kube-dns service lookup fails",
+			description: "should return Unknown when kube-dns service lookup fails",
 			nodeName:    "node1",
 			pods: []corev1.Pod{
 				createCoreDNSPod("coredns-1", "node2", "10.0.1.2", true),
@@ -79,8 +79,8 @@ func TestPodNetworkChecker(t *testing.T) {
 					return true, nil, errors.New("service lookup error")
 				})
 			},
-			expectedStatus: checker.StatusUnhealthy,
-			expectError:    false,
+			expectedStatus: "",
+			expectError:    true,
 		},
 	}
 
