@@ -138,6 +138,11 @@ func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cn
 			klog.ErrorS(err, "Failed to mark as completed")
 			return ctrl.Result{}, err
 		}
+		// Step 2: Delete the pod
+		if err := r.cleanupPod(ctx, cnh); err != nil {
+			klog.ErrorS(err, "Failed to cleanup completed pod")
+			return ctrl.Result{}, err
+		}
 
 		// Step 2: Delete the pod
 		if err := r.cleanupPod(ctx, cnh); err != nil {
