@@ -3,6 +3,7 @@ package checknodehealth
 import (
 	"context"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -180,6 +181,56 @@ func TestReconcile(t *testing.T) {
 			expectError:        false,
 			expectedPodCreated: false, // Pod already exists
 			expectedPodDeleted: false, // Running pod should not be deleted
+		},
+		{
+			name: "deletes expired CheckNodeHealth CR",
+			existingCnh: &chmv1alpha1.CheckNodeHealth{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-check"},
+				Spec: chmv1alpha1.CheckNodeHealthSpec{
+					NodeRef: chmv1alpha1.NodeReference{Name: "test-node"},
+				},
+				Status: chmv1alpha1.CheckNodeHealthStatus{
+					// FinishedAt is more than 6 hours ago
+					FinishedAt: &metav1.Time{Time: time.Now().Add(-7 * time.Hour)},
+				},
+			},
+			expectedResult:     ctrl.Result{},
+			expectError:        false,
+			expectedPodCreated: false,
+			expectedPodDeleted: false,
+			validateFunc: func(t *testing.T, fakeClient client.Client, cnh *chmv1alpha1.CheckNodeHealth) {
+				// Verify CheckNodeHealth is deleted
+				updatedCnh := &chmv1alpha1.CheckNodeHealth{}
+				err := fakeClient.Get(context.Background(), client.ObjectKey{Name: cnh.Name}, updatedCnh)
+				if err == nil {
+					t.Error("Expected CheckNodeHealth to be deleted, but it still exists")
+				}
+			},
+		},
+		{
+			name: "does not delete recently completed CheckNodeHealth CR",
+			existingCnh: &chmv1alpha1.CheckNodeHealth{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-check"},
+				Spec: chmv1alpha1.CheckNodeHealthSpec{
+					NodeRef: chmv1alpha1.NodeReference{Name: "test-node"},
+				},
+				Status: chmv1alpha1.CheckNodeHealthStatus{
+					// FinishedAt is less than 6 hours ago
+					FinishedAt: &metav1.Time{Time: time.Now().Add(-5 * time.Hour)},
+				},
+			},
+			expectedResult:     ctrl.Result{},
+			expectError:        false,
+			expectedPodCreated: false,
+			expectedPodDeleted: false,
+			validateFunc: func(t *testing.T, fakeClient client.Client, cnh *chmv1alpha1.CheckNodeHealth) {
+				// Verify CheckNodeHealth still exists
+				updatedCnh := &chmv1alpha1.CheckNodeHealth{}
+				err := fakeClient.Get(context.Background(), client.ObjectKey{Name: cnh.Name}, updatedCnh)
+				if err != nil {
+					t.Errorf("Expected CheckNodeHealth to still exist, but got error: %v", err)
+				}
+			},
 		},
 	}
 
