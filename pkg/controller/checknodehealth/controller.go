@@ -18,6 +18,17 @@ import (
 )
 
 const (
+	// CRTTL is the time-to-live for completed CheckNodeHealth CRs.
+	// CRs that have been completed for longer than this duration will be deleted.
+	CRTTL = 6 * time.Hour
+
+	// SyncPeriod is the interval at which the controller reconciles all CheckNodeHealth resources.
+	// Set to 1 hour (CRTTL/6) to ensure reliable cleanup of expired CRs:
+	// - Expired CRs are cleaned up within 1 hour after expiration (max 17% delay)
+	// - Recovery from controller restarts within 1 hour
+	// - Acceptable overhead: only 6 reconciliations per CR over the 6-hour TTL period
+	SyncPeriod = 1 * time.Hour
+
 	// PodPendingTimeout is the maximum time a pod can stay in Pending state
 	// before being marked as failed
 	// The pod already has been being bond to the target node, so it should be pending for a short time only
@@ -79,6 +90,16 @@ func (r *CheckNodeHealthReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	// Handle deletion
 	if cnh.DeletionTimestamp != nil {
 		return r.handleDeletion(ctx, cnh)
+	}
+
+	// Check if the CR has expired (completed and older than TTL)
+	if isExpired(cnh) {
+		klog.InfoS("CheckNodeHealth has expired, deleting", "name", cnh.Name, "finishedAt", cnh.Status.FinishedAt)
+		if err := r.Delete(ctx, cnh); err != nil {
+			klog.ErrorS(err, "Failed to delete expired CheckNodeHealth")
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, nil
 	}
 
 	// Ensure finalizer is present
@@ -325,6 +346,14 @@ func (r *CheckNodeHealthReconciler) allResultsHealthy(cnh *chmv1alpha1.CheckNode
 
 func isCompleted(cnh *chmv1alpha1.CheckNodeHealth) bool {
 	return cnh.Status.FinishedAt != nil
+}
+
+// isExpired checks if the CR has been completed for longer than CRTTL
+func isExpired(cnh *chmv1alpha1.CheckNodeHealth) bool {
+	if !isCompleted(cnh) {
+		return false
+	}
+	return time.Since(cnh.Status.FinishedAt.Time) > CRTTL
 }
 
 // handleDeletion handles the deletion of CheckNodeHealth resources with proper cleanup

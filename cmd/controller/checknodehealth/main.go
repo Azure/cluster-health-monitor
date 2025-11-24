@@ -8,6 +8,7 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	ctrlmetricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
@@ -48,10 +49,14 @@ func main() {
 	klog.InfoS("Starting CheckNodeHealth Controller")
 
 	// Create manager
+	syncPeriod := checknodehealth.SyncPeriod
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme: scheme,
 		Metrics: ctrlmetricsserver.Options{
 			BindAddress: metricsAddr,
+		},
+		Cache: cache.Options{
+			SyncPeriod: &syncPeriod,
 		},
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
