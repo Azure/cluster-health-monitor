@@ -39,6 +39,10 @@ func NewPodNetworkChecker(clientset kubernetes.Interface, nodeName string) *PodN
 	}
 }
 
+func (p *PodNetworkChecker) Name() string {
+	return "PodNetwork"
+}
+
 // Run performs the PodNetwork health check
 func (p *PodNetworkChecker) Run(ctx context.Context) (*checker.Result, error) {
 	klog.InfoS("Starting PodNetwork check", "checker", "PodNetwork", "node", p.nodeName)
