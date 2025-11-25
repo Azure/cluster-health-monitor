@@ -12,7 +12,7 @@ import (
 	runtimeclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
-	"github.com/Azure/cluster-health-monitor/pkg/noderunner"
+	"github.com/Azure/cluster-health-monitor/pkg/nodecheckerrunner"
 )
 
 func init() {
@@ -48,7 +48,7 @@ func main() {
 	klog.InfoS("Retrieved node name from CR", "node", nodeName, "name", name)
 
 	// Run all checkers
-	if err := noderunner.Run(ctx, clientset, crClient, nodeName, name); err != nil {
+	if err := nodecheckerrunner.Run(ctx, clientset, crClient, nodeName, name); err != nil {
 		klog.ErrorS(err, "Failed to run node checkers")
 		os.Exit(1)
 	}

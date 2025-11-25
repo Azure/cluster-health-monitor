@@ -14,7 +14,7 @@ CONTROLLER_IMAGE_NAME ?= controller
 build: ## Build binaries.
 	go build -o bin/clusterhealthmonitor ./cmd/clusterhealthmonitor
 	go build -o bin/controller ./cmd/controller
-	go build -o bin/node-checker ./cmd/node-checker
+	go build -o bin/node-checker ./cmd/nodechecker
 
 .PHONY: run-clusterhealthmonitor
 run-clusterhealthmonitor: ## Run a controllers from your host.

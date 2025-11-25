@@ -1,4 +1,4 @@
-package noderunner
+package nodecheckerrunner
 
 import (
 	"context"
