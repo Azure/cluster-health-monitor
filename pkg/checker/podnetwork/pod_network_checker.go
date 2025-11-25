@@ -53,8 +53,8 @@ func (p *PodNetworkChecker) Run(ctx context.Context) (*checker.Result, error) {
 		return nil, fmt.Errorf("failed to get CoreDNS pods: %w", err)
 	}
 
-	if len(coreDNSPods) == 0 {
-		klog.InfoS("No eligible CoreDNS pods found for checking", "checker", "PodNetwork", "node", p.nodeName)
+	if len(coreDNSPods) <= 1 {
+		klog.InfoS("No eligible CoreDNS pods found for checking", "checker", "PodNetwork", "node", p.nodeName, "count", len(coreDNSPods))
 		return checker.Unknown("No CoreDNS pods available for pod-to-pod network checking"), nil
 	}
 
@@ -207,7 +207,7 @@ func (p *PodNetworkChecker) evaluateResults(totalPods, podToPodSuccess int, clus
 	if !clusterSvcSuccess && podToPodSuccess == 0 {
 		// Case 5: Complete network failure
 		klog.InfoS("PodNetwork check result: Unhealthy - complete network failure", "checker", "PodNetwork")
-		message = "Complete pod network failure detected; both pod-to-pod connectivity and cluster DNS service are unreachable"
+		message = "A complete pod network failure has been detected. Pod-to-pod connectivity and the cluster DNS service are both failing"
 	}
 
 	return checker.Unhealthy(ErrorCodeNetworkConnectivityFailed, message)
