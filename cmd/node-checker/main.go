@@ -9,7 +9,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/klog/v2"
-	chmclient "sigs.k8s.io/controller-runtime/pkg/client"
+	runtimeclient "sigs.k8s.io/controller-runtime/pkg/client"
 
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
 	"github.com/Azure/cluster-health-monitor/pkg/noderunner"
@@ -20,60 +20,76 @@ func init() {
 }
 
 func main() {
-	var nodeName string
-	var crName string
+	var name string
 
-	flag.StringVar(&nodeName, "node-name", "", "Name of the node to check (required)")
-	flag.StringVar(&crName, "cr-name", "", "Name of the CheckNodeHealth CR (required)")
+	flag.StringVar(&name, "name", "", "Name of the CheckNodeHealth resource (required)")
 	flag.Parse()
 	defer klog.Flush()
 
-	if nodeName == "" {
-		klog.ErrorS(nil, "Missing required flag: --node-name")
+	if name == "" {
+		klog.ErrorS(nil, "Missing required flag: --name")
 		os.Exit(1)
 	}
 
-	if crName == "" {
-		klog.ErrorS(nil, "Missing required flag: --cr-name")
-		os.Exit(1)
-	}
-
-	klog.InfoS("Starting node-checker", "node", nodeName, "cr", crName)
+	klog.InfoS("Starting node-checker", "name", name)
 
 	ctx := context.Background()
 
+	// Create Kubernetes clients
+	clientset, crClient, err := createClients()
+	if err != nil {
+		klog.ErrorS(err, "Failed to create Kubernetes clients")
+		os.Exit(1)
+	}
+
+	// Get the CheckNodeHealth CR to read the node name
+	cnh := &chmv1alpha1.CheckNodeHealth{}
+	if err := crClient.Get(ctx, runtimeclient.ObjectKey{Name: name}, cnh); err != nil {
+		klog.ErrorS(err, "Failed to get CheckNodeHealth CR")
+		os.Exit(1)
+	}
+
+	nodeName := cnh.Spec.NodeRef.Name
+	if nodeName == "" {
+		klog.ErrorS(nil, "NodeRef.Name is empty in CheckNodeHealth CR", "name", name)
+		os.Exit(1)
+	}
+
+	klog.InfoS("Retrieved node name from CR", "node", nodeName, "name", name)
+
+	// Run all checkers
+	if err := noderunner.Run(ctx, clientset, crClient, nodeName, name); err != nil {
+		klog.ErrorS(err, "Failed to run node checkers")
+		os.Exit(1)
+	}
+
+	klog.InfoS("Node-checker completed successfully", "node", nodeName, "name", name)
+}
+
+// createClients creates and returns both Kubernetes clientset and controller-runtime client
+func createClients() (kubernetes.Interface, runtimeclient.Client, error) {
 	// Create in-cluster Kubernetes client
 	config, err := rest.InClusterConfig()
 	if err != nil {
-		klog.ErrorS(err, "Failed to get in-cluster config")
-		os.Exit(10) // Exit code 10 indicates API server connection failure
+		return nil, nil, err
 	}
 
 	// Create Kubernetes clientset for checker
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
-		klog.ErrorS(err, "Failed to create Kubernetes clientset")
-		os.Exit(10)
+		return nil, nil, err
 	}
 
 	// Create controller-runtime client for CR updates
 	scheme := runtime.NewScheme()
 	if err := chmv1alpha1.AddToScheme(scheme); err != nil {
-		klog.ErrorS(err, "Failed to add CHM scheme")
-		os.Exit(10)
+		return nil, nil, err
 	}
 
-	chmClient, err := chmclient.New(config, chmclient.Options{Scheme: scheme})
+	crClient, err := runtimeclient.New(config, runtimeclient.Options{Scheme: scheme})
 	if err != nil {
-		klog.ErrorS(err, "Failed to create controller-runtime client")
-		os.Exit(10)
+		return nil, nil, err
 	}
 
-	// Run all checkers
-	if err := noderunner.Run(ctx, clientset, chmClient, nodeName, crName); err != nil {
-		klog.ErrorS(err, "Failed to run node checkers")
-		os.Exit(1)
-	}
-
-	klog.InfoS("Node-checker completed successfully", "node", nodeName, "cr", crName)
+	return clientset, crClient, nil
 }
