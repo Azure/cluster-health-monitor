@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -44,6 +45,7 @@ func TestReconcile(t *testing.T) {
 		name                string
 		existingCnh         *chmv1alpha1.CheckNodeHealth
 		existingPod         *corev1.Pod
+		triggerDeletion     bool // If true, call Delete() before Reconcile()
 		expectedResult      ctrl.Result
 		expectError         bool
 		expectedPodCreated  bool
@@ -181,6 +183,88 @@ func TestReconcile(t *testing.T) {
 			expectedPodCreated: false, // Pod already exists
 			expectedPodDeleted: false, // Running pod should not be deleted
 		},
+		{
+			name: "adds finalizer to new CheckNodeHealth",
+			existingCnh: &chmv1alpha1.CheckNodeHealth{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-finalizer"},
+				Spec: chmv1alpha1.CheckNodeHealthSpec{
+					NodeRef: chmv1alpha1.NodeReference{Name: "test-node"},
+				},
+			},
+			triggerDeletion:     false,
+			expectedResult:      ctrl.Result{},
+			expectError:         false,
+			expectedPodCreated:  true, // Pod is created after finalizer is added
+			expectedPodDeleted:  false,
+			expectedPodNodeName: "test-node",
+			expectedPodImage:    "ubuntu:latest",
+			validateFunc: func(t *testing.T, fakeClient client.Client, cnh *chmv1alpha1.CheckNodeHealth) {
+				// Fetch the updated CheckNodeHealth to verify finalizer
+				updatedCnh := &chmv1alpha1.CheckNodeHealth{}
+				err := fakeClient.Get(context.Background(), client.ObjectKey{Name: cnh.Name}, updatedCnh)
+				if err != nil {
+					t.Errorf("Failed to get updated CheckNodeHealth: %v", err)
+					return
+				}
+
+				// Verify finalizer was added
+				hasFinalizer := false
+				for _, f := range updatedCnh.Finalizers {
+					if f == CheckNodeHealthFinalizer {
+						hasFinalizer = true
+						break
+					}
+				}
+
+				if !hasFinalizer {
+					t.Errorf("Expected finalizer %q to be added, but it wasn't. Finalizers: %v",
+						CheckNodeHealthFinalizer, updatedCnh.Finalizers)
+				}
+			},
+		},
+		{
+			name: "removes finalizer after successful pod cleanup on deletion",
+			existingCnh: &chmv1alpha1.CheckNodeHealth{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:       "test-deletion",
+					Finalizers: []string{CheckNodeHealthFinalizer},
+				},
+				Spec: chmv1alpha1.CheckNodeHealthSpec{
+					NodeRef: chmv1alpha1.NodeReference{Name: "test-node"},
+				},
+			},
+			existingPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "check-node-health-test-deletion",
+					Namespace: "default",
+					Labels: map[string]string{
+						CheckNodeHealthLabel: "test-deletion",
+					},
+				},
+				Spec: corev1.PodSpec{
+					Containers: []corev1.Container{
+						{
+							Name:  "checker",
+							Image: "ubuntu:latest",
+						},
+					},
+				},
+				Status: corev1.PodStatus{Phase: corev1.PodRunning},
+			},
+			triggerDeletion:    true, // Call Delete() to set DeletionTimestamp
+			expectedResult:     ctrl.Result{},
+			expectError:        false,
+			expectedPodCreated: false,
+			expectedPodDeleted: true,
+			validateFunc: func(t *testing.T, fakeClient client.Client, cnh *chmv1alpha1.CheckNodeHealth) {
+				// The CheckNodeHealth should be fully deleted now
+				deletedCnh := &chmv1alpha1.CheckNodeHealth{}
+				err := fakeClient.Get(context.Background(), client.ObjectKey{Name: cnh.Name}, deletedCnh)
+				if !apierrors.IsNotFound(err) {
+					t.Error("Expected CheckNodeHealth to be fully deleted after finalizer removal, but it still exists")
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -200,9 +284,20 @@ func TestReconcile(t *testing.T) {
 				}
 			}
 
+			// Trigger deletion if requested (sets DeletionTimestamp)
+			if tt.triggerDeletion && tt.existingCnh != nil {
+				if err := fakeClient.Delete(ctx, tt.existingCnh); err != nil {
+					t.Fatalf("Failed to delete CheckNodeHealth: %v", err)
+				}
+			}
+
 			// Execute reconcile
+			cnhName := "test-check"
+			if tt.existingCnh != nil {
+				cnhName = tt.existingCnh.Name
+			}
 			req := ctrl.Request{
-				NamespacedName: types.NamespacedName{Name: "test-check"},
+				NamespacedName: types.NamespacedName{Name: cnhName},
 			}
 			result, err := reconciler.Reconcile(ctx, req)
 
@@ -215,7 +310,7 @@ func TestReconcile(t *testing.T) {
 			}
 
 			// Verify pod creation/deletion
-			podName := "check-node-health-test-check"
+			podName := "check-node-health-" + cnhName
 			pod := &corev1.Pod{}
 			err = fakeClient.Get(ctx, client.ObjectKey{
 				Name:      podName,
