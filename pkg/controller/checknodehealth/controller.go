@@ -233,7 +233,6 @@ func (r *CheckNodeHealthReconciler) markCompleted(ctx context.Context, cnh *chmv
 	now := metav1.Now()
 	cnh.Status.FinishedAt = &now
 
-	// Determine the overall health status based on the new logic
 	healthyStatus, reason, message := r.determineHealthyCondition(cnh, pod)
 
 	cnh.Status.Conditions = []metav1.Condition{
@@ -275,11 +274,6 @@ func (r *CheckNodeHealthReconciler) markFailed(ctx context.Context, cnh *chmv1al
 
 // determineHealthyCondition determines the Healthy condition status based on pod exit codes and Results
 func (r *CheckNodeHealthReconciler) determineHealthyCondition(cnh *chmv1alpha1.CheckNodeHealth, pod *corev1.Pod) (metav1.ConditionStatus, string, string) {
-	// Rule 1: Check if any container exit code == 10, or any Result.Status == "Unknown"
-	if r.hasContainerExitCode10(pod) {
-		return metav1.ConditionUnknown, ReasonCheckUnknown, "Health check pod failed to connect to API server to update status"
-	}
-
 	if r.hasUnknownResult(cnh) {
 		return metav1.ConditionUnknown, ReasonCheckUnknown, "At least one health check result has Unknown status"
 	}
@@ -296,16 +290,6 @@ func (r *CheckNodeHealthReconciler) determineHealthyCondition(cnh *chmv1alpha1.C
 
 	// Default case - should not happen if logic is correct
 	return metav1.ConditionUnknown, ReasonCheckUnknown, "Unable to determine health status"
-}
-
-// hasContainerExitCode10 checks if any container in the pod exited with code 10
-func (r *CheckNodeHealthReconciler) hasContainerExitCode10(pod *corev1.Pod) bool {
-	for _, containerStatus := range pod.Status.ContainerStatuses {
-		if containerStatus.State.Terminated != nil && containerStatus.State.Terminated.ExitCode == 10 {
-			return true
-		}
-	}
-	return false
 }
 
 // hasUnknownResult checks if any result has Unknown status
