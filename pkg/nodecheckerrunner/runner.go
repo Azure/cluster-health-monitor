@@ -29,19 +29,34 @@ type NodeChecker interface {
 	Run(ctx context.Context) (*checker.Result, error)
 }
 
+// Runner executes node health checkers and updates CheckNodeHealth CR
+type Runner struct {
+	chmClient chmclient.Client
+	nodeName  string
+	crName    string
+	checkers  []NodeChecker
+}
+
+// NewRunner creates a new Runner instance
+func NewRunner(clientset kubernetes.Interface, chmClient chmclient.Client, nodeName, crName string) *Runner {
+	return &Runner{
+		chmClient: chmClient,
+		nodeName:  nodeName,
+		crName:    crName,
+		checkers:  initializeCheckers(clientset, nodeName),
+	}
+}
+
 // Run executes all node health checkers and updates the CheckNodeHealth CR
-func Run(ctx context.Context, clientset kubernetes.Interface, chmClient chmclient.Client, nodeName, crName string) error {
-	// Initialize checkers. There are not much checker to initialize, so we do it inline here.
-	// We consider refactoring this into configurable way if the number of checkers grows significantly or we want customer customization.
-	checkers := initializeCheckers(clientset, nodeName)
-	klog.InfoS("Initialized checkers", "count", len(checkers))
+func (r *Runner) Run(ctx context.Context) error {
+	klog.InfoS("Initialized checkers", "count", len(r.checkers))
 
 	// Run all checkers
-	if err := runCheckers(ctx, chmClient, crName, checkers); err != nil {
+	if err := r.runCheckers(ctx); err != nil {
 		return fmt.Errorf("failed to run checkers: %w", err)
 	}
 
-	klog.InfoS("All checkers completed successfully", "cr", crName, "checkers", len(checkers))
+	klog.InfoS("All checkers completed successfully", "cr", r.crName, "checkers", len(r.checkers))
 	return nil
 }
 
@@ -53,11 +68,11 @@ func initializeCheckers(clientset kubernetes.Interface, nodeName string) []NodeC
 }
 
 // runCheckers runs all checkers sequentially and updates the CR once with all results
-func runCheckers(ctx context.Context, chmClient chmclient.Client, crName string, checkers []NodeChecker) error {
+func (r *Runner) runCheckers(ctx context.Context) error {
 	results := make(map[string]*checker.Result)
 
 	// Run all checkers and collect results
-	for _, chk := range checkers {
+	for _, chk := range r.checkers {
 		klog.InfoS("Running checker", "checker", chk.Name())
 
 		var result *checker.Result
@@ -87,20 +102,20 @@ func runCheckers(ctx context.Context, chmClient chmclient.Client, crName string,
 	}
 
 	// Update CheckNodeHealth CR with all results at once
-	if err := updateCheckNodeHealthStatus(ctx, chmClient, crName, results); err != nil {
+	if err := r.updateCheckNodeHealthStatus(ctx, results); err != nil {
 		klog.ErrorS(err, "Failed to update CheckNodeHealth status")
 		return fmt.Errorf("failed to update CR status: %w", err)
 	}
 
-	klog.InfoS("Successfully updated CheckNodeHealth status", "cr", crName)
+	klog.InfoS("Successfully updated CheckNodeHealth status", "cr", r.crName)
 	return nil
 }
 
 // updateCheckNodeHealthStatus updates the CheckNodeHealth CR with all checker results
-func updateCheckNodeHealthStatus(ctx context.Context, chmClient chmclient.Client, crName string, results map[string]*checker.Result) error {
+func (r *Runner) updateCheckNodeHealthStatus(ctx context.Context, results map[string]*checker.Result) error {
 	// Get the CheckNodeHealth CR
 	cnh := &chmv1alpha1.CheckNodeHealth{}
-	if err := chmClient.Get(ctx, chmclient.ObjectKey{Name: crName}, cnh); err != nil {
+	if err := r.chmClient.Get(ctx, chmclient.ObjectKey{Name: r.crName}, cnh); err != nil {
 		return fmt.Errorf("failed to get CheckNodeHealth CR: %w", err)
 	}
 
@@ -116,7 +131,7 @@ func updateCheckNodeHealthStatus(ctx context.Context, chmClient chmclient.Client
 	}
 
 	// Update the status once with all results
-	if err := chmClient.Status().Update(ctx, cnh); err != nil {
+	if err := r.chmClient.Status().Update(ctx, cnh); err != nil {
 		return fmt.Errorf("failed to update status: %w", err)
 	}
 
