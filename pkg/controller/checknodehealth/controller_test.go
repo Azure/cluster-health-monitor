@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -259,7 +260,7 @@ func TestReconcile(t *testing.T) {
 				// The CheckNodeHealth should be fully deleted now
 				deletedCnh := &chmv1alpha1.CheckNodeHealth{}
 				err := fakeClient.Get(context.Background(), client.ObjectKey{Name: cnh.Name}, deletedCnh)
-				if err == nil {
+				if !apierrors.IsNotFound(err) {
 					t.Error("Expected CheckNodeHealth to be fully deleted after finalizer removal, but it still exists")
 				}
 			},
