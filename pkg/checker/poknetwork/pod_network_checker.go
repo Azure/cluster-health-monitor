@@ -170,38 +170,31 @@ func (p *PodNetworkChecker) evaluateResults(totalPods, podToPodSuccess int, clus
 		"clusterDNSSuccess", clusterSvcSuccess)
 
 	// Logic matrix implementation:
-	// 1. If only one or less one available pod, return Unknown
-	// 2. If cluster DNS service works AND at least one pod-to-pod test succeeds → Healthy
-	// 3. If cluster DNS service works BUT all pod-to-pod tests fail → Unhealthy (pod connectivity issues)
-	// 4. If cluster DNS service fails BUT at least one pod-to-pod test succeeds → Unhealthy (service issues)
-	// 5. If cluster DNS service fails AND all pod-to-pod tests fail → Unhealthy (complete network failure)
-
-	// Case 1: If only one available pod, return Unknown (insufficient data for conclusive test)
-	if totalPods <= 1 {
-		klog.InfoS("PodNetwork check result: Unknown - only one CoreDNS pod available, insufficient for conclusive network test", "checker", "PodNetwork")
-		return checker.Unknown("Only less one CoreDNS pod available, insufficient for conclusive pod-to-pod network checking")
-	}
+	// 1. If cluster DNS service works AND at least one pod-to-pod test succeeds → Healthy
+	// 2. If cluster DNS service works BUT all pod-to-pod tests fail → Unhealthy (pod connectivity issues)
+	// 3. If cluster DNS service fails BUT at least one pod-to-pod test succeeds → Unhealthy (service issues)
+	// 4. If cluster DNS service fails AND all pod-to-pod tests fail → Unhealthy (complete network failure)
 
 	if clusterSvcSuccess && podToPodSuccess > 0 {
-		// Case 2: Both cluster DNS and pod-to-pod connectivity work
+		// Case 1: Both cluster DNS and pod-to-pod connectivity work
 		klog.InfoS("PodNetwork check result: Healthy - both cluster DNS and pod-to-pod connectivity working", "checker", "PodNetwork")
 		return checker.Healthy()
 	}
 
 	var message string
 	if clusterSvcSuccess && podToPodSuccess == 0 {
-		// Case 3: Pod connectivity issues but service works
+		// Case 2: Pod connectivity issues but service works
 		klog.InfoS("PodNetwork check result: Unhealthy - pod connectivity failure", "checker", "PodNetwork")
 		message = "Pod-to-pod network connectivity failure detected; cluster DNS service is reachable"
 	}
 	if !clusterSvcSuccess && podToPodSuccess > 0 {
-		// Case 4: Service issues but pod connectivity works
+		// Case 3: Service issues but pod connectivity works
 		klog.InfoS("PodNetwork check result: Unhealthy - cluster DNS service failure", "checker", "PodNetwork")
 		message = "Cluster DNS service connectivity failure detected; pod-to-pod network connectivity is functioning"
 	}
 
 	if !clusterSvcSuccess && podToPodSuccess == 0 {
-		// Case 5: Complete network failure
+		// Case 4: Complete network failure
 		klog.InfoS("PodNetwork check result: Unhealthy - complete network failure", "checker", "PodNetwork")
 		message = "A complete pod network failure has been detected. Pod-to-pod connectivity and the cluster DNS service are both failing"
 	}
