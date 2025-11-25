@@ -6,6 +6,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -202,7 +203,7 @@ func TestReconcile(t *testing.T) {
 				// Verify CheckNodeHealth is deleted
 				updatedCnh := &chmv1alpha1.CheckNodeHealth{}
 				err := fakeClient.Get(context.Background(), client.ObjectKey{Name: cnh.Name}, updatedCnh)
-				if err == nil {
+				if !apierrors.IsNotFound(err) {
 					t.Error("Expected CheckNodeHealth to be deleted, but it still exists")
 				}
 			},
