@@ -219,7 +219,6 @@ func TestRunCheckers(t *testing.T) {
 
 			// Create runner and run the checkers
 			runner := &Runner{
-				clientset: nil, // not needed for this test
 				chmClient: fakeClient,
 				nodeName:  "test-node",
 				crName:    "test-cr",
