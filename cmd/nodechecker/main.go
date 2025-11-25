@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"os"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -43,12 +44,17 @@ func main() {
 		os.Exit(1)
 	}
 
-	nodeName := readNodeName(ctx, crClient, name)
+	nodeName, err := readNodeName(ctx, crClient, name)
+	if err != nil {
+		klog.ErrorS(err, "Failed to read node name")
+		os.Exit(1)
+	}
 
 	klog.InfoS("Retrieved node name from CR", "node", nodeName, "name", name)
 
-	// Run all checkers
-	if err := nodecheckerrunner.Run(ctx, clientset, crClient, nodeName, name); err != nil {
+	// Create runner and execute all checkers
+	runner := nodecheckerrunner.NewRunner(clientset, crClient, nodeName, name)
+	if err := runner.Run(ctx); err != nil {
 		klog.ErrorS(err, "Failed to run node checkers")
 		os.Exit(1)
 	}
@@ -56,41 +62,37 @@ func main() {
 	klog.InfoS("Node-checker completed successfully", "node", nodeName, "name", name)
 }
 
-func readNodeName(ctx context.Context, crClient runtimeclient.Client, name string) string {
+func readNodeName(ctx context.Context, crClient runtimeclient.Client, name string) (string, error) {
 	cnh := &chmv1alpha1.CheckNodeHealth{}
 	if err := crClient.Get(ctx, runtimeclient.ObjectKey{Name: name}, cnh); err != nil {
-		klog.ErrorS(err, "Failed to get CheckNodeHealth CR")
-		os.Exit(1)
+		return "", err
 	}
 
 	nodeName := cnh.Spec.NodeRef.Name
 	if nodeName == "" {
-		klog.ErrorS(nil, "NodeRef.Name is empty in CheckNodeHealth CR", "name", name)
-		os.Exit(1)
+		return "", fmt.Errorf("NodeRef.Name is empty in CheckNodeHealth CR")
 	}
-	return nodeName
+	return nodeName, nil
 }
 
 // createClients creates and returns both Kubernetes clientset and controller-runtime client
 func createClients() (kubernetes.Interface, runtimeclient.Client, error) {
-	// Create in-cluster Kubernetes client
 	config, err := rest.InClusterConfig()
 	if err != nil {
 		return nil, nil, err
 	}
 
-	// Create Kubernetes clientset for checker
+	// Create Kubernetes clientset for native Kubernetes resources
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	// Create controller-runtime client for CR updates
+	// Create controller-runtime client for CheckNodeHealth CRD
 	scheme := runtime.NewScheme()
 	if err := chmv1alpha1.AddToScheme(scheme); err != nil {
 		return nil, nil, err
 	}
-
 	crClient, err := runtimeclient.New(config, runtimeclient.Options{Scheme: scheme})
 	if err != nil {
 		return nil, nil, err

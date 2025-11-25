@@ -217,15 +217,20 @@ func TestRunCheckers(t *testing.T) {
 
 			ctx := context.Background()
 
-			// Run the checkers
-			err := runCheckers(ctx, fakeClient, "test-cr", tt.checkers)
+			// Create runner and run the checkers
+			runner := &Runner{
+				clientset: nil, // not needed for this test
+				chmClient: fakeClient,
+				nodeName:  "test-node",
+				crName:    "test-cr",
+				checkers:  tt.checkers,
+			}
+			err := runner.runCheckers(ctx)
 
 			// Check error expectation
 			if (err != nil) != tt.expectError {
 				t.Errorf("Expected error: %v, got error: %v", tt.expectError, err)
-			}
-
-			// Get updated CR
+			} // Get updated CR
 			updatedCR := &chmv1alpha1.CheckNodeHealth{}
 			if err := fakeClient.Get(ctx, client.ObjectKey{Name: "test-cr"}, updatedCR); err != nil {
 				t.Fatalf("Failed to get updated CR: %v", err)
