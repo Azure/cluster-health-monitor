@@ -9,6 +9,8 @@ const (
 	StatusUnhealthy Status = "Unhealthy"
 	// StatusSkipped indicates the test was skipped by the checker.
 	StatusSkipped Status = "Skipped"
+	// StatusUnknown indicates the test result is inconclusive.
+	StatusUnknown Status = "Unknown"
 )
 
 // Result represents the result of a health check.
@@ -54,6 +56,15 @@ func Unhealthy(code, message string) *Result {
 func Skipped(message string) *Result {
 	return &Result{
 		Status: StatusSkipped,
+		Detail: Detail{
+			Message: message,
+		},
+	}
+}
+
+func Unknown(message string) *Result {
+	return &Result{
+		Status: StatusUnknown,
 		Detail: Detail{
 			Message: message,
 		},
