@@ -3,7 +3,9 @@ package noderunner
 import (
 	"context"
 	"fmt"
+	"time"
 
+	"github.com/avast/retry-go/v4"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 	chmclient "sigs.k8s.io/controller-runtime/pkg/client"
@@ -11,6 +13,14 @@ import (
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
 	"github.com/Azure/cluster-health-monitor/pkg/checker"
 	"github.com/Azure/cluster-health-monitor/pkg/checker/podnetwork"
+)
+
+const (
+	// maxRetryAttempts is the maximum number of retry attempts for each checker
+	maxRetryAttempts = 3
+
+	// retryDelay is the delay between retry attempts
+	retryDelay = 3 * time.Second
 )
 
 // NodeChecker represents a health checker that can be run on a node
@@ -42,52 +52,70 @@ func initializeCheckers(clientset kubernetes.Interface, nodeName string) []NodeC
 	return checkers
 }
 
-// runCheckers runs all checkers sequentially and updates the CR after each one
+// runCheckers runs all checkers sequentially and updates the CR once with all results
 func runCheckers(ctx context.Context, chmClient chmclient.Client, crName string, checkers []NodeChecker) error {
+	results := make(map[string]*checker.Result)
+
+	// Run all checkers and collect results
 	for _, chk := range checkers {
 		klog.InfoS("Running checker", "checker", chk.Name())
 
-		// Run the checker
-		result, err := chk.Run(ctx)
+		var result *checker.Result
+
+		// Retry with configured attempts and delay
+		err := retry.Do(
+			func() error {
+				var runErr error
+				result, runErr = chk.Run(ctx)
+				return runErr
+			},
+			retry.Attempts(maxRetryAttempts),
+			retry.Delay(retryDelay),
+			retry.OnRetry(func(n uint, err error) {
+				klog.InfoS("Checker attempt failed", "checker", chk.Name(), "attempt", n+1, "error", err)
+			}),
+		)
+
 		if err != nil {
-			klog.ErrorS(err, "Checker returned error", "checker", chk.Name())
-			return fmt.Errorf("checker %s failed: %w", chk.Name(), err)
+			klog.ErrorS(err, "Checker failed after retries", "checker", chk.Name())
+			// Record as Unknown and continue with other checkers
+			result = checker.Unknown(fmt.Sprintf("Checker failed after %d attempts: %v", maxRetryAttempts, err))
 		}
 
 		klog.InfoS("Checker completed", "checker", chk.Name(), "status", result.Status, "message", result.Detail.Message)
-
-		// Update CheckNodeHealth CR with the result
-		if err := updateCheckNodeHealthStatus(ctx, chmClient, crName, chk.Name(), result); err != nil {
-			klog.ErrorS(err, "Failed to update CheckNodeHealth status", "checker", chk.Name())
-			return fmt.Errorf("failed to update CR status for checker %s: %w", chk.Name(), err)
-		}
-
-		klog.InfoS("Successfully updated CheckNodeHealth status", "cr", crName, "checker", chk.Name())
+		results[chk.Name()] = result
 	}
 
+	// Update CheckNodeHealth CR with all results at once
+	if err := updateCheckNodeHealthStatus(ctx, chmClient, crName, results); err != nil {
+		klog.ErrorS(err, "Failed to update CheckNodeHealth status")
+		return fmt.Errorf("failed to update CR status: %w", err)
+	}
+
+	klog.InfoS("Successfully updated CheckNodeHealth status", "cr", crName)
 	return nil
 }
 
-// updateCheckNodeHealthStatus updates the CheckNodeHealth CR with the checker result
-func updateCheckNodeHealthStatus(ctx context.Context, chmClient chmclient.Client, crName, checkerName string, result *checker.Result) error {
+// updateCheckNodeHealthStatus updates the CheckNodeHealth CR with all checker results
+func updateCheckNodeHealthStatus(ctx context.Context, chmClient chmclient.Client, crName string, results map[string]*checker.Result) error {
 	// Get the CheckNodeHealth CR
 	cnh := &chmv1alpha1.CheckNodeHealth{}
 	if err := chmClient.Get(ctx, chmclient.ObjectKey{Name: crName}, cnh); err != nil {
 		return fmt.Errorf("failed to get CheckNodeHealth CR: %w", err)
 	}
 
-	// Convert checker.Result to CheckResult
-	checkResult := chmv1alpha1.CheckResult{
-		Name:      checkerName,
-		Status:    convertStatus(result.Status),
-		Message:   result.Detail.Message,
-		ErrorCode: result.Detail.Code,
+	// Convert all checker results to CheckResults
+	for checkerName, result := range results {
+		checkResult := chmv1alpha1.CheckResult{
+			Name:      checkerName,
+			Status:    convertStatus(result.Status),
+			Message:   result.Detail.Message,
+			ErrorCode: result.Detail.Code,
+		}
+		cnh.Status.Results = append(cnh.Status.Results, checkResult)
 	}
 
-	// Append to Results
-	cnh.Status.Results = append(cnh.Status.Results, checkResult)
-
-	// Update the status
+	// Update the status once with all results
 	if err := chmClient.Status().Update(ctx, cnh); err != nil {
 		return fmt.Errorf("failed to update status: %w", err)
 	}

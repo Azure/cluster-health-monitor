@@ -33,6 +33,7 @@ func main() {
 
 	klog.InfoS("Starting node-checker", "name", name)
 
+	// We don't need a timeout context here because the controller will handle timeouts
 	ctx := context.Background()
 
 	// Create Kubernetes clients
@@ -42,7 +43,20 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Get the CheckNodeHealth CR to read the node name
+	nodeName := readNodeName(ctx, crClient, name)
+
+	klog.InfoS("Retrieved node name from CR", "node", nodeName, "name", name)
+
+	// Run all checkers
+	if err := noderunner.Run(ctx, clientset, crClient, nodeName, name); err != nil {
+		klog.ErrorS(err, "Failed to run node checkers")
+		os.Exit(1)
+	}
+
+	klog.InfoS("Node-checker completed successfully", "node", nodeName, "name", name)
+}
+
+func readNodeName(ctx context.Context, crClient runtimeclient.Client, name string) string {
 	cnh := &chmv1alpha1.CheckNodeHealth{}
 	if err := crClient.Get(ctx, runtimeclient.ObjectKey{Name: name}, cnh); err != nil {
 		klog.ErrorS(err, "Failed to get CheckNodeHealth CR")
@@ -54,16 +68,7 @@ func main() {
 		klog.ErrorS(nil, "NodeRef.Name is empty in CheckNodeHealth CR", "name", name)
 		os.Exit(1)
 	}
-
-	klog.InfoS("Retrieved node name from CR", "node", nodeName, "name", name)
-
-	// Run all checkers
-	if err := noderunner.Run(ctx, clientset, crClient, nodeName, name); err != nil {
-		klog.ErrorS(err, "Failed to run node checkers")
-		os.Exit(1)
-	}
-
-	klog.InfoS("Node-checker completed successfully", "node", nodeName, "name", name)
+	return nodeName
 }
 
 // createClients creates and returns both Kubernetes clientset and controller-runtime client
