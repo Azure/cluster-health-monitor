@@ -17,10 +17,9 @@ import (
 )
 
 const (
-	// PodPendingTimeout is the maximum time a pod can stay in Pending state
-	// before being marked as failed
-	// The pod has already been bound to the target node, so it should be pending for a short time only
-	PodPendingTimeout = 30 * time.Second
+	// PodTimeout is the maximum time the checker pod can run before being marked as completed.
+	// This applies to all non-terminal phases (Pending, Running, etc.).
+	PodTimeout = 30 * time.Second
 
 	// CheckNodeHealthFinalizer is the finalizer used to ensure proper cleanup checker pods
 	CheckNodeHealthFinalizer = "checknodehealth.clusterhealthmonitor.azure.com/finalizer"
@@ -108,59 +107,46 @@ func (r *CheckNodeHealthReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, err
 	}
 
+	if err := r.updatePodstartCheckerResult(ctx, cnh, pod); err != nil {
+		klog.ErrorS(err, "Failed to update PodStartup check result")
+		return ctrl.Result{}, err
+	}
+
 	// Determine the overall result based on pod status
 	return r.determineCheckResult(ctx, cnh, pod)
 }
 
 func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, pod *corev1.Pod) (ctrl.Result, error) {
-	// Check if pod succeeded or failed (completed)
-	if pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
-		klog.InfoS("Health check pod completed, marking as completed", "phase", pod.Status.Phase)
+	// Check if pod succeeded or failed (completed), or if it's timed out
+	isCompleted := pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed
+	isTimeout := !isCompleted && r.isPodTimeout(pod)
 
-		// update status first, then cleanup pod. The order is important.
-		// If we clean up the pod first and then update status as completed, when the reconcile runs again, it cannot find the pod and will create a new one.
-		// Step 1: Mark as completed first
+	if isCompleted || isTimeout {
+		if isCompleted {
+			klog.InfoS("Health check pod completed, marking as completed", "phase", pod.Status.Phase)
+		} else {
+			klog.InfoS("Health check pod timeout, marking as completed", "timeout", PodTimeout, "phase", pod.Status.Phase)
+		}
+
+		// Step 1: Mark as completed (determines health based on Results)
 		if err := r.markCompleted(ctx, cnh); err != nil {
 			klog.ErrorS(err, "Failed to mark as completed")
 			return ctrl.Result{}, err
 		}
+
 		// Step 2: Delete the pod
 		if err := r.cleanupPod(ctx, cnh); err != nil {
-			klog.ErrorS(err, "Failed to cleanup completed pod")
-			return ctrl.Result{}, err
+			klog.ErrorS(err, "Failed to cleanup pod, will retry")
+			return ctrl.Result{}, nil
 		}
 
+		klog.InfoS("Successfully marked as completed and deleted pod")
 		return ctrl.Result{}, nil
 	}
 
-	if pod.Status.Phase == corev1.PodPending {
-		if r.isPodPendingTimeout(pod) {
-			message := fmt.Sprintf("Pod stuck in Pending state for more than %v", PodPendingTimeout)
-			klog.InfoS("Health check pod pending timeout, marking as failed", "timeout", PodPendingTimeout)
-
-			// update status first, then cleanup pod. The order is important.
-			// If we clean up the pod first and then update status as failed, when the reconcile runs again, it cannot find the pod and will create a new one.
-			// Step 1: Mark as failed first
-			if err := r.markFailed(ctx, cnh, ReasonPodStartupTimeout, message); err != nil {
-				klog.ErrorS(err, "Failed to mark as failed")
-				return ctrl.Result{}, err
-			}
-
-			// Step 2: Delete the stuck pod
-			if err := r.cleanupPod(ctx, cnh); err != nil {
-				klog.ErrorS(err, "Failed to cleanup timed out pod")
-				return ctrl.Result{}, err
-			}
-
-			return ctrl.Result{}, nil
-		}
-		klog.V(1).InfoS("Health check pod still pending", "phase", pod.Status.Phase)
-		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
-	}
-
-	// Pod is still running, will reconcile again when pod status changes
-	klog.V(1).InfoS("Health check pod not finished yet", "phase", pod.Status.Phase)
-	return ctrl.Result{}, nil
+	// Other pod phases (Unknown, etc.)
+	klog.V(1).InfoS("Health check pod in unexpected phase", "phase", pod.Status.Phase)
+	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 }
 
 func (r *CheckNodeHealthReconciler) markStarted(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth) error {
@@ -190,14 +176,14 @@ func (r *CheckNodeHealthReconciler) markStarted(ctx context.Context, cnh *chmv1a
 func (r *CheckNodeHealthReconciler) markCompleted(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth) error {
 	now := metav1.Now()
 	cnh.Status.FinishedAt = &now
-	// TODO: In real implementation, set condition based on actual check results
+	healthyStatus, reason, message := r.determineHealthyCondition(cnh)
 	cnh.Status.Conditions = []metav1.Condition{
 		{
 			Type:               ConditionTypeHealthy,
-			Status:             metav1.ConditionTrue,
+			Status:             healthyStatus,
 			LastTransitionTime: now,
-			Reason:             ReasonCheckPassed,
-			Message:            "Health checks completed successfully",
+			Reason:             reason,
+			Message:            message,
 		},
 	}
 
@@ -206,6 +192,62 @@ func (r *CheckNodeHealthReconciler) markCompleted(ctx context.Context, cnh *chmv
 	}
 
 	return nil
+}
+
+// determineHealthyCondition determines the Healthy condition status based on check results
+func (r *CheckNodeHealthReconciler) determineHealthyCondition(cnh *chmv1alpha1.CheckNodeHealth) (metav1.ConditionStatus, string, string) {
+	if r.hasUnknownResult(cnh) {
+		return metav1.ConditionUnknown, ReasonCheckUnknown, "At least one health check result has Unknown status"
+	}
+
+	// Rule 2: Check if any Result.Status == "Unhealthy"
+	if r.hasUnhealthyResult(cnh) {
+		return metav1.ConditionFalse, ReasonCheckFailed, "At least one health check result is Unhealthy"
+	}
+
+	// Rule 3: All Results.Status == "Healthy" (or no results yet)
+	if r.allResultsHealthy(cnh) {
+		return metav1.ConditionTrue, ReasonCheckPassed, "All health checks completed successfully"
+	}
+
+	// Default case - should not happen if logic is correct
+	return metav1.ConditionUnknown, ReasonCheckUnknown, "Unable to determine health status"
+}
+
+// hasUnknownResult checks if any result has Unknown status
+func (r *CheckNodeHealthReconciler) hasUnknownResult(cnh *chmv1alpha1.CheckNodeHealth) bool {
+	for _, result := range cnh.Status.Results {
+		if result.Status == chmv1alpha1.CheckStatusUnknown {
+			return true
+		}
+	}
+	return false
+}
+
+// hasUnhealthyResult checks if any result has Unhealthy status
+func (r *CheckNodeHealthReconciler) hasUnhealthyResult(cnh *chmv1alpha1.CheckNodeHealth) bool {
+	for _, result := range cnh.Status.Results {
+		if result.Status == chmv1alpha1.CheckStatusUnhealthy {
+			return true
+		}
+	}
+	return false
+}
+
+// allResultsHealthy checks if all results have Healthy status (or there are no results)
+func (r *CheckNodeHealthReconciler) allResultsHealthy(cnh *chmv1alpha1.CheckNodeHealth) bool {
+	// If no results, consider as healthy (checks haven't populated results yet)
+	if len(cnh.Status.Results) == 0 {
+		return true
+	}
+
+	// All results must be healthy
+	for _, result := range cnh.Status.Results {
+		if result.Status != chmv1alpha1.CheckStatusHealthy {
+			return false
+		}
+	}
+	return true
 }
 
 func isCompleted(cnh *chmv1alpha1.CheckNodeHealth) bool {
