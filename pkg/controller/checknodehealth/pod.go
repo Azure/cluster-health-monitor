@@ -127,17 +127,27 @@ func (r *CheckNodeHealthReconciler) ensureHealthCheckPod(ctx context.Context, cn
 }
 
 func (r *CheckNodeHealthReconciler) updatePodstartCheckerResult(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, pod *corev1.Pod) error {
-	// Check if all containers have started successfully first
+	// PodStartup checker evaluates whether containers can successfully start on the node.
+
+	// Case 1: All containers have started successfully
+	// - Containers are running OR have terminated after starting (e.g., CrashLoopBackOff)
+	// - Even if containers crash after starting, PodStartup is Healthy because the container
+	//   runtime successfully started them. The crash is an application(Checker) issue, not a node issue.
 	if r.areAllContainersStarted(pod) {
 		return r.markPodStartupHealthy(ctx, cnh, "All containers started successfully")
 	}
 
-	// Check if pod is pending for too long
+	// Case 2: Pod stuck in Pending phase for too long
+	// - Container runtime is unable to start containers (image pull failures, resource constraints, etc.)
+	// - Pod remains in Pending phase and will continue retrying
+	// - This indicates a node-level issue preventing container startup
 	if pod.Status.Phase == corev1.PodPending && r.isPodPendingTimeout(pod) {
 		return r.markPodStartupUnhealthy(ctx, cnh, "Pod stuck in Pending state for more than 1 minute")
 	}
 
-	// Still waiting for containers to start or retries to complete, no action needed yet
+	// Case 3: Still initializing or container runtime is retrying
+	// - Containers are being pulled, created, or retried by the runtime
+	// - No action needed yet, wait for containers to start or timeout
 	return nil
 }
 

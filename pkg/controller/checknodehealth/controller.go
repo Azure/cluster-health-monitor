@@ -139,17 +139,16 @@ func (r *CheckNodeHealthReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, err
 	}
 
+	if err := r.updatePodstartCheckerResult(ctx, cnh, pod); err != nil {
+		klog.ErrorS(err, "Failed to update PodStartup check result")
+		return ctrl.Result{}, err
+	}
 	// Determine the overall result based on pod status
 	return r.determineCheckResult(ctx, cnh, pod)
 }
 
 // determineCheckResult determines the overall result of the CheckNodeHealth based on pod status
 func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, pod *corev1.Pod) (ctrl.Result, error) {
-	if err := r.updatePodstartCheckerResult(ctx, cnh, pod); err != nil {
-		klog.ErrorS(err, "Failed to update PodStartup check result")
-		return ctrl.Result{}, err
-	}
-
 	// Check if pod succeeded or failed (completed)
 	if pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
 		klog.InfoS("Health check pod completed, marking as completed", "phase", pod.Status.Phase)
@@ -157,11 +156,6 @@ func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cn
 		// Step 1: Mark as completed first (this records the result)
 		if err := r.markCompleted(ctx, cnh, pod); err != nil {
 			klog.ErrorS(err, "Failed to mark as completed")
-			return ctrl.Result{}, err
-		}
-		// Step 2: Delete the pod
-		if err := r.cleanupPod(ctx, cnh); err != nil {
-			klog.ErrorS(err, "Failed to cleanup completed pod")
 			return ctrl.Result{}, err
 		}
 
