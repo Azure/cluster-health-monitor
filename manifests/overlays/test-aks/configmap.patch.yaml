@@ -80,17 +80,31 @@ data:
           syntheticPodStartupTimeout: "5s"
           maxSyntheticPods: 10
           tcpTimeout: "2s"
-      - name: "TestPodStartupWithNAPAndCSI"
+      - name: "TestPodStartupWithNAP"
         type: "PodStartup"
         interval: "6m"
         timeout: "5m30s"
         podStartupConfig:
           syntheticPodNamespace: "kube-system"
-          syntheticPodLabelKey: "kubernetes.azure.com/cluster-health-monitor-checker-synthetic-nap-csi"
+          syntheticPodLabelKey: "kubernetes.azure.com/cluster-health-monitor-checker-synthetic-nap"
           syntheticPodStartupTimeout: "5m"
           maxSyntheticPods: 10
           tcpTimeout: "2s"
           enableNodeProvisioningTest: true
+      - name: "TestPodStartupWithCSI"
+        type: "PodStartup"
+        interval: "3m"
+        timeout: "2m30s"
+        podStartupConfig:
+          syntheticPodNamespace: "kube-system"
+          syntheticPodLabelKey: "kubernetes.azure.com/cluster-health-monitor-checker-synthetic"
+          syntheticPodStartupTimeout: "5s"
+          maxSyntheticPods: 10
+          tcpTimeout: "2s"
+          enableCSIs:
+            - "azureDisk"
+            - "azureFile"
+            - "azureBlob"
       - name: "TestAPIServer"
         type: "APIServer"
         interval: "5s"
