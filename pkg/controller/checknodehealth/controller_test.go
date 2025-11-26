@@ -52,6 +52,16 @@ func setupTest() (*CheckNodeHealthReconciler, client.Client, *runtime.Scheme) {
 	return reconciler, fakeClient, scheme
 }
 
+// getHealthyCondition retrieves the Healthy condition from CheckNodeHealth status
+func getHealthyCondition(conditions []metav1.Condition) *metav1.Condition {
+	for i, condition := range conditions {
+		if condition.Type == ConditionTypeHealthy {
+			return &conditions[i]
+		}
+	}
+	return nil
+}
+
 func TestReconcile(t *testing.T) {
 	tests := []struct {
 		name                string
@@ -259,6 +269,227 @@ func TestReconcile(t *testing.T) {
 				err := fakeClient.Get(context.Background(), client.ObjectKey{Name: cnh.Name}, deletedCnh)
 				if !apierrors.IsNotFound(err) {
 					t.Error("Expected CheckNodeHealth to be fully deleted after finalizer removal, but it still exists")
+				}
+			},
+		},
+		{
+			name: "pod stuck in pending - PodStartup is Unhealthy, Healthy condition is False",
+			existingCR: &chmv1alpha1.CheckNodeHealth{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-pending"},
+				Spec: chmv1alpha1.CheckNodeHealthSpec{
+					NodeRef: chmv1alpha1.NodeReference{Name: "test-node"},
+				},
+			},
+			existingPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:              "check-node-health-test-pending",
+					Namespace:         "default",
+					CreationTimestamp: metav1.NewTime(time.Now().Add(-2 * time.Minute)), // Old enough to timeout
+					Labels: map[string]string{
+						CheckNodeHealthLabel: "test-pending",
+					},
+				},
+				Status: corev1.PodStatus{Phase: corev1.PodPending},
+			},
+			expectedResult:     ctrl.Result{},
+			expectError:        false,
+			expectedPodCreated: false,
+			expectedPodDeleted: true,
+			validateFunc: func(t *testing.T, fakeClient client.Client, cnh *chmv1alpha1.CheckNodeHealth) {
+				updatedCR := &chmv1alpha1.CheckNodeHealth{}
+				if err := fakeClient.Get(context.Background(), client.ObjectKey{Name: cnh.Name}, updatedCR); err != nil {
+					t.Fatalf("Failed to get updated CheckNodeHealth: %v", err)
+				}
+
+				// Verify check completed
+				if updatedCR.Status.FinishedAt == nil {
+					t.Error("Expected FinishedAt to be set after check completion")
+				}
+
+				// Verify Healthy condition is False
+				healthyCondition := getHealthyCondition(updatedCR.Status.Conditions)
+				if healthyCondition == nil {
+					t.Fatal("Healthy condition not found in status")
+				}
+
+				if healthyCondition.Status != metav1.ConditionFalse {
+					t.Errorf("Expected condition status False, got %v", healthyCondition.Status)
+				}
+
+				if healthyCondition.Reason != ReasonCheckFailed {
+					t.Errorf("Expected reason %q, got %q", ReasonCheckFailed, healthyCondition.Reason)
+				}
+			},
+		},
+		{
+			name: "some result is Unhealthy - Healthy condition is False",
+			existingCR: &chmv1alpha1.CheckNodeHealth{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-unhealthy"},
+				Spec: chmv1alpha1.CheckNodeHealthSpec{
+					NodeRef: chmv1alpha1.NodeReference{Name: "test-node"},
+				},
+				Status: chmv1alpha1.CheckNodeHealthStatus{
+					Results: []chmv1alpha1.CheckResult{
+						{
+							Name:    "PodStartup",
+							Status:  chmv1alpha1.CheckStatusHealthy,
+							Message: "Pod started successfully",
+						},
+						{
+							Name:      "SomeChecker",
+							Status:    chmv1alpha1.CheckStatusUnhealthy,
+							Message:   "Check failed",
+							ErrorCode: "CheckFailed",
+						},
+					},
+				},
+			},
+			existingPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "check-node-health-test-unhealthy",
+					Namespace: "default",
+					Labels: map[string]string{
+						CheckNodeHealthLabel: "test-unhealthy",
+					},
+				},
+				Status: corev1.PodStatus{Phase: corev1.PodSucceeded},
+			},
+			expectedResult:     ctrl.Result{},
+			expectError:        false,
+			expectedPodCreated: false,
+			expectedPodDeleted: true,
+			validateFunc: func(t *testing.T, fakeClient client.Client, cnh *chmv1alpha1.CheckNodeHealth) {
+				updatedCR := &chmv1alpha1.CheckNodeHealth{}
+				if err := fakeClient.Get(context.Background(), client.ObjectKey{Name: cnh.Name}, updatedCR); err != nil {
+					t.Fatalf("Failed to get updated CheckNodeHealth: %v", err)
+				}
+
+				// Verify Healthy condition is False
+				healthyCondition := getHealthyCondition(updatedCR.Status.Conditions)
+				if healthyCondition == nil {
+					t.Fatal("Healthy condition not found in status")
+				}
+
+				if healthyCondition.Status != metav1.ConditionFalse {
+					t.Errorf("Expected condition status False, got %v", healthyCondition.Status)
+				}
+
+				if healthyCondition.Reason != ReasonCheckFailed {
+					t.Errorf("Expected reason %q, got %q", ReasonCheckFailed, healthyCondition.Reason)
+				}
+			},
+		},
+		{
+			name: "all checker results are Healthy - Healthy condition is True",
+			existingCR: &chmv1alpha1.CheckNodeHealth{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-all-healthy"},
+				Spec: chmv1alpha1.CheckNodeHealthSpec{
+					NodeRef: chmv1alpha1.NodeReference{Name: "test-node"},
+				},
+				Status: chmv1alpha1.CheckNodeHealthStatus{
+					Results: []chmv1alpha1.CheckResult{
+						{
+							Name:    "PodStartup",
+							Status:  chmv1alpha1.CheckStatusHealthy,
+							Message: "Pod started successfully",
+						},
+						{
+							Name:    "PodNetwork",
+							Status:  chmv1alpha1.CheckStatusHealthy,
+							Message: "Network check passed",
+						},
+					},
+				},
+			},
+			existingPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "check-node-health-test-all-healthy",
+					Namespace: "default",
+					Labels: map[string]string{
+						CheckNodeHealthLabel: "test-all-healthy",
+					},
+				},
+				Status: corev1.PodStatus{Phase: corev1.PodSucceeded},
+			},
+			expectedResult:     ctrl.Result{},
+			expectError:        false,
+			expectedPodCreated: false,
+			expectedPodDeleted: true,
+			validateFunc: func(t *testing.T, fakeClient client.Client, cnh *chmv1alpha1.CheckNodeHealth) {
+				updatedCR := &chmv1alpha1.CheckNodeHealth{}
+				if err := fakeClient.Get(context.Background(), client.ObjectKey{Name: cnh.Name}, updatedCR); err != nil {
+					t.Fatalf("Failed to get updated CheckNodeHealth: %v", err)
+				}
+
+				// Verify Healthy condition is True
+				healthyCondition := getHealthyCondition(updatedCR.Status.Conditions)
+				if healthyCondition == nil {
+					t.Fatal("Healthy condition not found in status")
+				}
+
+				if healthyCondition.Status != metav1.ConditionTrue {
+					t.Errorf("Expected condition status True, got %v", healthyCondition.Status)
+				}
+
+				if healthyCondition.Reason != ReasonCheckPassed {
+					t.Errorf("Expected reason %q, got %q", ReasonCheckPassed, healthyCondition.Reason)
+				}
+			},
+		},
+		{
+			name: "any checker result is Unknown - Healthy condition is Unknown",
+			existingCR: &chmv1alpha1.CheckNodeHealth{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-unknown"},
+				Spec: chmv1alpha1.CheckNodeHealthSpec{
+					NodeRef: chmv1alpha1.NodeReference{Name: "test-node"},
+				},
+				Status: chmv1alpha1.CheckNodeHealthStatus{
+					Results: []chmv1alpha1.CheckResult{
+						{
+							Name:    "PodStartup",
+							Status:  chmv1alpha1.CheckStatusHealthy,
+							Message: "Pod started successfully",
+						},
+						{
+							Name:    "SomeChecker",
+							Status:  chmv1alpha1.CheckStatusUnknown,
+							Message: "Unable to determine status",
+						},
+					},
+				},
+			},
+			existingPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "check-node-health-test-unknown",
+					Namespace: "default",
+					Labels: map[string]string{
+						CheckNodeHealthLabel: "test-unknown",
+					},
+				},
+				Status: corev1.PodStatus{Phase: corev1.PodSucceeded},
+			},
+			expectedResult:     ctrl.Result{},
+			expectError:        false,
+			expectedPodCreated: false,
+			expectedPodDeleted: true,
+			validateFunc: func(t *testing.T, fakeClient client.Client, cnh *chmv1alpha1.CheckNodeHealth) {
+				updatedCR := &chmv1alpha1.CheckNodeHealth{}
+				if err := fakeClient.Get(context.Background(), client.ObjectKey{Name: cnh.Name}, updatedCR); err != nil {
+					t.Fatalf("Failed to get updated CheckNodeHealth: %v", err)
+				}
+
+				// Verify Healthy condition is Unknown
+				healthyCondition := getHealthyCondition(updatedCR.Status.Conditions)
+				if healthyCondition == nil {
+					t.Fatal("Healthy condition not found in status")
+				}
+
+				if healthyCondition.Status != metav1.ConditionUnknown {
+					t.Errorf("Expected condition status Unknown, got %v", healthyCondition.Status)
+				}
+
+				if healthyCondition.Reason != ReasonCheckUnknown {
+					t.Errorf("Expected reason %q, got %q", ReasonCheckUnknown, healthyCondition.Reason)
 				}
 			},
 		},
