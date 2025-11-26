@@ -140,7 +140,7 @@ func (r *CheckNodeHealthReconciler) updatePodstartCheckerResult(ctx context.Cont
 	// - Even if containers crash after starting, PodStartup is Healthy because the container
 	//   runtime successfully started them. The crash is an application(Checker) issue, not a node issue.
 	if r.areAllContainersStarted(pod) {
-		return r.markPodStartupHealthy(ctx, cnh, "All containers started successfully")
+		return r.markPodStartupResult(ctx, cnh, chmv1alpha1.CheckStatusHealthy, "All containers started successfully")
 	}
 
 	// Case 2: Pod timeout
@@ -150,7 +150,7 @@ func (r *CheckNodeHealthReconciler) updatePodstartCheckerResult(ctx context.Cont
 	// - If the pod remains in Pending state beyond the timeout, it indicates a persistent node-level
 	//   issue preventing container startup
 	if pod.Status.Phase == corev1.PodPending && r.isPodTimeout(pod) {
-		return r.markPodStartupUnhealthy(ctx, cnh, "Pod stuck in Pending state - timeout exceeded")
+		return r.markPodStartupResult(ctx, cnh, chmv1alpha1.CheckStatusUnhealthy, "Pod stuck in Pending state - timeout exceeded")
 	}
 
 	// Case 3: Still initializing or container runtime is retrying
@@ -179,12 +179,12 @@ func (r *CheckNodeHealthReconciler) areAllContainersStarted(pod *corev1.Pod) boo
 	return true
 }
 
-// markPodStartupHealthy marks the CheckNodeHealth as healthy for pod startup check
-func (r *CheckNodeHealthReconciler) markPodStartupHealthy(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, message string) error {
+// markPodStartupResult marks the CheckNodeHealth with a PodStartup check result
+func (r *CheckNodeHealthReconciler) markPodStartupResult(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, status chmv1alpha1.CheckStatus, message string) error {
 	// Create or update the PodStartup result
 	result := chmv1alpha1.CheckResult{
 		Name:    "PodStartup",
-		Status:  chmv1alpha1.CheckStatusHealthy,
+		Status:  status,
 		Message: message,
 	}
 
@@ -196,28 +196,7 @@ func (r *CheckNodeHealthReconciler) markPodStartupHealthy(ctx context.Context, c
 		return fmt.Errorf("failed to update CheckNodeHealth status: %w", err)
 	}
 
-	klog.InfoS("PodStartup check marked as healthy", "cr", cnh.Name, "message", message)
-	return nil
-}
-
-// markPodStartupUnhealthy marks the CheckNodeHealth as unhealthy for pod startup check
-func (r *CheckNodeHealthReconciler) markPodStartupUnhealthy(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, message string) error {
-	// Create or update the PodStartup result
-	result := chmv1alpha1.CheckResult{
-		Name:    "PodStartup",
-		Status:  chmv1alpha1.CheckStatusUnhealthy,
-		Message: message,
-	}
-
-	// Update or append the result
-	r.updateCheckResult(cnh, result)
-
-	// Update the status
-	if err := r.Status().Update(ctx, cnh); err != nil {
-		return fmt.Errorf("failed to update CheckNodeHealth status: %w", err)
-	}
-
-	klog.InfoS("PodStartup check marked as unhealthy", "cr", cnh.Name, "message", message)
+	klog.InfoS("PodStartup check result recorded", "cr", cnh.Name, "status", status, "message", message)
 	return nil
 }
 
