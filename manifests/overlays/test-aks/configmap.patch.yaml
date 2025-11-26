@@ -1,0 +1,111 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-health-monitor-config
+  namespace: kube-system
+data:
+  config.yaml: |
+    checkers:
+      - name: "TestInternalCoreDNS"
+        type: "DNS"
+        interval: "5s"
+        timeout: "3s"
+        dnsConfig:
+          target: "CoreDNS"
+          domain: "kubernetes.default.svc.cluster.local"
+          queryTimeout: "1s"
+      - name: "TestExternalCoreDNS"
+        type: "DNS"
+        interval: "5s"
+        timeout: "3s"
+        dnsConfig:
+          target: "CoreDNS"
+          domain: "mcr.microsoft.com"
+          queryTimeout: "1s"
+      - name: "TestInternalLocalDNS"
+        type: "DNS"
+        interval: "5s"
+        timeout: "3s"
+        dnsConfig:
+          domain: "kubernetes.default.svc.cluster.local"
+          target: "LocalDNS"
+          queryTimeout: "1s"
+      - name: "TestExternalLocalDNS"
+        type: "DNS"
+        interval: "5s"
+        timeout: "3s"
+        dnsConfig:
+          domain: "mcr.microsoft.com"
+          target: "LocalDNS"
+          queryTimeout: "1s"
+      - name: "TestInternalCoreDNSPerPod"
+        type: "DNS"
+        interval: "5s"
+        timeout: "3s"
+        dnsConfig:
+          target: "CoreDNSPerPod"
+          domain: "kubernetes.default.svc.cluster.local"
+          queryTimeout: "1s"
+      - name: "TestExternalCoreDNSPerPod"
+        type: "DNS"
+        interval: "5s"
+        timeout: "3s"
+        dnsConfig:
+          target: "CoreDNSPerPod"
+          domain: "mcr.microsoft.com"
+          queryTimeout: "1s"
+      - name: "TestInternalCoreDNSPerPodTimeout"
+        type: "DNS"
+        interval: "5s"
+        timeout: "3s"
+        dnsConfig:
+          target: "CoreDNSPerPod"
+          domain: "kubernetes.default.svc.cluster.local"
+          queryTimeout: "1ns"
+      - name: "TestExternalCoreDNSPerPodTimeout"
+        type: "DNS"
+        interval: "5s"
+        timeout: "3s"
+        dnsConfig:
+          target: "CoreDNSPerPod"
+          domain: "mcr.microsoft.com"
+          queryTimeout: "1ns"
+      - name: "TestPodStartup"
+        type: "PodStartup"
+        interval: "10s"
+        timeout: "10s"
+        podStartupConfig:
+          syntheticPodNamespace: "kube-system"
+          syntheticPodLabelKey: "kubernetes.azure.com/cluster-health-monitor-checker-synthetic"
+          syntheticPodStartupTimeout: "5s"
+          maxSyntheticPods: 10
+          tcpTimeout: "2s"
+      - name: "TestPodStartupWithNAPAndCSI"
+        type: "PodStartup"
+        interval: "6m"
+        timeout: "5m30s"
+        podStartupConfig:
+          syntheticPodNamespace: "kube-system"
+          syntheticPodLabelKey: "kubernetes.azure.com/cluster-health-monitor-checker-synthetic-nap-csi"
+          syntheticPodStartupTimeout: "5m"
+          maxSyntheticPods: 10
+          tcpTimeout: "2s"
+          enableNodeProvisioningTest: true
+      - name: "TestAPIServer"
+        type: "APIServer"
+        interval: "5s"
+        timeout: "5s"
+        apiServerConfig:
+          namespace: "kube-system"
+          labelKey: "kubernetes.azure.com/cluster-health-monitor-checker-apiserver"
+          mutateTimeout: "1s"
+          readTimeout: "1s"
+          maxObjects: 10
+      - name: "TestMetricsServer"
+        type: "MetricsServer"
+        interval: "5s"
+        timeout: "5s"
+      - name: "TestAzurePolicy"
+        type: "AzurePolicy"
+        interval: "10s"
+        timeout: "5s"
