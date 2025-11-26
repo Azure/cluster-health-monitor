@@ -29,10 +29,9 @@ const (
 	// - Acceptable overhead: only 6 reconciliations per CR over the 6-hour TTL period
 	SyncPeriod = 1 * time.Hour
 
-	// PodPendingTimeout is the maximum time a pod can stay in Pending state
-	// before being marked as failed
-	// The pod already has been being bond to the target node, so it should be pending for a short time only
-	PodPendingTimeout = 30 * time.Second
+	// PodTimeout is the maximum time a pod can run before being marked as completed.
+	// This applies to all non-terminal phases (Pending, Running, etc.).
+	PodTimeout = 5 * time.Minute
 
 	// CheckNodeHealthFinalizer is the finalizer used to ensure proper cleanup
 	CheckNodeHealthFinalizer = "checknodehealth.clusterhealthmonitor.azure.com/finalizer"
@@ -149,11 +148,18 @@ func (r *CheckNodeHealthReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 // determineCheckResult determines the overall result of the CheckNodeHealth based on pod status
 func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, pod *corev1.Pod) (ctrl.Result, error) {
-	// Check if pod succeeded or failed (completed)
-	if pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
-		klog.InfoS("Health check pod completed, marking as completed", "phase", pod.Status.Phase)
+	// Check if pod succeeded or failed (completed), or if it's timed out
+	isCompleted := pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed
+	isTimeout := !isCompleted && r.isPodTimeout(pod)
 
-		// Step 1: Mark as completed first (this records the result)
+	if isCompleted || isTimeout {
+		if isCompleted {
+			klog.InfoS("Health check pod completed, marking as completed", "phase", pod.Status.Phase)
+		} else {
+			klog.InfoS("Health check pod timeout, marking as completed", "timeout", PodTimeout, "phase", pod.Status.Phase)
+		}
+
+		// Step 1: Mark as completed (determines health based on Results)
 		if err := r.markCompleted(ctx, cnh, pod); err != nil {
 			klog.ErrorS(err, "Failed to mark as completed")
 			return ctrl.Result{}, err
@@ -161,7 +167,7 @@ func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cn
 
 		// Step 2: Delete the pod
 		if err := r.cleanupPod(ctx, cnh); err != nil {
-			klog.ErrorS(err, "Failed to cleanup completed pod, will retry")
+			klog.ErrorS(err, "Failed to cleanup pod, will retry")
 			return ctrl.Result{}, nil
 		}
 
@@ -169,34 +175,9 @@ func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cn
 		return ctrl.Result{}, nil
 	}
 
-	// Check if pod is stuck in Pending state for too long
-	if pod.Status.Phase == corev1.PodPending {
-		if r.isPodPendingTimeout(pod) {
-			message := fmt.Sprintf("Pod stuck in Pending state for more than %v", PodPendingTimeout)
-			klog.InfoS("Health check pod pending timeout, marking as failed", "timeout", PodPendingTimeout)
-
-			// Step 1: Mark as failed first (this records the result)
-			if err := r.markFailed(ctx, cnh, ReasonPodStartupTimeout, message); err != nil {
-				klog.ErrorS(err, "Failed to mark as failed")
-				return ctrl.Result{}, err
-			}
-
-			// Step 2: Delete the stuck pod
-			if err := r.cleanupPod(ctx, cnh); err != nil {
-				klog.ErrorS(err, "Failed to cleanup timed out pod, will retry")
-				return ctrl.Result{}, nil
-			}
-
-			return ctrl.Result{}, nil
-		}
-		// Pod is still pending but within timeout, requeue after a reasonable interval
-		klog.V(1).InfoS("Health check pod still pending", "phase", pod.Status.Phase)
-		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
-	}
-
-	// Pod is still running, will reconcile again when pod status changes
-	klog.V(1).InfoS("Health check pod not finished yet", "phase", pod.Status.Phase)
-	return ctrl.Result{}, nil
+	// Other pod phases (Unknown, etc.)
+	klog.V(1).InfoS("Health check pod in unexpected phase", "phase", pod.Status.Phase)
+	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 }
 
 func (r *CheckNodeHealthReconciler) markStarted(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth) error {

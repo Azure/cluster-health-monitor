@@ -123,7 +123,13 @@ func (r *CheckNodeHealthReconciler) ensureHealthCheckPod(ctx context.Context, cn
 		return nil, fmt.Errorf("failed to create pod: %w", err)
 	}
 
-	return pod, nil
+	// Refetch the pod to get the CreationTimestamp set by the API server
+	createdPod := &corev1.Pod{}
+	if err := r.Get(ctx, client.ObjectKey{Name: pod.Name, Namespace: pod.Namespace}, createdPod); err != nil {
+		return nil, fmt.Errorf("failed to get created pod: %w", err)
+	}
+
+	return createdPod, nil
 }
 
 func (r *CheckNodeHealthReconciler) updatePodstartCheckerResult(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, pod *corev1.Pod) error {
@@ -137,12 +143,14 @@ func (r *CheckNodeHealthReconciler) updatePodstartCheckerResult(ctx context.Cont
 		return r.markPodStartupHealthy(ctx, cnh, "All containers started successfully")
 	}
 
-	// Case 2: Pod stuck in Pending phase for too long
-	// - Container runtime is unable to start containers (image pull failures, resource constraints, etc.)
-	// - Pod remains in Pending phase and will continue retrying
-	// - This indicates a node-level issue preventing container startup
-	if pod.Status.Phase == corev1.PodPending && r.isPodPendingTimeout(pod) {
-		return r.markPodStartupUnhealthy(ctx, cnh, "Pod stuck in Pending state for more than 1 minute")
+	// Case 2: Pod timeout
+	// - We cannot rely on container status to detect startup failures because the container runtime
+	//   will automatically retry failed containers (e.g., image pull failures, resource constraints)
+	// - The only reliable way to detect pod startup failure is by waiting for a timeout
+	// - If the pod remains in Pending state beyond the timeout, it indicates a persistent node-level
+	//   issue preventing container startup
+	if pod.Status.Phase == corev1.PodPending && r.isPodTimeout(pod) {
+		return r.markPodStartupUnhealthy(ctx, cnh, "Pod stuck in Pending state - timeout exceeded")
 	}
 
 	// Case 3: Still initializing or container runtime is retrying
@@ -228,11 +236,10 @@ func (r *CheckNodeHealthReconciler) updateCheckResult(cnh *chmv1alpha1.CheckNode
 	cnh.Status.Results = append(cnh.Status.Results, newResult)
 }
 
-// isPodPendingTimeout checks if the pod has been pending for too long
-func (r *CheckNodeHealthReconciler) isPodPendingTimeout(pod *corev1.Pod) bool {
-	// Check if the pod has been pending since its creation time
-	pendingDuration := time.Since(pod.CreationTimestamp.Time)
-	return pendingDuration > PodPendingTimeout
+// isPodTimeout checks if the pod has been running for too long without completing
+func (r *CheckNodeHealthReconciler) isPodTimeout(pod *corev1.Pod) bool {
+	duration := time.Since(pod.CreationTimestamp.Time)
+	return duration > PodTimeout
 }
 
 func generateHealthCheckPodName(cnh *chmv1alpha1.CheckNodeHealth) string {

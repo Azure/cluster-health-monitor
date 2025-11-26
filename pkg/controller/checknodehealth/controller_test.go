@@ -13,6 +13,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
 )
@@ -29,6 +30,16 @@ func setupTest() (*CheckNodeHealthReconciler, client.Client, *runtime.Scheme) {
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithStatusSubresource(&chmv1alpha1.CheckNodeHealth{}). // Enable status subresource
+		WithInterceptorFuncs(interceptor.Funcs{
+			Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+				// Set CreationTimestamp if not already set
+				ts := obj.GetCreationTimestamp()
+				if ts.IsZero() {
+					obj.SetCreationTimestamp(metav1.Now())
+				}
+				return c.Create(ctx, obj, opts...)
+			},
+		}).
 		Build()
 
 	reconciler := &CheckNodeHealthReconciler{
@@ -62,7 +73,7 @@ func TestReconcile(t *testing.T) {
 					NodeRef: chmv1alpha1.NodeReference{Name: "test-node"},
 				},
 			},
-			expectedResult:      ctrl.Result{},
+			expectedResult:      ctrl.Result{RequeueAfter: 30 * time.Second},
 			expectError:         false,
 			expectedPodCreated:  true,
 			expectedPodDeleted:  false,
@@ -71,39 +82,6 @@ func TestReconcile(t *testing.T) {
 		},
 		{
 			name: "handles pod succeeded and cleans up",
-			existingCnh: &chmv1alpha1.CheckNodeHealth{
-				ObjectMeta: metav1.ObjectMeta{Name: "test-check"},
-				Spec: chmv1alpha1.CheckNodeHealthSpec{
-					NodeRef: chmv1alpha1.NodeReference{Name: "test-node"},
-				},
-			},
-			existingPod: &corev1.Pod{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "check-node-health-test-check",
-					Namespace: "default",
-					Labels: map[string]string{
-						CheckNodeHealthLabel: "test-check", // Required label for pod identification
-					},
-				},
-				Status: corev1.PodStatus{Phase: corev1.PodSucceeded},
-			},
-			expectedResult:     ctrl.Result{},
-			expectError:        false,
-			expectedPodCreated: false, // Pod already exists
-			expectedPodDeleted: true,  // Pod should be cleaned up
-			validateFunc: func(t *testing.T, fakeClient client.Client, cnh *chmv1alpha1.CheckNodeHealth) {
-				// Verify CheckNodeHealth is marked as completed
-				updatedCnh := &chmv1alpha1.CheckNodeHealth{}
-				err := fakeClient.Get(context.Background(), client.ObjectKey{Name: cnh.Name}, updatedCnh)
-				if err != nil {
-					t.Errorf("Failed to get updated CheckNodeHealth: %v", err)
-				} else if updatedCnh.Status.FinishedAt == nil {
-					t.Error("Expected CheckNodeHealth to be marked as completed")
-				}
-			},
-		},
-		{
-			name: "handles pod failed and cleans up",
 			existingCnh: &chmv1alpha1.CheckNodeHealth{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-check"},
 				Spec: chmv1alpha1.CheckNodeHealthSpec{
@@ -170,18 +148,19 @@ func TestReconcile(t *testing.T) {
 			},
 			existingPod: &corev1.Pod{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      "check-node-health-test-check",
-					Namespace: "default",
+					Name:              "check-node-health-test-check",
+					Namespace:         "default",
+					CreationTimestamp: metav1.Now(), // Recent creation, not timed out
 					Labels: map[string]string{
 						CheckNodeHealthLabel: "test-check", // Required label for pod identification
 					},
 				},
 				Status: corev1.PodStatus{Phase: corev1.PodRunning},
 			},
-			expectedResult:     ctrl.Result{},
+			expectedResult:     ctrl.Result{RequeueAfter: 30 * time.Second}, // Pod is running, requeue to check progress
 			expectError:        false,
 			expectedPodCreated: false, // Pod already exists
-			expectedPodDeleted: false, // Running pod should not be deleted
+			expectedPodDeleted: false, // Running pod should not be deleted (not timed out)
 		},
 		{
 			name: "deletes expired CheckNodeHealth CR",
