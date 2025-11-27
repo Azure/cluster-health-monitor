@@ -82,7 +82,13 @@ func (r *CheckNodeHealthReconciler) ensureHealthCheckPod(ctx context.Context, cn
 		return nil, fmt.Errorf("failed to create pod: %w", err)
 	}
 
-	return pod, nil
+	// Refetch the pod to get the CreationTimestamp set by the API server
+	createdPod := &corev1.Pod{}
+	if err := r.Get(ctx, client.ObjectKey{Name: pod.Name, Namespace: pod.Namespace}, createdPod); err != nil {
+		return nil, fmt.Errorf("failed to get created pod: %w", err)
+	}
+
+	return createdPod, nil
 }
 
 func (r *CheckNodeHealthReconciler) buildHealthCheckPod(cnh *chmv1alpha1.CheckNodeHealth) (*corev1.Pod, error) {
@@ -126,10 +132,93 @@ func (r *CheckNodeHealthReconciler) buildHealthCheckPod(cnh *chmv1alpha1.CheckNo
 	return pod, nil
 }
 
-func (r *CheckNodeHealthReconciler) isPodPendingTimeout(pod *corev1.Pod) bool {
-	// Check if the pod has been pending since its creation time
-	pendingDuration := time.Since(pod.CreationTimestamp.Time)
-	return pendingDuration > PodPendingTimeout
+func (r *CheckNodeHealthReconciler) updatePodstartCheckerResult(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, pod *corev1.Pod) error {
+	// PodStartup checker evaluates whether containers can successfully start on the node.
+
+	// Case 1: All containers have started successfully
+	// - Containers are running OR have terminated after starting (e.g., CrashLoopBackOff)
+	// - Even if containers crash after starting, PodStartup is Healthy because the container
+	//   runtime successfully started them. The crash is an application(Checker) issue, not a node issue.
+	if r.areAllContainersStarted(pod) {
+		return r.markPodStartupResult(ctx, cnh, chmv1alpha1.CheckStatusHealthy, "All containers started successfully")
+	}
+
+	// Case 2: Pod timeout
+	// - We cannot rely on container status to detect startup failures because the container runtime
+	//   will automatically retry failed containers (e.g., image pull failures, resource constraints)
+	// - The only reliable way to detect pod startup failure is by waiting for a timeout
+	// - If the pod remains in Pending state beyond the timeout, it indicates a persistent node-level
+	//   issue preventing container startup
+	if pod.Status.Phase == corev1.PodPending && r.isPodTimeout(pod) {
+		return r.markPodStartupResult(ctx, cnh, chmv1alpha1.CheckStatusUnhealthy, "Pod stuck in Pending state - timeout exceeded")
+	}
+
+	// Case 3: Still initializing or container runtime is retrying
+	// - Containers are being pulled, created, or retried by the runtime
+	// - No action needed yet, wait for containers to start or timeout
+	return nil
+}
+
+// areAllContainersStarted checks if all containers have started successfully
+func (r *CheckNodeHealthReconciler) areAllContainersStarted(pod *corev1.Pod) bool {
+	// If no container statuses available yet, containers haven't started
+	if len(pod.Status.ContainerStatuses) == 0 {
+		return false
+	}
+
+	// Check each container status
+	for _, containerStatus := range pod.Status.ContainerStatuses {
+		// Container has started if it's currently running OR if it terminated after starting
+		hasStarted := containerStatus.State.Running != nil ||
+			(containerStatus.State.Terminated != nil && !containerStatus.State.Terminated.StartedAt.IsZero())
+
+		if !hasStarted {
+			return false
+		}
+	}
+	return true
+}
+
+// markPodStartupResult marks the CheckNodeHealth with a PodStartup check result
+func (r *CheckNodeHealthReconciler) markPodStartupResult(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, status chmv1alpha1.CheckStatus, message string) error {
+	// Create or update the PodStartup result
+	result := chmv1alpha1.CheckResult{
+		Name:    "PodStartup",
+		Status:  status,
+		Message: message,
+	}
+
+	// Update or append the result
+	r.updateCheckResult(cnh, result)
+
+	// Update the status
+	if err := r.Status().Update(ctx, cnh); err != nil {
+		return fmt.Errorf("failed to update CheckNodeHealth status: %w", err)
+	}
+
+	klog.InfoS("PodStartup check result recorded", "cr", cnh.Name, "status", status, "message", message)
+	return nil
+}
+
+// updateCheckResult updates or appends a check result to the CheckNodeHealth status
+func (r *CheckNodeHealthReconciler) updateCheckResult(cnh *chmv1alpha1.CheckNodeHealth, newResult chmv1alpha1.CheckResult) {
+	// Find existing result for this checker
+	for i, result := range cnh.Status.Results {
+		if result.Name == newResult.Name {
+			// Update existing result
+			cnh.Status.Results[i] = newResult
+			return
+		}
+	}
+
+	// Append new result if not found
+	cnh.Status.Results = append(cnh.Status.Results, newResult)
+}
+
+// isPodTimeout checks if the pod has been running for too long without completing
+func (r *CheckNodeHealthReconciler) isPodTimeout(pod *corev1.Pod) bool {
+	duration := time.Since(pod.CreationTimestamp.Time)
+	return duration > PodTimeout
 }
 
 func generateHealthCheckPodName(cnh *chmv1alpha1.CheckNodeHealth) string {
