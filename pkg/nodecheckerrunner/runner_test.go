@@ -32,12 +32,11 @@ func (m *mockChecker) Run(ctx context.Context) (*checker.Result, error) {
 
 func TestRunCheckers(t *testing.T) {
 	tests := []struct {
-		name           string
-		checkers       []NodeChecker
-		existingCR     *chmv1alpha1.CheckNodeHealth
-		expectedStatus int // number of results expected
-		expectError    bool
-		validateFunc   func(t *testing.T, cnh *chmv1alpha1.CheckNodeHealth, checkers []NodeChecker)
+		name         string
+		checkers     []NodeChecker
+		existingCR   *chmv1alpha1.CheckNodeHealth
+		expectError  bool
+		validateFunc func(t *testing.T, cnh *chmv1alpha1.CheckNodeHealth, checkers []NodeChecker)
 	}{
 		{
 			name: "single checker succeeds",
@@ -53,8 +52,7 @@ func TestRunCheckers(t *testing.T) {
 					NodeRef: chmv1alpha1.NodeReference{Name: "test-node"},
 				},
 			},
-			expectedStatus: 1,
-			expectError:    false,
+			expectError: false,
 			validateFunc: func(t *testing.T, cnh *chmv1alpha1.CheckNodeHealth, checkers []NodeChecker) {
 				if len(cnh.Status.Results) != 1 {
 					t.Errorf("Expected 1 result, got %d", len(cnh.Status.Results))
@@ -86,8 +84,7 @@ func TestRunCheckers(t *testing.T) {
 					NodeRef: chmv1alpha1.NodeReference{Name: "test-node"},
 				},
 			},
-			expectedStatus: 2,
-			expectError:    false,
+			expectError: false,
 			validateFunc: func(t *testing.T, cnh *chmv1alpha1.CheckNodeHealth, checkers []NodeChecker) {
 				if len(cnh.Status.Results) != 2 {
 					t.Errorf("Expected 2 results, got %d", len(cnh.Status.Results))
@@ -132,8 +129,7 @@ func TestRunCheckers(t *testing.T) {
 					NodeRef: chmv1alpha1.NodeReference{Name: "test-node"},
 				},
 			},
-			expectedStatus: 1,
-			expectError:    false,
+			expectError: false,
 			validateFunc: func(t *testing.T, cnh *chmv1alpha1.CheckNodeHealth, checkers []NodeChecker) {
 				if len(cnh.Status.Results) != 1 {
 					t.Errorf("Expected 1 result, got %d", len(cnh.Status.Results))
@@ -173,8 +169,7 @@ func TestRunCheckers(t *testing.T) {
 					NodeRef: chmv1alpha1.NodeReference{Name: "test-node"},
 				},
 			},
-			expectedStatus: 3,
-			expectError:    false,
+			expectError: false,
 			validateFunc: func(t *testing.T, cnh *chmv1alpha1.CheckNodeHealth, checkers []NodeChecker) {
 				if len(cnh.Status.Results) != 3 {
 					t.Errorf("Expected 3 results, got %d", len(cnh.Status.Results))
