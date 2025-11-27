@@ -184,17 +184,7 @@ func (c *AzurePolicyChecker) hasAzurePolicyViolation(message string) bool {
 	// Sample errors:
 	// Error from server (Forbidden): admission webhook "validation.gatekeeper.sh" denied the request: [azurepolicy-k8sazurev1restrictedlabels-4a872f727137b85dcf39] Label <{\"kubernetes.azure.com\"}> is reserved for AKS use only
 	// Error from server (Forbidden): admission webhook "validation.gatekeeper.sh" denied the request: [azurepolicy-k8sazurev2containerenforceprob-39c2336da6b53f16b908] Container <pause> in your Pod <pause> has no <livenessProbe>. Required probes: ["readinessProbe", "livenessProbe"]
-	azurePolicyString := "azurepolicy"
-	azurePolicyMatchers := []string{
-		"has no <livenessProbe>",
-		"has no <readinessProbe>",
-		"is reserved for AKS use only",
-	}
+	azurePolicyString := "azurepolicy-k8sazurev"
 
-	for _, matcher := range azurePolicyMatchers {
-		if strings.Contains(message, azurePolicyString) && strings.Contains(message, matcher) {
-			return true
-		}
-	}
-	return false
+	return strings.Contains(message, azurePolicyString)
 }
