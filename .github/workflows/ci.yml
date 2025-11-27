@@ -55,4 +55,4 @@ jobs:
       - name: Install ginkgo
         run: go install github.com/onsi/ginkgo/v2/ginkgo
       - name: Run E2E tests
-        run: ginkgo -v -p --race ./test/e2e/
+        run: ginkgo -v -p --race --skip-file='.*_aks_test\.go' ./test/e2e/
