@@ -196,13 +196,14 @@ func (r *CheckNodeHealthReconciler) markCompleted(ctx context.Context, cnh *chmv
 
 // determineHealthyCondition determines the Healthy condition status based on check results
 func (r *CheckNodeHealthReconciler) determineHealthyCondition(cnh *chmv1alpha1.CheckNodeHealth) (metav1.ConditionStatus, string, string) {
-	if r.hasUnknownResult(cnh) {
-		return metav1.ConditionUnknown, ReasonCheckUnknown, "At least one health check result has Unknown status"
-	}
-
-	// Rule 2: Check if any Result.Status == "Unhealthy"
+	// Rule 1: Check if any Result.Status == "Unhealthy"
 	if r.hasUnhealthyResult(cnh) {
 		return metav1.ConditionFalse, ReasonCheckFailed, "At least one health check result is Unhealthy"
+	}
+
+	// Rule 2: Check if any Result.Status == "Unknown". This must be checked after Unhealthy
+	if r.hasUnknownResult(cnh) {
+		return metav1.ConditionUnknown, ReasonCheckUnknown, "At least one health check result has Unknown status"
 	}
 
 	// Rule 3: All Results.Status == "Healthy" (or no results yet)

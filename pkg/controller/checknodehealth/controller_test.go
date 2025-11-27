@@ -332,8 +332,8 @@ func TestReconcile(t *testing.T) {
 					Results: []chmv1alpha1.CheckResult{
 						{
 							Name:    "PodStartup",
-							Status:  chmv1alpha1.CheckStatusHealthy,
-							Message: "Pod started successfully",
+							Status:  chmv1alpha1.CheckStatusUnknown,
+							Message: "Pod started unknown",
 						},
 						{
 							Name:      "SomeChecker",
