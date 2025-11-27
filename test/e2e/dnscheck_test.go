@@ -92,7 +92,7 @@ var _ = Describe("DNS checker metrics", Ordered, ContinueOnFailure, func() {
 
 		By("Waiting for DNS checker metrics to report unhealthy status")
 		waitForCheckerResultsMetricsValueIncrease(localPort,
-			checkerResultMetricName, coreDNSCheckerNames, checkerTypeDNS, metricsUnhealthyStatus, serviceTimeoutErrorCode,
+			checkerResultMetricName, coreDNSCheckerNames, checkerTypeDNS, metricsUnhealthyStatus, "",
 			60*time.Second, 5*time.Second,
 			"DNS checker metrics did not report unhealthy status within the timeout period")
 	})

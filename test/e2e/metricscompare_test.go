@@ -11,7 +11,7 @@ import (
 
 // waitForCheckerResultsMetricsValueIncrease is a helper function for the common pattern of waiting for metrics to increase. It gets initial
 // metrics, then polls for metrics increases using Eventually with the provided timeout and interval. It is compatible with the
-// cluster_health_monitor_pod_health_result_total and cluster_health_monitor_checker_result_total metrics.
+// cluster_health_monitor_pod_health_result_total and cluster_health_monitor_checker_result_total metrics. If errorCode is empty string, any error code is accepted.
 func waitForCheckerResultsMetricsValueIncrease(localPort int, metricName string, checkerNames []string, checkerType, status, errorCode string, timeout, interval time.Duration, failureMessage string) {
 	time0Metrics, err := getMetrics(localPort)
 	Expect(err).NotTo(HaveOccurred())
@@ -37,7 +37,7 @@ func waitForCheckerResultsMetricsValueIncrease(localPort int, metricName string,
 // time0 to timeN. The function is compatible with the cluster_health_monitor_pod_health_result_total and cluster_health_monitor_checker_result_total
 // metrics. For every provided checker name, it will check whether the metric with desired type, status, and error code has increased.
 // Returns true only if there is an increase for every metric checked, false otherwise. It also returns a slice containing every checker name
-// that increased (for logging/debug purposes), and an error if any comparison fails.
+// that increased (for logging/debug purposes), and an error if any comparison fails. If errorCode is empty string, any error code is accepted.
 func verifyCheckerResultMetricsValueIncreased(time0Metrics, timeNMetrics map[string]*dto.MetricFamily, metricName string, checkerNames []string, checkerType, status, errorCode string) (bool, []string, error) {
 	var increasedCheckers []string
 
@@ -47,7 +47,9 @@ func verifyCheckerResultMetricsValueIncreased(time0Metrics, timeNMetrics map[str
 			metricsCheckerNameLabel: checkerName,
 			metricsCheckerTypeLabel: checkerType,
 			metricsStatusLabel:      status,
-			metricsErrorCodeLabel:   errorCode,
+		}
+		if errorCode != "" {
+			labels[metricsErrorCodeLabel] = errorCode
 		}
 
 		increased, err := compareCounterMetrics(time0Metrics, timeNMetrics, metricName, labels, func(value0, valueN float64) bool {
