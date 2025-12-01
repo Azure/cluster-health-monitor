@@ -201,7 +201,7 @@ func (r *CheckNodeHealthReconciler) markCompleted(ctx context.Context, cnh *chmv
 	now := metav1.Now()
 	cnh.Status.FinishedAt = &now
 
-	healthyStatus, reason, message := r.determineHealthyCondition(cnh, pod)
+	healthyStatus, reason, message := r.determineHealthyCondition(cnh)
 
 	cnh.Status.Conditions = []metav1.Condition{
 		{
@@ -220,28 +220,8 @@ func (r *CheckNodeHealthReconciler) markCompleted(ctx context.Context, cnh *chmv
 	return nil
 }
 
-func (r *CheckNodeHealthReconciler) markFailed(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, reason, message string) error {
-	now := metav1.Now()
-	cnh.Status.FinishedAt = &now
-	cnh.Status.Conditions = []metav1.Condition{
-		{
-			Type:               ConditionTypeHealthy,
-			Status:             metav1.ConditionFalse,
-			LastTransitionTime: now,
-			Reason:             ReasonCheckFailed,
-			Message:            message,
-		},
-	}
-
-	if err := r.Status().Update(ctx, cnh); err != nil {
-		return fmt.Errorf("failed to update status: %w", err)
-	}
-
-	return nil
-}
-
 // determineHealthyCondition determines the Healthy condition status based on pod exit codes and Results
-func (r *CheckNodeHealthReconciler) determineHealthyCondition(cnh *chmv1alpha1.CheckNodeHealth, pod *corev1.Pod) (metav1.ConditionStatus, string, string) {
+func (r *CheckNodeHealthReconciler) determineHealthyCondition(cnh *chmv1alpha1.CheckNodeHealth) (metav1.ConditionStatus, string, string) {
 	if r.hasUnknownResult(cnh) {
 		return metav1.ConditionUnknown, ReasonCheckUnknown, "At least one health check result has Unknown status"
 	}
