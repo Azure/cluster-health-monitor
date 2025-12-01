@@ -228,7 +228,7 @@ jobs:
         run: |
           # Generate raw manifests from kustomize with image substitution
           # The following Azure/k8s-deploy action does not support substituting full image urls, only tags.
-          cd manifests/overlays/test
+          cd manifests/overlays/test-aks
           kubectl kustomize . | sed "s|image:.*cluster-health-monitor.*|image: chme2e${{ github.run_id }}.azurecr.io/cluster-health-monitor:${{ github.sha }}|g" > /tmp/k8s-manifests.yaml
           
           # Verify the generated manifest with substituted image
