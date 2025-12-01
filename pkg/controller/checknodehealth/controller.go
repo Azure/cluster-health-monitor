@@ -254,26 +254,6 @@ func isCompleted(cnh *chmv1alpha1.CheckNodeHealth) bool {
 	return cnh.Status.FinishedAt != nil
 }
 
-func (r *CheckNodeHealthReconciler) markFailed(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, reason string, message string) error {
-	now := metav1.Now()
-	cnh.Status.FinishedAt = &now
-	cnh.Status.Conditions = []metav1.Condition{
-		{
-			Type:               ConditionTypeHealthy,
-			Status:             metav1.ConditionFalse,
-			LastTransitionTime: now,
-			Reason:             reason,
-			Message:            message,
-		},
-	}
-
-	if err := r.Status().Update(ctx, cnh); err != nil {
-		return fmt.Errorf("failed to update status: %w", err)
-	}
-
-	return nil
-}
-
 // handleCompletion handles completed checks by cleaning up any remaining pods
 func (r *CheckNodeHealthReconciler) handleCompletion(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth) (ctrl.Result, error) {
 	if err := r.cleanupPod(ctx, cnh); err != nil {
