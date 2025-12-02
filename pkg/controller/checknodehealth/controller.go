@@ -205,7 +205,12 @@ func (r *CheckNodeHealthReconciler) determineHealthyCondition(cnh *chmv1alpha1.C
 		return metav1.ConditionUnknown, ReasonCheckUnknown, "At least one health check result has Unknown status"
 	}
 
-	// Rule 3: All Results.Status == "Healthy" (or no results yet)
+	// Rule 3: Check if no results
+	if len(cnh.Status.Results) == 0 {
+		return metav1.ConditionUnknown, ReasonCheckUnknown, "No health check results available"
+	}
+
+	// Rule 4: All Results.Status == "Healthy" (or yet)
 	if r.allResultsHealthy(cnh) {
 		return metav1.ConditionTrue, ReasonCheckPassed, "All health checks completed successfully"
 	}
