@@ -1,0 +1,6 @@
+- op: test
+  path: /spec/template/spec/containers/0/name
+  value: controller
+- op: replace
+  path: /spec/template/spec/containers/0/image
+  value: cluster-health-monitor:test-latest
