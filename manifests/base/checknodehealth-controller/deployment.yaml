@@ -1,0 +1,33 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: checknodehealth-controller
+  namespace: kube-system
+  labels:
+    app: checknodehealth-controller
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: checknodehealth-controller
+  template:
+    metadata:
+      labels:
+        app: checknodehealth-controller
+    spec:
+      serviceAccountName: checknodehealth-controller
+      containers:
+        - name: controller
+          image: mcr.microsoft.com/aks/cluster-health-monitor/cluster-health-monitor:latest
+          command: ["/controller"]
+          args:
+            - "--v=3"
+          imagePullPolicy: IfNotPresent
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 100m
+              memory: 128Mi
