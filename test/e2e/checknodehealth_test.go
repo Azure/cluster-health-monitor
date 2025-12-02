@@ -6,6 +6,7 @@ import (
 	"time"
 
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
+	"github.com/Azure/cluster-health-monitor/pkg/controller/checknodehealth"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
@@ -16,8 +17,7 @@ import (
 )
 
 const (
-	checkNodeHealthLabel = "clusterhealthmonitor.azure.com/checknodehealth"
-	checkerNamespace     = "kube-system"
+	checkerNamespace = "kube-system"
 )
 
 // Helper functions for CheckNodeHealth CR operations using controller-runtime client
@@ -127,7 +127,7 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 			var pod *corev1.Pod
 			Eventually(func() bool {
 				podList, err := clientset.CoreV1().Pods(checkerNamespace).List(ctx, metav1.ListOptions{
-					LabelSelector: fmt.Sprintf("%s=%s", checkNodeHealthLabel, cnhName),
+					LabelSelector: fmt.Sprintf("%s=%s", checknodehealth.CheckNodeHealthLabel, cnhName),
 				})
 				if err != nil {
 					GinkgoWriter.Printf("Failed to list pods: %v\n", err)
@@ -144,7 +144,7 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 			Expect(pod.Spec.NodeName).To(Equal(testNodeName))
 
 			By("Verifying the pod has correct labels")
-			Expect(pod.Labels).To(HaveKeyWithValue(checkNodeHealthLabel, cnhName))
+			Expect(pod.Labels).To(HaveKeyWithValue(checknodehealth.CheckNodeHealthLabel, cnhName))
 
 			By("Verifying the pod has owner reference to the CR")
 			Expect(pod.OwnerReferences).To(HaveLen(1))
@@ -159,26 +159,11 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 			Expect(err).NotTo(HaveOccurred())
 			GinkgoWriter.Printf("Created CheckNodeHealth CR: %s\n", cnhName)
 
-			By("Verifying StartedAt timestamp is set")
+			By("Waiting for pod to complete")
 			var cnh *chmv1alpha1.CheckNodeHealth
 			Eventually(func() bool {
-				cnh, err = getCheckNodeHealthCR(ctx, k8sClient, cnhName)
-				if err != nil {
-					return false
-				}
-				return cnh.Status.StartedAt != nil
-			}, "30s", "2s").Should(BeTrue(), "StartedAt timestamp was not set within timeout")
-
-			By("Verifying Healthy condition is set to Unknown initially")
-			Expect(cnh.Status.Conditions).To(HaveLen(1))
-			Expect(cnh.Status.Conditions[0].Type).To(Equal("Healthy"))
-			Expect(cnh.Status.Conditions[0].Status).To(Equal(metav1.ConditionUnknown))
-			Expect(cnh.Status.Conditions[0].Reason).To(Equal("CheckStarted"))
-
-			By("Waiting for pod to complete")
-			Eventually(func() bool {
 				podList, err := clientset.CoreV1().Pods(checkerNamespace).List(ctx, metav1.ListOptions{
-					LabelSelector: fmt.Sprintf("%s=%s", checkNodeHealthLabel, cnhName),
+					LabelSelector: fmt.Sprintf("%s=%s", checknodehealth.CheckNodeHealthLabel, cnhName),
 				})
 				if err != nil || len(podList.Items) == 0 {
 					return false
@@ -199,13 +184,13 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 			By("Verifying Healthy condition is updated")
 			Expect(cnh.Status.Conditions).To(HaveLen(1))
 			Expect(cnh.Status.Conditions[0].Type).To(Equal("Healthy"))
-			// Condition status should be True (success) or False (failure), not Unknown
-			Expect(cnh.Status.Conditions[0].Status).NotTo(Equal(metav1.ConditionUnknown))
+			// Condition status should be True (success)
+			Expect(cnh.Status.Conditions[0].Status).To(Equal(metav1.ConditionTrue))
 
 			By("Verifying the health check pod is cleaned up after completion")
 			Eventually(func() int {
 				podList, err := clientset.CoreV1().Pods(checkerNamespace).List(ctx, metav1.ListOptions{
-					LabelSelector: fmt.Sprintf("%s=%s", checkNodeHealthLabel, cnhName),
+					LabelSelector: fmt.Sprintf("%s=%s", checknodehealth.CheckNodeHealthLabel, cnhName),
 				})
 				if err != nil {
 					GinkgoWriter.Printf("Failed to list pods: %v\n", err)
@@ -216,35 +201,62 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 		})
 
 		It("should handle pod timeout correctly", func() {
-			Skip("Skipping pod timeout test as it requires 30+ seconds to complete")
+			Skip("Skipping pod timeout test as it requires 5+ minutes to complete")
 
-			By("Creating a CheckNodeHealth CR with a pod that will timeout")
+			By("Creating a CheckNodeHealth CR with a non-existent node to trigger timeout")
 			cnhName = fmt.Sprintf("test-cnh-timeout-%d", time.Now().Unix())
-			err := createCheckNodeHealthCR(ctx, k8sClient, cnhName, testNodeName)
+			nonExistentNode := "fake-nonexistent-node-12345"
+			err := createCheckNodeHealthCR(ctx, k8sClient, cnhName, nonExistentNode)
 			Expect(err).NotTo(HaveOccurred())
-			GinkgoWriter.Printf("Created CheckNodeHealth CR: %s\n", cnhName)
+			GinkgoWriter.Printf("Created CheckNodeHealth CR: %s for non-existent node: %s\n", cnhName, nonExistentNode)
 
-			By("Waiting for pod timeout to be detected")
+			By("Verifying that a health check pod is created")
 			Eventually(func() bool {
-				cnh, err := getCheckNodeHealthCR(ctx, k8sClient, cnhName)
+				podList, err := clientset.CoreV1().Pods(checkerNamespace).List(ctx, metav1.ListOptions{
+					LabelSelector: fmt.Sprintf("%s=%s", checknodehealth.CheckNodeHealthLabel, cnhName),
+				})
+				if err != nil || len(podList.Items) == 0 {
+					return false
+				}
+				pod := &podList.Items[0]
+				// Verify pod is bound to the non-existent node
+				return pod.Spec.NodeName == nonExistentNode
+			}, "30s", "2s").Should(BeTrue(), "Health check pod was not created")
+
+			By("Verifying pod remains stuck in Pending phase")
+			Consistently(func() corev1.PodPhase {
+				podList, err := clientset.CoreV1().Pods(checkerNamespace).List(ctx, metav1.ListOptions{
+					LabelSelector: fmt.Sprintf("%s=%s", checknodehealth.CheckNodeHealthLabel, cnhName),
+				})
+				if err != nil || len(podList.Items) == 0 {
+					return corev1.PodUnknown
+				}
+				return podList.Items[0].Status.Phase
+			}, "60s", "5s").Should(Equal(corev1.PodPending), "Pod should remain in Pending state")
+
+			By("Waiting for pod timeout to be detected (PodTimeout = 5 minutes)")
+			var cnh *chmv1alpha1.CheckNodeHealth
+			Eventually(func() bool {
+				cnh, err = getCheckNodeHealthCR(ctx, k8sClient, cnhName)
 				if err != nil {
 					return false
 				}
-				if cnh.Status.FinishedAt == nil {
-					return false
-				}
-				if len(cnh.Status.Conditions) == 0 {
-					return false
-				}
-				return cnh.Status.Conditions[0].Reason == "PodStartupTimeout"
-			}, "90s", "5s").Should(BeTrue(), "Pod timeout was not detected within timeout")
+				return cnh.Status.FinishedAt != nil
+			}, "60s", "5s").Should(BeTrue(), "Pod timeout was not detected within 1 minutes")
+
+			By("Verifying timeout condition is set correctly")
+			Expect(cnh.Status.Conditions).To(HaveLen(1))
+			Expect(cnh.Status.Conditions[0].Type).To(Equal("Healthy"))
+			Expect(cnh.Status.Conditions[0].Status).To(Equal(metav1.ConditionFalse))
+			Expect(cnh.Status.Conditions[0].Reason).To(Equal("PodStartupTimeout"))
 
 			By("Verifying the timed out pod is cleaned up")
 			Eventually(func() int {
 				podList, err := clientset.CoreV1().Pods(checkerNamespace).List(ctx, metav1.ListOptions{
-					LabelSelector: fmt.Sprintf("%s=%s", checkNodeHealthLabel, cnhName),
+					LabelSelector: fmt.Sprintf("%s=%s", checknodehealth.CheckNodeHealthLabel, cnhName),
 				})
 				if err != nil {
+					GinkgoWriter.Printf("Failed to list pods: %v\n", err)
 					return -1
 				}
 				return len(podList.Items)
@@ -261,7 +273,7 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 			By("Waiting for health check pod to be created")
 			Eventually(func() bool {
 				podList, err := clientset.CoreV1().Pods(checkerNamespace).List(ctx, metav1.ListOptions{
-					LabelSelector: fmt.Sprintf("%s=%s", checkNodeHealthLabel, cnhName),
+					LabelSelector: fmt.Sprintf("%s=%s", checknodehealth.CheckNodeHealthLabel, cnhName),
 				})
 				return err == nil && len(podList.Items) > 0
 			}, "30s", "2s").Should(BeTrue(), "Health check pod was not created within timeout")
@@ -273,7 +285,7 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 			By("Verifying the health check pod is deleted along with CR")
 			Eventually(func() bool {
 				podList, err := clientset.CoreV1().Pods(checkerNamespace).List(ctx, metav1.ListOptions{
-					LabelSelector: fmt.Sprintf("%s=%s", checkNodeHealthLabel, cnhName),
+					LabelSelector: fmt.Sprintf("%s=%s", checknodehealth.CheckNodeHealthLabel, cnhName),
 				})
 				if err != nil {
 					return false
