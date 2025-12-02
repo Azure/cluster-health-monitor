@@ -234,7 +234,7 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 				return podList.Items[0].Status.Phase
 			}, "60s", "5s").Should(Equal(corev1.PodPending), "Pod should remain in Pending state")
 
-			By("Waiting for pod timeout to be detected (PodTimeout = 5 minutes)")
+			By("Waiting for pod timeout to be detected (PodTimeout = 30 seconds)")
 			var cnh *chmv1alpha1.CheckNodeHealth
 			Eventually(func() bool {
 				cnh, err = getCheckNodeHealthCR(ctx, k8sClient, cnhName)
@@ -264,25 +264,30 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 		})
 
 		It("should cleanup pod when CR is deleted", func() {
-			By("Creating a CheckNodeHealth CR")
+			By("Creating a CheckNodeHealth CR with non-existent node")
 			cnhName = fmt.Sprintf("test-cnh-deletion-%d", time.Now().Unix())
-			err := createCheckNodeHealthCR(ctx, k8sClient, cnhName, testNodeName)
+			nonExistentNode := "fake-node-for-deletion-test"
+			err := createCheckNodeHealthCR(ctx, k8sClient, cnhName, nonExistentNode)
 			Expect(err).NotTo(HaveOccurred())
-			GinkgoWriter.Printf("Created CheckNodeHealth CR: %s\n", cnhName)
+			GinkgoWriter.Printf("Created CheckNodeHealth CR: %s with non-existent node\n", cnhName)
 
-			By("Waiting for health check pod to be created")
+			By("Waiting for health check pod to be created and stuck in Pending")
 			Eventually(func() bool {
 				podList, err := clientset.CoreV1().Pods(checkerNamespace).List(ctx, metav1.ListOptions{
 					LabelSelector: fmt.Sprintf("%s=%s", checknodehealth.CheckNodeHealthLabel, cnhName),
 				})
-				return err == nil && len(podList.Items) > 0
-			}, "30s", "2s").Should(BeTrue(), "Health check pod was not created within timeout")
+				if err != nil || len(podList.Items) == 0 {
+					return false
+				}
+				pod := &podList.Items[0]
+				return pod.Spec.NodeName == nonExistentNode && pod.Status.Phase == corev1.PodPending
+			}, "10s", "1s").Should(BeTrue(), "Health check pod was not created or not in Pending state")
 
-			By("Deleting the CheckNodeHealth CR")
+			By("Deleting the CheckNodeHealth CR before timeout (within 5 seconds of creation)")
 			err = deleteCheckNodeHealthCR(ctx, k8sClient, cnhName)
 			Expect(err).NotTo(HaveOccurred())
 
-			By("Verifying the health check pod is deleted along with CR")
+			By("Verifying the health check pod is deleted due to CR deletion (not timeout)")
 			Eventually(func() bool {
 				podList, err := clientset.CoreV1().Pods(checkerNamespace).List(ctx, metav1.ListOptions{
 					LabelSelector: fmt.Sprintf("%s=%s", checknodehealth.CheckNodeHealthLabel, cnhName),
@@ -317,7 +322,7 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 					return false
 				}
 				for _, finalizer := range cnh.Finalizers {
-					if finalizer == "checknodehealth.clusterhealthmonitor.azure.com/finalizer" {
+					if finalizer == checknodehealth.CheckNodeHealthFinalizer {
 						return true
 					}
 				}
