@@ -324,14 +324,15 @@ func TestReconcile(t *testing.T) {
 		{
 			name: "deletes expired CheckNodeHealth CR",
 			existingCR: &chmv1alpha1.CheckNodeHealth{
-				ObjectMeta: metav1.ObjectMeta{Name: "test-check"},
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-check",
+					// creation timestamp is more than 6 hours ago
+					CreationTimestamp: metav1.Time{Time: time.Now().Add(-7 * time.Hour)},
+				},
 				Spec: chmv1alpha1.CheckNodeHealthSpec{
 					NodeRef: chmv1alpha1.NodeReference{Name: "test-node"},
 				},
-				Status: chmv1alpha1.CheckNodeHealthStatus{
-					// FinishedAt is more than 6 hours ago
-					StartedAt: &metav1.Time{Time: time.Now().Add(-7 * time.Hour)},
-				},
+				Status: chmv1alpha1.CheckNodeHealthStatus{},
 			},
 			expectedResult:     ctrl.Result{},
 			expectError:        false,
