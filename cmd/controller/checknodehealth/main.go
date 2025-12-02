@@ -47,8 +47,15 @@ func main() {
 
 	klog.InfoS("Starting CheckNodeHealth Controller")
 
+	// Get Kubernetes config
+	cfg, err := ctrl.GetConfig()
+	if err != nil {
+		klog.ErrorS(err, "Unable to get kubeconfig")
+		klog.FlushAndExit(klog.ExitFlushTimeout, 1)
+	}
+
 	// Create manager
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
 		Scheme: scheme,
 		Metrics: ctrlmetricsserver.Options{
 			BindAddress: metricsAddr,
