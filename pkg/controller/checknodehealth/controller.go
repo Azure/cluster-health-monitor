@@ -236,10 +236,6 @@ func (r *CheckNodeHealthReconciler) hasUnhealthyResult(cnh *chmv1alpha1.CheckNod
 
 // allResultsHealthy checks if all results have Healthy status (or there are no results)
 func (r *CheckNodeHealthReconciler) allResultsHealthy(cnh *chmv1alpha1.CheckNodeHealth) bool {
-	// If no results, consider as healthy (checks haven't populated results yet)
-	if len(cnh.Status.Results) == 0 {
-		return true
-	}
 
 	// All results must be healthy
 	for _, result := range cnh.Status.Results {
