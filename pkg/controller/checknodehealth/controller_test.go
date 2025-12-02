@@ -3,6 +3,7 @@ package checknodehealth
 import (
 	"context"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -12,6 +13,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
 )
@@ -28,6 +30,16 @@ func setupTest() (*CheckNodeHealthReconciler, client.Client, *runtime.Scheme) {
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithStatusSubresource(&chmv1alpha1.CheckNodeHealth{}). // Enable status subresource
+		WithInterceptorFuncs(interceptor.Funcs{
+			Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+				// Set CreationTimestamp if not already set
+				ts := obj.GetCreationTimestamp()
+				if ts.IsZero() {
+					obj.SetCreationTimestamp(metav1.Now())
+				}
+				return c.Create(ctx, obj, opts...)
+			},
+		}).
 		Build()
 
 	reconciler := &CheckNodeHealthReconciler{
@@ -40,10 +52,20 @@ func setupTest() (*CheckNodeHealthReconciler, client.Client, *runtime.Scheme) {
 	return reconciler, fakeClient, scheme
 }
 
+// getHealthyCondition retrieves the Healthy condition from CheckNodeHealth status
+func getHealthyCondition(conditions []metav1.Condition) *metav1.Condition {
+	for i, condition := range conditions {
+		if condition.Type == ConditionTypeHealthy {
+			return &conditions[i]
+		}
+	}
+	return nil
+}
+
 func TestReconcile(t *testing.T) {
 	tests := []struct {
 		name                string
-		existingCnh         *chmv1alpha1.CheckNodeHealth
+		existingCR          *chmv1alpha1.CheckNodeHealth
 		existingPod         *corev1.Pod
 		triggerDeletion     bool // If true, call Delete() before Reconcile()
 		expectedResult      ctrl.Result
@@ -55,23 +77,47 @@ func TestReconcile(t *testing.T) {
 		validateFunc        func(t *testing.T, fakeClient client.Client, cnh *chmv1alpha1.CheckNodeHealth)
 	}{
 		{
-			name: "creates pod for new CheckNodeHealth",
-			existingCnh: &chmv1alpha1.CheckNodeHealth{
-				ObjectMeta: metav1.ObjectMeta{Name: "test-check"},
+			name: "create pod and adds finalizer to new CheckNodeHealth",
+			existingCR: &chmv1alpha1.CheckNodeHealth{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-finalizer"},
 				Spec: chmv1alpha1.CheckNodeHealthSpec{
 					NodeRef: chmv1alpha1.NodeReference{Name: "test-node"},
 				},
 			},
-			expectedResult:      ctrl.Result{},
+			triggerDeletion:     false,
+			expectedResult:      ctrl.Result{RequeueAfter: 30 * time.Second}, // Requeue to check pod status
 			expectError:         false,
-			expectedPodCreated:  true,
+			expectedPodCreated:  true, // Pod is created after finalizer is added
 			expectedPodDeleted:  false,
 			expectedPodNodeName: "test-node",
 			expectedPodImage:    "ubuntu:latest",
+			validateFunc: func(t *testing.T, fakeClient client.Client, cnh *chmv1alpha1.CheckNodeHealth) {
+				// Fetch the updated CheckNodeHealth to verify finalizer
+				updatedCnh := &chmv1alpha1.CheckNodeHealth{}
+				err := fakeClient.Get(context.Background(), client.ObjectKey{Name: cnh.Name}, updatedCnh)
+				if err != nil {
+					t.Errorf("Failed to get updated CheckNodeHealth: %v", err)
+					return
+				}
+
+				// Verify finalizer was added
+				hasFinalizer := false
+				for _, f := range updatedCnh.Finalizers {
+					if f == CheckNodeHealthFinalizer {
+						hasFinalizer = true
+						break
+					}
+				}
+
+				if !hasFinalizer {
+					t.Errorf("Expected finalizer %q to be added, but it wasn't. Finalizers: %v",
+						CheckNodeHealthFinalizer, updatedCnh.Finalizers)
+				}
+			},
 		},
 		{
 			name: "handles pod succeeded and cleans up",
-			existingCnh: &chmv1alpha1.CheckNodeHealth{
+			existingCR: &chmv1alpha1.CheckNodeHealth{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-check"},
 				Spec: chmv1alpha1.CheckNodeHealthSpec{
 					NodeRef: chmv1alpha1.NodeReference{Name: "test-node"},
@@ -93,18 +139,18 @@ func TestReconcile(t *testing.T) {
 			expectedPodDeleted: true,  // Pod should be cleaned up
 			validateFunc: func(t *testing.T, fakeClient client.Client, cnh *chmv1alpha1.CheckNodeHealth) {
 				// Verify CheckNodeHealth is marked as completed
-				updatedCnh := &chmv1alpha1.CheckNodeHealth{}
-				err := fakeClient.Get(context.Background(), client.ObjectKey{Name: cnh.Name}, updatedCnh)
+				cr := &chmv1alpha1.CheckNodeHealth{}
+				err := fakeClient.Get(context.Background(), client.ObjectKey{Name: cnh.Name}, cr)
 				if err != nil {
 					t.Errorf("Failed to get updated CheckNodeHealth: %v", err)
-				} else if updatedCnh.Status.FinishedAt == nil {
+				} else if cr.Status.FinishedAt == nil {
 					t.Error("Expected CheckNodeHealth to be marked as completed")
 				}
 			},
 		},
 		{
 			name: "handles pod failed and cleans up",
-			existingCnh: &chmv1alpha1.CheckNodeHealth{
+			existingCR: &chmv1alpha1.CheckNodeHealth{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-check"},
 				Spec: chmv1alpha1.CheckNodeHealthSpec{
 					NodeRef: chmv1alpha1.NodeReference{Name: "test-node"},
@@ -137,7 +183,7 @@ func TestReconcile(t *testing.T) {
 		},
 		{
 			name: "skips completed CheckNodeHealth",
-			existingCnh: &chmv1alpha1.CheckNodeHealth{
+			existingCR: &chmv1alpha1.CheckNodeHealth{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-check"},
 				Spec: chmv1alpha1.CheckNodeHealthSpec{
 					NodeRef: chmv1alpha1.NodeReference{Name: "test-node"},
@@ -154,7 +200,7 @@ func TestReconcile(t *testing.T) {
 		},
 		{
 			name:               "handles non-existent CheckNodeHealth",
-			existingCnh:        nil, // No resource exists
+			existingCR:         nil, // No resource exists
 			expectedResult:     ctrl.Result{},
 			expectError:        false,
 			expectedPodCreated: false,
@@ -162,7 +208,7 @@ func TestReconcile(t *testing.T) {
 		},
 		{
 			name: "handles pod running without cleanup",
-			existingCnh: &chmv1alpha1.CheckNodeHealth{
+			existingCR: &chmv1alpha1.CheckNodeHealth{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-check"},
 				Spec: chmv1alpha1.CheckNodeHealthSpec{
 					NodeRef: chmv1alpha1.NodeReference{Name: "test-node"},
@@ -178,53 +224,14 @@ func TestReconcile(t *testing.T) {
 				},
 				Status: corev1.PodStatus{Phase: corev1.PodRunning},
 			},
-			expectedResult:     ctrl.Result{},
+			expectedResult:     ctrl.Result{RequeueAfter: 30 * time.Second}, // Requeue to check completion
 			expectError:        false,
 			expectedPodCreated: false, // Pod already exists
 			expectedPodDeleted: false, // Running pod should not be deleted
 		},
 		{
-			name: "adds finalizer to new CheckNodeHealth",
-			existingCnh: &chmv1alpha1.CheckNodeHealth{
-				ObjectMeta: metav1.ObjectMeta{Name: "test-finalizer"},
-				Spec: chmv1alpha1.CheckNodeHealthSpec{
-					NodeRef: chmv1alpha1.NodeReference{Name: "test-node"},
-				},
-			},
-			triggerDeletion:     false,
-			expectedResult:      ctrl.Result{},
-			expectError:         false,
-			expectedPodCreated:  true, // Pod is created after finalizer is added
-			expectedPodDeleted:  false,
-			expectedPodNodeName: "test-node",
-			expectedPodImage:    "ubuntu:latest",
-			validateFunc: func(t *testing.T, fakeClient client.Client, cnh *chmv1alpha1.CheckNodeHealth) {
-				// Fetch the updated CheckNodeHealth to verify finalizer
-				updatedCnh := &chmv1alpha1.CheckNodeHealth{}
-				err := fakeClient.Get(context.Background(), client.ObjectKey{Name: cnh.Name}, updatedCnh)
-				if err != nil {
-					t.Errorf("Failed to get updated CheckNodeHealth: %v", err)
-					return
-				}
-
-				// Verify finalizer was added
-				hasFinalizer := false
-				for _, f := range updatedCnh.Finalizers {
-					if f == CheckNodeHealthFinalizer {
-						hasFinalizer = true
-						break
-					}
-				}
-
-				if !hasFinalizer {
-					t.Errorf("Expected finalizer %q to be added, but it wasn't. Finalizers: %v",
-						CheckNodeHealthFinalizer, updatedCnh.Finalizers)
-				}
-			},
-		},
-		{
 			name: "removes finalizer after successful pod cleanup on deletion",
-			existingCnh: &chmv1alpha1.CheckNodeHealth{
+			existingCR: &chmv1alpha1.CheckNodeHealth{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:       "test-deletion",
 					Finalizers: []string{CheckNodeHealthFinalizer},
@@ -265,6 +272,227 @@ func TestReconcile(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "pod stuck in pending - PodStartup is Unhealthy, Healthy condition is False",
+			existingCR: &chmv1alpha1.CheckNodeHealth{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-pending"},
+				Spec: chmv1alpha1.CheckNodeHealthSpec{
+					NodeRef: chmv1alpha1.NodeReference{Name: "test-node"},
+				},
+			},
+			existingPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:              "check-node-health-test-pending",
+					Namespace:         "default",
+					CreationTimestamp: metav1.NewTime(time.Now().Add(-2 * time.Minute)), // Old enough to timeout
+					Labels: map[string]string{
+						CheckNodeHealthLabel: "test-pending",
+					},
+				},
+				Status: corev1.PodStatus{Phase: corev1.PodPending},
+			},
+			expectedResult:     ctrl.Result{},
+			expectError:        false,
+			expectedPodCreated: false,
+			expectedPodDeleted: true,
+			validateFunc: func(t *testing.T, fakeClient client.Client, cnh *chmv1alpha1.CheckNodeHealth) {
+				updatedCR := &chmv1alpha1.CheckNodeHealth{}
+				if err := fakeClient.Get(context.Background(), client.ObjectKey{Name: cnh.Name}, updatedCR); err != nil {
+					t.Fatalf("Failed to get updated CheckNodeHealth: %v", err)
+				}
+
+				// Verify check completed
+				if updatedCR.Status.FinishedAt == nil {
+					t.Error("Expected FinishedAt to be set after check completion")
+				}
+
+				// Verify Healthy condition is False
+				healthyCondition := getHealthyCondition(updatedCR.Status.Conditions)
+				if healthyCondition == nil {
+					t.Fatal("Healthy condition not found in status")
+				}
+
+				if healthyCondition.Status != metav1.ConditionFalse {
+					t.Errorf("Expected condition status False, got %v", healthyCondition.Status)
+				}
+
+				if healthyCondition.Reason != ReasonCheckFailed {
+					t.Errorf("Expected reason %q, got %q", ReasonCheckFailed, healthyCondition.Reason)
+				}
+			},
+		},
+		{
+			name: "some result is Unhealthy - Healthy condition is False",
+			existingCR: &chmv1alpha1.CheckNodeHealth{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-unhealthy"},
+				Spec: chmv1alpha1.CheckNodeHealthSpec{
+					NodeRef: chmv1alpha1.NodeReference{Name: "test-node"},
+				},
+				Status: chmv1alpha1.CheckNodeHealthStatus{
+					Results: []chmv1alpha1.CheckResult{
+						{
+							Name:    "PodStartup",
+							Status:  chmv1alpha1.CheckStatusUnknown,
+							Message: "Pod started unknown",
+						},
+						{
+							Name:      "SomeChecker",
+							Status:    chmv1alpha1.CheckStatusUnhealthy,
+							Message:   "Check failed",
+							ErrorCode: "CheckFailed",
+						},
+					},
+				},
+			},
+			existingPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "check-node-health-test-unhealthy",
+					Namespace: "default",
+					Labels: map[string]string{
+						CheckNodeHealthLabel: "test-unhealthy",
+					},
+				},
+				Status: corev1.PodStatus{Phase: corev1.PodSucceeded},
+			},
+			expectedResult:     ctrl.Result{},
+			expectError:        false,
+			expectedPodCreated: false,
+			expectedPodDeleted: true,
+			validateFunc: func(t *testing.T, fakeClient client.Client, cnh *chmv1alpha1.CheckNodeHealth) {
+				updatedCR := &chmv1alpha1.CheckNodeHealth{}
+				if err := fakeClient.Get(context.Background(), client.ObjectKey{Name: cnh.Name}, updatedCR); err != nil {
+					t.Fatalf("Failed to get updated CheckNodeHealth: %v", err)
+				}
+
+				// Verify Healthy condition is False
+				healthyCondition := getHealthyCondition(updatedCR.Status.Conditions)
+				if healthyCondition == nil {
+					t.Fatal("Healthy condition not found in status")
+				}
+
+				if healthyCondition.Status != metav1.ConditionFalse {
+					t.Errorf("Expected condition status False, got %v", healthyCondition.Status)
+				}
+
+				if healthyCondition.Reason != ReasonCheckFailed {
+					t.Errorf("Expected reason %q, got %q", ReasonCheckFailed, healthyCondition.Reason)
+				}
+			},
+		},
+		{
+			name: "all checker results are Healthy - Healthy condition is True",
+			existingCR: &chmv1alpha1.CheckNodeHealth{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-all-healthy"},
+				Spec: chmv1alpha1.CheckNodeHealthSpec{
+					NodeRef: chmv1alpha1.NodeReference{Name: "test-node"},
+				},
+				Status: chmv1alpha1.CheckNodeHealthStatus{
+					Results: []chmv1alpha1.CheckResult{
+						{
+							Name:    "PodStartup",
+							Status:  chmv1alpha1.CheckStatusHealthy,
+							Message: "Pod started successfully",
+						},
+						{
+							Name:    "PodNetwork",
+							Status:  chmv1alpha1.CheckStatusHealthy,
+							Message: "Network check passed",
+						},
+					},
+				},
+			},
+			existingPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "check-node-health-test-all-healthy",
+					Namespace: "default",
+					Labels: map[string]string{
+						CheckNodeHealthLabel: "test-all-healthy",
+					},
+				},
+				Status: corev1.PodStatus{Phase: corev1.PodSucceeded},
+			},
+			expectedResult:     ctrl.Result{},
+			expectError:        false,
+			expectedPodCreated: false,
+			expectedPodDeleted: true,
+			validateFunc: func(t *testing.T, fakeClient client.Client, cnh *chmv1alpha1.CheckNodeHealth) {
+				updatedCR := &chmv1alpha1.CheckNodeHealth{}
+				if err := fakeClient.Get(context.Background(), client.ObjectKey{Name: cnh.Name}, updatedCR); err != nil {
+					t.Fatalf("Failed to get updated CheckNodeHealth: %v", err)
+				}
+
+				// Verify Healthy condition is True
+				healthyCondition := getHealthyCondition(updatedCR.Status.Conditions)
+				if healthyCondition == nil {
+					t.Fatal("Healthy condition not found in status")
+				}
+
+				if healthyCondition.Status != metav1.ConditionTrue {
+					t.Errorf("Expected condition status True, got %v", healthyCondition.Status)
+				}
+
+				if healthyCondition.Reason != ReasonCheckPassed {
+					t.Errorf("Expected reason %q, got %q", ReasonCheckPassed, healthyCondition.Reason)
+				}
+			},
+		},
+		{
+			name: "any checker result is Unknown - Healthy condition is Unknown",
+			existingCR: &chmv1alpha1.CheckNodeHealth{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-unknown"},
+				Spec: chmv1alpha1.CheckNodeHealthSpec{
+					NodeRef: chmv1alpha1.NodeReference{Name: "test-node"},
+				},
+				Status: chmv1alpha1.CheckNodeHealthStatus{
+					Results: []chmv1alpha1.CheckResult{
+						{
+							Name:    "PodStartup",
+							Status:  chmv1alpha1.CheckStatusHealthy,
+							Message: "Pod started successfully",
+						},
+						{
+							Name:    "SomeChecker",
+							Status:  chmv1alpha1.CheckStatusUnknown,
+							Message: "Unable to determine status",
+						},
+					},
+				},
+			},
+			existingPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "check-node-health-test-unknown",
+					Namespace: "default",
+					Labels: map[string]string{
+						CheckNodeHealthLabel: "test-unknown",
+					},
+				},
+				Status: corev1.PodStatus{Phase: corev1.PodSucceeded},
+			},
+			expectedResult:     ctrl.Result{},
+			expectError:        false,
+			expectedPodCreated: false,
+			expectedPodDeleted: true,
+			validateFunc: func(t *testing.T, fakeClient client.Client, cnh *chmv1alpha1.CheckNodeHealth) {
+				updatedCR := &chmv1alpha1.CheckNodeHealth{}
+				if err := fakeClient.Get(context.Background(), client.ObjectKey{Name: cnh.Name}, updatedCR); err != nil {
+					t.Fatalf("Failed to get updated CheckNodeHealth: %v", err)
+				}
+
+				// Verify Healthy condition is Unknown
+				healthyCondition := getHealthyCondition(updatedCR.Status.Conditions)
+				if healthyCondition == nil {
+					t.Fatal("Healthy condition not found in status")
+				}
+
+				if healthyCondition.Status != metav1.ConditionUnknown {
+					t.Errorf("Expected condition status Unknown, got %v", healthyCondition.Status)
+				}
+
+				if healthyCondition.Reason != ReasonCheckUnknown {
+					t.Errorf("Expected reason %q, got %q", ReasonCheckUnknown, healthyCondition.Reason)
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -273,8 +501,8 @@ func TestReconcile(t *testing.T) {
 			ctx := context.Background()
 
 			// Setup existing resources
-			if tt.existingCnh != nil {
-				if err := fakeClient.Create(ctx, tt.existingCnh); err != nil {
+			if tt.existingCR != nil {
+				if err := fakeClient.Create(ctx, tt.existingCR); err != nil {
 					t.Fatalf("Failed to create CheckNodeHealth: %v", err)
 				}
 			}
@@ -285,16 +513,16 @@ func TestReconcile(t *testing.T) {
 			}
 
 			// Trigger deletion if requested (sets DeletionTimestamp)
-			if tt.triggerDeletion && tt.existingCnh != nil {
-				if err := fakeClient.Delete(ctx, tt.existingCnh); err != nil {
+			if tt.triggerDeletion && tt.existingCR != nil {
+				if err := fakeClient.Delete(ctx, tt.existingCR); err != nil {
 					t.Fatalf("Failed to delete CheckNodeHealth: %v", err)
 				}
 			}
 
 			// Execute reconcile
 			cnhName := "test-check"
-			if tt.existingCnh != nil {
-				cnhName = tt.existingCnh.Name
+			if tt.existingCR != nil {
+				cnhName = tt.existingCR.Name
 			}
 			req := ctrl.Request{
 				NamespacedName: types.NamespacedName{Name: cnhName},
@@ -349,8 +577,8 @@ func TestReconcile(t *testing.T) {
 			}
 
 			// Run custom validation if provided
-			if tt.validateFunc != nil && tt.existingCnh != nil {
-				tt.validateFunc(t, fakeClient, tt.existingCnh)
+			if tt.validateFunc != nil && tt.existingCR != nil {
+				tt.validateFunc(t, fakeClient, tt.existingCR)
 			}
 		})
 	}
