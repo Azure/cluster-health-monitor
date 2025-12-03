@@ -24,6 +24,11 @@ spec:
           args:
             - "--v=5"
           imagePullPolicy: IfNotPresent
+          env:
+            - name: CHECKER_IMAGE
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.containers[0].image
           resources:
             requests:
               cpu: 10m

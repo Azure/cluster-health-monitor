@@ -109,12 +109,10 @@ func (r *CheckNodeHealthReconciler) buildHealthCheckPod(cnh *chmv1alpha1.CheckNo
 			NodeName:      cnh.Spec.NodeRef.Name, // Schedule on specific node
 			Containers: []corev1.Container{
 				{
-					Name:  "node-health-checker",
-					Image: r.CheckerPodImage,
-
-					//TODO: this is placeholder command for test; replace with actual health check logic
-					Command: []string{"/bin/sh", "-c"},
-					Args:    []string{"sleep 10"},
+					Name:    "node-health-checker",
+					Image:   r.CheckerPodImage,
+					Command: []string{"/nodechecker"},
+					Args:    []string{fmt.Sprintf("--name=%s", cnh.Name)},
 				},
 			},
 		},

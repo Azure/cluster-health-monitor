@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"os"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -27,8 +28,6 @@ func init() {
 }
 
 const (
-	// TODO: make configurable
-	podImage     = "ubuntu:latest"
 	podNamespace = "kube-system"
 )
 
@@ -50,6 +49,14 @@ func main() {
 	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
 
 	klog.InfoS("Starting CheckNodeHealth Controller")
+
+	// Get checker pod image from environment variable
+	checkerImage := os.Getenv("CHECKER_IMAGE")
+	if checkerImage == "" {
+		klog.ErrorS(nil, "CHECKER_IMAGE environment variable is not set")
+		klog.FlushAndExit(klog.ExitFlushTimeout, 1)
+	}
+	klog.InfoS("Using checker pod image from CHECKER_IMAGE", "image", checkerImage)
 
 	// Get Kubernetes config
 	cfg, err := ctrl.GetConfig()
@@ -78,7 +85,7 @@ func main() {
 		Client:              mgr.GetClient(),
 		Scheme:              mgr.GetScheme(),
 		CheckerPodLabel:     "checknodehealth", // Label to identify health check pods
-		CheckerPodImage:     podImage,
+		CheckerPodImage:     checkerImage,
 		CheckerPodNamespace: podNamespace,
 	}).SetupWithManager(mgr); err != nil {
 		klog.ErrorS(err, "Unable to create controller", "controller", "CheckNodeHealth")
