@@ -22,7 +22,7 @@ spec:
           image: mcr.microsoft.com/aks/cluster-health-monitor/cluster-health-monitor:latest
           command: ["/controller"]
           args:
-            - "--v=3"
+            - "--v=5"
           imagePullPolicy: IfNotPresent
           resources:
             requests:
