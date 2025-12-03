@@ -94,227 +94,204 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 		GinkgoWriter.Printf("Using node %s for tests\n", testNodeName)
 	})
 
-	Describe("Creating CheckNodeHealth CR", func() {
-		var (
-			cnhName string
-		)
+	var (
+		cnhName string
+	)
 
-		AfterEach(func() {
-			// if cnhName != "" {
-			// 	By("Cleaning up CheckNodeHealth CR")
-			// 	err := deleteCheckNodeHealthCR(ctx, k8sClient, cnhName)
-			// 	if err != nil {
-			// 		GinkgoWriter.Printf("Warning: Failed to delete CheckNodeHealth %s: %v\n", cnhName, err)
-			// 	}
+	AfterEach(func() {
+		if cnhName != "" {
+			By("Cleaning up CheckNodeHealth CR")
+			err := deleteCheckNodeHealthCR(ctx, k8sClient, cnhName)
+			if err != nil {
+				GinkgoWriter.Printf("Warning: Failed to delete CheckNodeHealth %s: %v\n", cnhName, err)
+			}
 
-			// 	// Wait for CR to be deleted
-			// 	Eventually(func() bool {
-			// 		return !checkNodeHealthCRExists(ctx, k8sClient, cnhName)
-			// 	}, "30s", "1s").Should(BeTrue(), "CheckNodeHealth CR was not deleted within timeout")
-
-			// 	cnhName = ""
-			// }
-		})
-
-		// It("should create a health check pod on the target node", func() {
-		// 	By("Creating a CheckNodeHealth CR")
-		// 	cnhName = fmt.Sprintf("test-cnh-%d", time.Now().Unix())
-		// 	err := createCheckNodeHealthCR(ctx, k8sClient, cnhName, testNodeName)
-		// 	Expect(err).NotTo(HaveOccurred())
-		// 	GinkgoWriter.Printf("Created CheckNodeHealth CR: %s\n", cnhName)
-
-		// 	By("Verifying that a health check pod is created")
-		// 	var pod *corev1.Pod
-		// 	Eventually(func() bool {
-		// 		podList, err := clientset.CoreV1().Pods(checkerNamespace).List(ctx, metav1.ListOptions{
-		// 			LabelSelector: fmt.Sprintf("%s=%s", checknodehealth.CheckNodeHealthLabel, cnhName),
-		// 		})
-		// 		if err != nil {
-		// 			GinkgoWriter.Printf("Failed to list pods: %v\n", err)
-		// 			return false
-		// 		}
-		// 		if len(podList.Items) > 0 {
-		// 			pod = &podList.Items[0]
-		// 			return true
-		// 		}
-		// 		return false
-		// 	}, "60s", "2s").Should(BeTrue(), "Health check pod was not created within timeout")
-
-		// 	By("Verifying the pod is scheduled on the correct node")
-		// 	Expect(pod.Spec.NodeName).To(Equal(testNodeName))
-
-		// 	By("Verifying the pod has correct labels")
-		// 	Expect(pod.Labels).To(HaveKeyWithValue(checknodehealth.CheckNodeHealthLabel, cnhName))
-
-		// 	By("Verifying the pod has owner reference to the CR")
-		// 	Expect(pod.OwnerReferences).To(HaveLen(1))
-		// 	Expect(pod.OwnerReferences[0].Name).To(Equal(cnhName))
-		// 	Expect(pod.OwnerReferences[0].Kind).To(Equal("CheckNodeHealth"))
-		// })
-
-		It("should update CR status when pod completes successfully", func() {
-			By("Creating a CheckNodeHealth CR")
-			cnhName = fmt.Sprintf("test-cnh-success-%d", time.Now().Unix())
-			err := createCheckNodeHealthCR(ctx, k8sClient, cnhName, testNodeName)
-			Expect(err).NotTo(HaveOccurred())
-			GinkgoWriter.Printf("Created CheckNodeHealth CR: %s\n", cnhName)
-
-			By("Verifying FinishedAt timestamp is set")
-			var cnh *chmv1alpha1.CheckNodeHealth
-			Eventually(func() bool {
-				cnh, err = getCheckNodeHealthCR(ctx, k8sClient, cnhName)
-				if err != nil {
-					return false
-				}
-				return cnh.Status.FinishedAt != nil
-			}, "60s", "2s").Should(BeTrue(), "FinishedAt timestamp was not set within timeout")
-
-			By("Verifying Healthy condition is updated to True")
-			Expect(cnh.Status.Conditions).To(HaveLen(1))
-			Expect(cnh.Status.Conditions[0].Type).To(Equal("Healthy"))
-			Expect(cnh.Status.Conditions[0].Status).To(Equal(metav1.ConditionTrue))
-
-			By("Verifying the health check pod is cleaned up after completion")
-			Eventually(func() int {
-				podList, err := clientset.CoreV1().Pods(checkerNamespace).List(ctx, metav1.ListOptions{
-					LabelSelector: fmt.Sprintf("%s=%s", checknodehealth.CheckNodeHealthLabel, cnhName),
-				})
-				if err != nil {
-					GinkgoWriter.Printf("Failed to list pods: %v\n", err)
-					return -1
-				}
-				return len(podList.Items)
-			}, "60s", "2s").Should(Equal(0), "Health check pod was not cleaned up within timeout")
-		})
-
-		It("should handle pod timeout correctly", func() {
-			By("Creating a CheckNodeHealth CR with a non-existent node to trigger timeout")
-			cnhName = fmt.Sprintf("test-cnh-timeout-%d", time.Now().Unix())
-			nonExistentNode := "fake-nonexistent-node-12345"
-			err := createCheckNodeHealthCR(ctx, k8sClient, cnhName, nonExistentNode)
-			Expect(err).NotTo(HaveOccurred())
-			GinkgoWriter.Printf("Created CheckNodeHealth CR: %s for non-existent node: %s\n", cnhName, nonExistentNode)
-
-			By("Verifying that a health check pod is created")
-			Eventually(func() bool {
-				podList, err := clientset.CoreV1().Pods(checkerNamespace).List(ctx, metav1.ListOptions{
-					LabelSelector: fmt.Sprintf("%s=%s", checknodehealth.CheckNodeHealthLabel, cnhName),
-				})
-				if err != nil || len(podList.Items) == 0 {
-					return false
-				}
-				pod := &podList.Items[0]
-				// Verify pod is bound to the non-existent node
-				return pod.Spec.NodeName == nonExistentNode
-			}, "30s", "2s").Should(BeTrue(), "Health check pod was not created")
-
-			By("Verifying pod remains stuck in Pending phase")
-			Consistently(func() corev1.PodPhase {
-				podList, err := clientset.CoreV1().Pods(checkerNamespace).List(ctx, metav1.ListOptions{
-					LabelSelector: fmt.Sprintf("%s=%s", checknodehealth.CheckNodeHealthLabel, cnhName),
-				})
-				if err != nil || len(podList.Items) == 0 {
-					return corev1.PodUnknown
-				}
-				return podList.Items[0].Status.Phase
-			}, "20s", "5s").Should(Equal(corev1.PodPending), "Pod should remain in Pending state")
-
-			By("Waiting for pod timeout to be detected (PodTimeout = 30 seconds)")
-			var cnh *chmv1alpha1.CheckNodeHealth
-			Eventually(func() bool {
-				cnh, err = getCheckNodeHealthCR(ctx, k8sClient, cnhName)
-				if err != nil {
-					return false
-				}
-				return cnh.Status.FinishedAt != nil
-			}, "60s", "5s").Should(BeTrue(), "Pod timeout was not detected within 1 minutes")
-
-			By("Verifying timeout condition is set correctly")
-			Expect(cnh.Status.Conditions).To(HaveLen(1))
-			Expect(cnh.Status.Conditions[0].Type).To(Equal("Healthy"))
-			Expect(cnh.Status.Conditions[0].Status).To(Equal(metav1.ConditionFalse))
-
-			By("Verifying the timed out pod is cleaned up")
-			Eventually(func() int {
-				podList, err := clientset.CoreV1().Pods(checkerNamespace).List(ctx, metav1.ListOptions{
-					LabelSelector: fmt.Sprintf("%s=%s", checknodehealth.CheckNodeHealthLabel, cnhName),
-				})
-				if err != nil {
-					GinkgoWriter.Printf("Failed to list pods: %v\n", err)
-					return -1
-				}
-				return len(podList.Items)
-			}, "30s", "2s").Should(Equal(0), "Timed out pod was not cleaned up within timeout")
-		})
-
-		It("should cleanup pod when CR is deleted", func() {
-			By("Creating a CheckNodeHealth CR with non-existent node")
-			cnhName = fmt.Sprintf("test-cnh-deletion-%d", time.Now().Unix())
-			nonExistentNode := "fake-node-for-deletion-test"
-			err := createCheckNodeHealthCR(ctx, k8sClient, cnhName, nonExistentNode)
-			Expect(err).NotTo(HaveOccurred())
-			GinkgoWriter.Printf("Created CheckNodeHealth CR: %s with non-existent node\n", cnhName)
-
-			By("Waiting for health check pod to be created and stuck in Pending")
-			Eventually(func() bool {
-				podList, err := clientset.CoreV1().Pods(checkerNamespace).List(ctx, metav1.ListOptions{
-					LabelSelector: fmt.Sprintf("%s=%s", checknodehealth.CheckNodeHealthLabel, cnhName),
-				})
-				if err != nil || len(podList.Items) == 0 {
-					return false
-				}
-				pod := &podList.Items[0]
-				return pod.Spec.NodeName == nonExistentNode && pod.Status.Phase == corev1.PodPending
-			}, "10s", "1s").Should(BeTrue(), "Health check pod was not created or not in Pending state")
-
-			By("Deleting the CheckNodeHealth CR before timeout (within 5 seconds of creation)")
-			err = deleteCheckNodeHealthCR(ctx, k8sClient, cnhName)
-			Expect(err).NotTo(HaveOccurred())
-
-			By("Verifying the health check pod is deleted due to CR deletion (not timeout)")
-			Eventually(func() bool {
-				podList, err := clientset.CoreV1().Pods(checkerNamespace).List(ctx, metav1.ListOptions{
-					LabelSelector: fmt.Sprintf("%s=%s", checknodehealth.CheckNodeHealthLabel, cnhName),
-				})
-				if err != nil {
-					return false
-				}
-				return len(podList.Items) == 0
-			}, "60s", "2s").Should(BeTrue(), "Health check pod was not deleted within timeout")
-
-			By("Verifying the CheckNodeHealth CR is deleted")
+			// Wait for CR to be deleted
 			Eventually(func() bool {
 				return !checkNodeHealthCRExists(ctx, k8sClient, cnhName)
 			}, "30s", "1s").Should(BeTrue(), "CheckNodeHealth CR was not deleted within timeout")
 
-			// Prevent cleanup in AfterEach since we already deleted it
 			cnhName = ""
-		})
+		}
+	})
 
-		It("should add finalizer to prevent premature deletion", func() {
-			By("Creating a CheckNodeHealth CR")
-			cnhName = fmt.Sprintf("test-cnh-finalizer-%d", time.Now().Unix())
-			err := createCheckNodeHealthCR(ctx, k8sClient, cnhName, testNodeName)
-			Expect(err).NotTo(HaveOccurred())
-			GinkgoWriter.Printf("Created CheckNodeHealth CR: %s\n", cnhName)
+	It("should update CR status when pod completes successfully", func() {
+		By("Creating a CheckNodeHealth CR")
+		cnhName = fmt.Sprintf("test-cnh-success-%d", time.Now().Unix())
+		err := createCheckNodeHealthCR(ctx, k8sClient, cnhName, testNodeName)
+		Expect(err).NotTo(HaveOccurred())
+		GinkgoWriter.Printf("Created CheckNodeHealth CR: %s\n", cnhName)
 
-			By("Verifying finalizer is added")
-			var cnh *chmv1alpha1.CheckNodeHealth
-			Eventually(func() bool {
-				cnh, err = getCheckNodeHealthCR(ctx, k8sClient, cnhName)
-				if err != nil {
-					return false
-				}
-				for _, finalizer := range cnh.Finalizers {
-					if finalizer == checknodehealth.CheckNodeHealthFinalizer {
-						return true
-					}
-				}
+		By("Verifying FinishedAt timestamp is set")
+		var cnh *chmv1alpha1.CheckNodeHealth
+		Eventually(func() bool {
+			cnh, err = getCheckNodeHealthCR(ctx, k8sClient, cnhName)
+			if err != nil {
 				return false
-			}, "30s", "2s").Should(BeTrue(), "Finalizer was not added within timeout")
+			}
+			return cnh.Status.FinishedAt != nil
+		}, "60s", "2s").Should(BeTrue(), "FinishedAt timestamp was not set within timeout")
 
-			By("Verifying finalizer count")
-			Expect(cnh.Finalizers).To(HaveLen(1))
-		})
+		By("Verifying Healthy condition is updated to True")
+		Expect(cnh.Status.Conditions).To(HaveLen(1))
+		Expect(cnh.Status.Conditions[0].Type).To(Equal("Healthy"))
+		Expect(cnh.Status.Conditions[0].Status).To(Equal(metav1.ConditionTrue))
+
+		By("Verifying the health check pod is cleaned up after completion")
+		Eventually(func() int {
+			podList, err := clientset.CoreV1().Pods(checkerNamespace).List(ctx, metav1.ListOptions{
+				LabelSelector: fmt.Sprintf("%s=%s", checknodehealth.CheckNodeHealthLabel, cnhName),
+			})
+			if err != nil {
+				GinkgoWriter.Printf("Failed to list pods: %v\n", err)
+				return -1
+			}
+			return len(podList.Items)
+		}, "60s", "2s").Should(Equal(0), "Health check pod was not cleaned up within timeout")
+	})
+
+	It("should handle pod timeout correctly", func() {
+		By("Creating a CheckNodeHealth CR with a non-existent node to trigger timeout")
+		cnhName = fmt.Sprintf("test-cnh-timeout-%d", time.Now().Unix())
+		nonExistentNode := "fake-nonexistent-node-12345"
+		err := createCheckNodeHealthCR(ctx, k8sClient, cnhName, nonExistentNode)
+		Expect(err).NotTo(HaveOccurred())
+		GinkgoWriter.Printf("Created CheckNodeHealth CR: %s for non-existent node: %s\n", cnhName, nonExistentNode)
+
+		By("Verifying that a health check pod is created")
+		Eventually(func() bool {
+			podList, err := clientset.CoreV1().Pods(checkerNamespace).List(ctx, metav1.ListOptions{
+				LabelSelector: fmt.Sprintf("%s=%s", checknodehealth.CheckNodeHealthLabel, cnhName),
+			})
+			if err != nil || len(podList.Items) == 0 {
+				return false
+			}
+			pod := &podList.Items[0]
+			// Verify pod is bound to the non-existent node
+			return pod.Spec.NodeName == nonExistentNode
+		}, "30s", "2s").Should(BeTrue(), "Health check pod was not created")
+
+		By("Verifying pod remains stuck in Pending phase")
+		Consistently(func() corev1.PodPhase {
+			podList, err := clientset.CoreV1().Pods(checkerNamespace).List(ctx, metav1.ListOptions{
+				LabelSelector: fmt.Sprintf("%s=%s", checknodehealth.CheckNodeHealthLabel, cnhName),
+			})
+			if err != nil || len(podList.Items) == 0 {
+				return corev1.PodUnknown
+			}
+			return podList.Items[0].Status.Phase
+		}, "20s", "5s").Should(Equal(corev1.PodPending), "Pod should remain in Pending state")
+
+		By("Waiting for pod timeout to be detected (PodTimeout = 30 seconds)")
+		var cnh *chmv1alpha1.CheckNodeHealth
+		Eventually(func() bool {
+			cnh, err = getCheckNodeHealthCR(ctx, k8sClient, cnhName)
+			if err != nil {
+				return false
+			}
+			return cnh.Status.FinishedAt != nil
+		}, "60s", "5s").Should(BeTrue(), "Pod timeout was not detected within 1 minutes")
+
+		By("Verifying timeout condition is set correctly")
+		Expect(cnh.Status.Conditions).To(HaveLen(1))
+		Expect(cnh.Status.Conditions[0].Type).To(Equal("Healthy"))
+		Expect(cnh.Status.Conditions[0].Status).To(Equal(metav1.ConditionFalse))
+
+		By("Verifying PodStartup result is recorded as Unhealthy")
+		var podStartupResult *chmv1alpha1.CheckResult
+		for i := range cnh.Status.Results {
+			if cnh.Status.Results[i].Name == "PodStartup" {
+				podStartupResult = &cnh.Status.Results[i]
+				break
+			}
+		}
+		Expect(podStartupResult).NotTo(BeNil(), "PodStartup result should be present")
+		Expect(podStartupResult.Status).To(Equal(chmv1alpha1.CheckStatusUnhealthy))
+		Expect(podStartupResult.Message).To(ContainSubstring("timeout"))
+
+		By("Verifying StartedAt timestamp is set")
+		Expect(cnh.Status.StartedAt).NotTo(BeNil())
+
+		By("Verifying the timed out pod is cleaned up")
+		Eventually(func() int {
+			podList, err := clientset.CoreV1().Pods(checkerNamespace).List(ctx, metav1.ListOptions{
+				LabelSelector: fmt.Sprintf("%s=%s", checknodehealth.CheckNodeHealthLabel, cnhName),
+			})
+			if err != nil {
+				GinkgoWriter.Printf("Failed to list pods: %v\n", err)
+				return -1
+			}
+			return len(podList.Items)
+		}, "30s", "2s").Should(Equal(0), "Timed out pod was not cleaned up within timeout")
+	})
+
+	It("should cleanup pod when CR is deleted", func() {
+		By("Creating a CheckNodeHealth CR with non-existent node")
+		cnhName = fmt.Sprintf("test-cnh-deletion-%d", time.Now().Unix())
+		nonExistentNode := "fake-node-for-deletion-test"
+		err := createCheckNodeHealthCR(ctx, k8sClient, cnhName, nonExistentNode)
+		Expect(err).NotTo(HaveOccurred())
+		GinkgoWriter.Printf("Created CheckNodeHealth CR: %s with non-existent node\n", cnhName)
+
+		By("Waiting for health check pod to be created and stuck in Pending")
+		Eventually(func() bool {
+			podList, err := clientset.CoreV1().Pods(checkerNamespace).List(ctx, metav1.ListOptions{
+				LabelSelector: fmt.Sprintf("%s=%s", checknodehealth.CheckNodeHealthLabel, cnhName),
+			})
+			if err != nil || len(podList.Items) == 0 {
+				return false
+			}
+			pod := &podList.Items[0]
+			return pod.Spec.NodeName == nonExistentNode && pod.Status.Phase == corev1.PodPending
+		}, "10s", "1s").Should(BeTrue(), "Health check pod was not created or not in Pending state")
+
+		By("Deleting the CheckNodeHealth CR before timeout (within 5 seconds of creation)")
+		err = deleteCheckNodeHealthCR(ctx, k8sClient, cnhName)
+		Expect(err).NotTo(HaveOccurred())
+
+		By("Verifying the health check pod is deleted due to CR deletion (not timeout)")
+		Eventually(func() bool {
+			podList, err := clientset.CoreV1().Pods(checkerNamespace).List(ctx, metav1.ListOptions{
+				LabelSelector: fmt.Sprintf("%s=%s", checknodehealth.CheckNodeHealthLabel, cnhName),
+			})
+			if err != nil {
+				return false
+			}
+			return len(podList.Items) == 0
+		}, "60s", "2s").Should(BeTrue(), "Health check pod was not deleted within timeout")
+
+		By("Verifying the CheckNodeHealth CR is deleted")
+		Eventually(func() bool {
+			return !checkNodeHealthCRExists(ctx, k8sClient, cnhName)
+		}, "30s", "1s").Should(BeTrue(), "CheckNodeHealth CR was not deleted within timeout")
+
+		// Prevent cleanup in AfterEach since we already deleted it
+		cnhName = ""
+	})
+
+	It("should add finalizer to prevent premature deletion", func() {
+		By("Creating a CheckNodeHealth CR")
+		cnhName = fmt.Sprintf("test-cnh-finalizer-%d", time.Now().Unix())
+		err := createCheckNodeHealthCR(ctx, k8sClient, cnhName, testNodeName)
+		Expect(err).NotTo(HaveOccurred())
+		GinkgoWriter.Printf("Created CheckNodeHealth CR: %s\n", cnhName)
+
+		By("Verifying finalizer is added")
+		var cnh *chmv1alpha1.CheckNodeHealth
+		Eventually(func() bool {
+			cnh, err = getCheckNodeHealthCR(ctx, k8sClient, cnhName)
+			if err != nil {
+				return false
+			}
+			for _, finalizer := range cnh.Finalizers {
+				if finalizer == checknodehealth.CheckNodeHealthFinalizer {
+					return true
+				}
+			}
+			return false
+		}, "30s", "2s").Should(BeTrue(), "Finalizer was not added within timeout")
+
+		By("Verifying finalizer count")
+		Expect(cnh.Finalizers).To(HaveLen(1))
 	})
 })
