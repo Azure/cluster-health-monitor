@@ -10,8 +10,10 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
 )
@@ -53,9 +55,14 @@ type CheckNodeHealthReconciler struct {
 
 // SetupWithManager sets up the controller with the Manager
 func (r *CheckNodeHealthReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	// Only watch pods in the same namespace where we create them
+	podPredicate := predicate.NewPredicateFuncs(func(obj client.Object) bool {
+		return obj.GetNamespace() == r.CheckerPodNamespace
+	})
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&chmv1alpha1.CheckNodeHealth{}).
-		Owns(&corev1.Pod{}). // Watch pods created by this controller
+		Owns(&corev1.Pod{}, builder.WithPredicates(podPredicate)). // Watch pods only in checker namespace
 		Complete(r)
 }
 
