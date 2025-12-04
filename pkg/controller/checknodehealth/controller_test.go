@@ -322,6 +322,32 @@ func TestReconcile(t *testing.T) {
 			},
 		},
 		{
+			name: "deletes expired CheckNodeHealth CR",
+			existingCR: &chmv1alpha1.CheckNodeHealth{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "test-check",
+					// creation timestamp is more than 6 hours ago
+					CreationTimestamp: metav1.Time{Time: time.Now().Add(-7 * time.Hour)},
+				},
+				Spec: chmv1alpha1.CheckNodeHealthSpec{
+					NodeRef: chmv1alpha1.NodeReference{Name: "test-node"},
+				},
+				Status: chmv1alpha1.CheckNodeHealthStatus{},
+			},
+			expectedResult:     ctrl.Result{},
+			expectError:        false,
+			expectedPodCreated: false,
+			expectedPodDeleted: false,
+			validateFunc: func(t *testing.T, fakeClient client.Client, cnh *chmv1alpha1.CheckNodeHealth) {
+				// Verify CheckNodeHealth is deleted
+				updatedCnh := &chmv1alpha1.CheckNodeHealth{}
+				err := fakeClient.Get(context.Background(), client.ObjectKey{Name: cnh.Name}, updatedCnh)
+				if !apierrors.IsNotFound(err) {
+					t.Error("Expected CheckNodeHealth to be deleted, but it still exists")
+				}
+			},
+		},
+		{
 			name: "some result is Unhealthy - Healthy condition is False",
 			existingCR: &chmv1alpha1.CheckNodeHealth{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-unhealthy"},
