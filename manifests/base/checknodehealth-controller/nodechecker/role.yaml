@@ -1,0 +1,15 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: checknodehealth-checker
+  labels:
+    app: checknodehealth-checker
+rules:
+  # Allow updating CheckNodeHealth status
+  - apiGroups: ["chm.azure.com"]
+    resources: ["checknodehealths"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["chm.azure.com"]
+    resources: ["checknodehealths/status"]
+    verbs: ["get", "update", "patch"]

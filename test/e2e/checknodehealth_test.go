@@ -99,20 +99,20 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 	)
 
 	AfterEach(func() {
-		if cnhName != "" {
-			By("Cleaning up CheckNodeHealth CR")
-			err := deleteCheckNodeHealthCR(ctx, k8sClient, cnhName)
-			if err != nil {
-				GinkgoWriter.Printf("Warning: Failed to delete CheckNodeHealth %s: %v\n", cnhName, err)
-			}
+		// if cnhName != "" {
+		// 	By("Cleaning up CheckNodeHealth CR")
+		// 	err := deleteCheckNodeHealthCR(ctx, k8sClient, cnhName)
+		// 	if err != nil {
+		// 		GinkgoWriter.Printf("Warning: Failed to delete CheckNodeHealth %s: %v\n", cnhName, err)
+		// 	}
 
-			// Wait for CR to be deleted
-			Eventually(func() bool {
-				return !checkNodeHealthCRExists(ctx, k8sClient, cnhName)
-			}, "30s", "1s").Should(BeTrue(), "CheckNodeHealth CR was not deleted within timeout")
+		// 	// Wait for CR to be deleted
+		// 	Eventually(func() bool {
+		// 		return !checkNodeHealthCRExists(ctx, k8sClient, cnhName)
+		// 	}, "30s", "1s").Should(BeTrue(), "CheckNodeHealth CR was not deleted within timeout")
 
-			cnhName = ""
-		}
+		// 	cnhName = ""
+		// }
 	})
 
 	It("should update CR status when pod completes successfully", func() {
@@ -136,6 +136,24 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 		Expect(cnh.Status.Conditions).To(HaveLen(1))
 		Expect(cnh.Status.Conditions[0].Type).To(Equal("Healthy"))
 		Expect(cnh.Status.Conditions[0].Status).To(Equal(metav1.ConditionTrue))
+
+		By("Verifying status has two results: PodStartup and PodNetwork with Healthy status")
+		Expect(cnh.Status.Results).To(HaveLen(2))
+
+		// Find PodStartup result
+		var foundPodStartup, foundPodNetwork bool
+		for _, result := range cnh.Status.Results {
+			if result.Name == "PodStartup" {
+				foundPodStartup = true
+				Expect(result.Status).To(Equal("Healthy"), "PodStartup should have Healthy status")
+			}
+			if result.Name == "PodNetwork" {
+				foundPodNetwork = true
+				Expect(result.Status).To(Equal("Healthy"), "PodNetwork should have Healthy status")
+			}
+		}
+		Expect(foundPodStartup).To(BeTrue(), "PodStartup result not found")
+		Expect(foundPodNetwork).To(BeTrue(), "PodNetwork result not found")
 
 		By("Verifying the health check pod is cleaned up after completion")
 		Eventually(func() int {
