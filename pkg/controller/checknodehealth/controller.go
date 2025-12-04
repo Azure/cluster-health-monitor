@@ -29,6 +29,16 @@ const (
 	// CheckNodeHealthLabel is the label key used to identify check node health pods
 	CheckNodeHealthLabel = "clusterhealthmonitor.azure.com/checknodehealth"
 
+	// DefaultCheckerServiceAccount is the default service account name for checker pods
+	DefaultCheckerServiceAccount = "checknodehealth-checker"
+
+	// AnnotationCheckerServiceAccount is the annotation key to override the checker pod service account.
+	// This is primarily for E2E testing purposes to simulate failure scenarios where the checker
+	// pod cannot successfully complete its checks. By specifying a service account without proper
+	// permissions (e.g., "default"), E2E tests can verify the controller's behavior when the checker
+	// fails to write results to the CheckNodeHealth status, which should result in Healthy=Unknown.
+	AnnotationCheckerServiceAccount = "checknodehealth.azure.com/checker-service-account"
+
 	// ConditionTypeHealthy is the condition type used to indicate a healthy state.
 	ConditionTypeHealthy = "Healthy"
 
@@ -38,6 +48,11 @@ const (
 	ReasonCheckFailed       = "CheckFailed"
 	ReasonCheckUnknown      = "CheckUnknown"
 	ReasonPodStartupTimeout = "PodStartupTimeout"
+)
+
+var (
+	// ExpectedResults is the list of all expected health check results
+	ExpectedResults = []string{"PodStartup", "PodNetwork"}
 )
 
 // CheckNodeHealthReconciler reconciles a CheckNodeHealth object
@@ -246,15 +261,25 @@ func (r *CheckNodeHealthReconciler) hasUnhealthyResult(cnh *chmv1alpha1.CheckNod
 	return false
 }
 
-// allResultsHealthy checks if all results have Healthy status (or there are no results)
-func (r *CheckNodeHealthReconciler) allResultsHealthy(cnh *chmv1alpha1.CheckNodeHealth) bool {
-
-	// All results must be healthy
+// findResult searches for a result by name in the CheckNodeHealth status
+func (r *CheckNodeHealthReconciler) findResult(cnh *chmv1alpha1.CheckNodeHealth, name string) (bool, chmv1alpha1.CheckResult) {
 	for _, result := range cnh.Status.Results {
-		if result.Status != chmv1alpha1.CheckStatusHealthy {
+		if result.Name == name {
+			return true, result
+		}
+	}
+	return false, chmv1alpha1.CheckResult{}
+}
+
+// allResultsHealthy checks if all expected results have Healthy status
+func (r *CheckNodeHealthReconciler) allResultsHealthy(cnh *chmv1alpha1.CheckNodeHealth) bool {
+	for _, expectedName := range ExpectedResults {
+		found, result := r.findResult(cnh, expectedName)
+		if !found || result.Status != chmv1alpha1.CheckStatusHealthy {
 			return false
 		}
 	}
+
 	return true
 }
 

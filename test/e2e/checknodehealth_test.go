@@ -99,20 +99,20 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 	)
 
 	AfterEach(func() {
-		// if cnhName != "" {
-		// 	By("Cleaning up CheckNodeHealth CR")
-		// 	err := deleteCheckNodeHealthCR(ctx, k8sClient, cnhName)
-		// 	if err != nil {
-		// 		GinkgoWriter.Printf("Warning: Failed to delete CheckNodeHealth %s: %v\n", cnhName, err)
-		// 	}
+		if cnhName != "" {
+			By("Cleaning up CheckNodeHealth CR")
+			err := deleteCheckNodeHealthCR(ctx, k8sClient, cnhName)
+			if err != nil {
+				GinkgoWriter.Printf("Warning: Failed to delete CheckNodeHealth %s: %v\n", cnhName, err)
+			}
 
-		// 	// Wait for CR to be deleted
-		// 	Eventually(func() bool {
-		// 		return !checkNodeHealthCRExists(ctx, k8sClient, cnhName)
-		// 	}, "30s", "1s").Should(BeTrue(), "CheckNodeHealth CR was not deleted within timeout")
+			// Wait for CR to be deleted
+			Eventually(func() bool {
+				return !checkNodeHealthCRExists(ctx, k8sClient, cnhName)
+			}, "30s", "1s").Should(BeTrue(), "CheckNodeHealth CR was not deleted within timeout")
 
-		// 	cnhName = ""
-		// }
+			cnhName = ""
+		}
 	})
 
 	It("should update CR status when pod completes successfully", func() {
@@ -321,5 +321,62 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 
 		By("Verifying finalizer count")
 		Expect(cnh.Finalizers).To(HaveLen(1))
+	})
+
+	It("should set condition to Unknown when checker pod fails without writing results", func() {
+		By("Creating a CheckNodeHealth CR with default service account (no permissions)")
+		cnhName = fmt.Sprintf("test-cnh-no-perms-%d", time.Now().Unix())
+		cnh := &chmv1alpha1.CheckNodeHealth{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: cnhName,
+				Annotations: map[string]string{
+					checknodehealth.AnnotationCheckerServiceAccount: "default",
+				},
+			},
+			Spec: chmv1alpha1.CheckNodeHealthSpec{
+				NodeRef: chmv1alpha1.NodeReference{
+					Name: testNodeName,
+				},
+			},
+		}
+		err := k8sClient.Create(ctx, cnh)
+		Expect(err).NotTo(HaveOccurred())
+		GinkgoWriter.Printf("Created CheckNodeHealth CR: %s with default service account\n", cnhName)
+
+		By("Waiting for FinishedAt timestamp to be set indicating controller finished processing")
+		var updatedCnh *chmv1alpha1.CheckNodeHealth
+		Eventually(func() bool {
+			updatedCnh, err = getCheckNodeHealthCR(ctx, k8sClient, cnhName)
+			if err != nil {
+				return false
+			}
+			return updatedCnh.Status.FinishedAt != nil
+		}, "60s", "2s").Should(BeTrue(), "FinishedAt timestamp was not set within timeout")
+
+		By("Verifying that condition is set to Unknown when checker fails without writing results")
+		Expect(updatedCnh.Status.Conditions).To(HaveLen(1))
+		Expect(updatedCnh.Status.Conditions[0].Type).To(Equal("Healthy"))
+		Expect(updatedCnh.Status.Conditions[0].Status).To(Equal(metav1.ConditionUnknown))
+
+		By("Verifying no PodNetwork results aren't recorded")
+		var hasPodNetwork bool
+		for _, result := range updatedCnh.Status.Results {
+			if result.Name == "PodNetwork" {
+				hasPodNetwork = true
+				break
+			}
+		}
+		Expect(hasPodNetwork).To(BeFalse(), "PodNetwork result should not exist when checker fails")
+
+		By("Verifying PodStartup result is recorded as Healthy")
+		var podStartupResult *chmv1alpha1.CheckResult
+		for i := range updatedCnh.Status.Results {
+			if updatedCnh.Status.Results[i].Name == "PodStartup" {
+				podStartupResult = &updatedCnh.Status.Results[i]
+				break
+			}
+		}
+		Expect(podStartupResult).NotTo(BeNil(), "PodStartup result should be present")
+		Expect(podStartupResult.Status).To(Equal(chmv1alpha1.CheckStatusHealthy), "PodStartup should be Healthy even if container fails after starting")
 	})
 })
