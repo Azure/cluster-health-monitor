@@ -94,8 +94,8 @@ kind-create-cluster:
 			echo "apiVersion: kind.x-k8s.io/v1alpha4"; \
 			echo "nodes:"; \
 			echo "- role: control-plane"; \
-			echo "- role: control-plane"; \
-			echo "- role: control-plane"; \
+			echo "- role: worker"; \
+			echo "- role: worker"; \
 		} | kind create cluster --name $(KIND_CLUSTER_NAME) --config=-; \
 		echo "Configuring CoreDNS with 3 replicas spread across nodes"; \
 		kubectl --context kind-$(KIND_CLUSTER_NAME) patch deployment coredns -n kube-system -p '{"spec":{"replicas":3,"strategy":{"type":"RollingUpdate","rollingUpdate":{"maxSurge":0,"maxUnavailable":1}},"template":{"spec":{"affinity":{"podAntiAffinity":{"requiredDuringSchedulingIgnoredDuringExecution":[{"labelSelector":{"matchLabels":{"k8s-app":"kube-dns"}},"topologyKey":"kubernetes.io/hostname"}]}}}}}}'; \

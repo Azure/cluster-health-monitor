@@ -26,9 +26,7 @@ spec:
           imagePullPolicy: IfNotPresent
           env:
             - name: CHECKER_IMAGE
-              valueFrom:
-                fieldRef:
-                  fieldPath: spec.containers[0].image
+              value: "mcr.microsoft.com/aks/cluster-health-monitor/cluster-health-monitor:latest"
           resources:
             requests:
               cpu: 10m
