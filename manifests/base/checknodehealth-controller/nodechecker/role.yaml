@@ -7,9 +7,17 @@ metadata:
     app: checknodehealth-checker
 rules:
   # Allow updating CheckNodeHealth status
-  - apiGroups: ["chm.azure.com"]
+  - apiGroups: ["clusterhealthmonitor.azure.com"]
     resources: ["checknodehealths"]
     verbs: ["get", "list", "watch"]
-  - apiGroups: ["chm.azure.com"]
+  - apiGroups: ["clusterhealthmonitor.azure.com"]
     resources: ["checknodehealths/status"]
     verbs: ["get", "update", "patch"]
+  # Allow listing pods for CoreDNS checks
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  # Allow getting services for DNS checks
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list", "watch"]

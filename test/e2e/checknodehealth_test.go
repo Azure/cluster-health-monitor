@@ -145,11 +145,11 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 		for _, result := range cnh.Status.Results {
 			if result.Name == "PodStartup" {
 				foundPodStartup = true
-				Expect(result.Status).To(Equal("Healthy"), "PodStartup should have Healthy status")
+				Expect(result.Status).To(Equal(chmv1alpha1.CheckStatusHealthy), "PodStartup should have Healthy status")
 			}
 			if result.Name == "PodNetwork" {
 				foundPodNetwork = true
-				Expect(result.Status).To(Equal("Healthy"), "PodNetwork should have Healthy status")
+				Expect(result.Status).To(Equal(chmv1alpha1.CheckStatusHealthy), "PodNetwork should have Healthy status")
 			}
 		}
 		Expect(foundPodStartup).To(BeTrue(), "PodStartup result not found")

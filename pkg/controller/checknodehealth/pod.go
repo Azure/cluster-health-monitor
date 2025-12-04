@@ -7,6 +7,7 @@ import (
 
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -35,10 +36,10 @@ func (r *CheckNodeHealthReconciler) cleanupPod(ctx context.Context, cnh *chmv1al
 	// Delete all matching pods
 	for _, pod := range podList.Items {
 		klog.InfoS("Deleting health check pod", "pod", pod.Name, "cr", cnh.Name)
-		// if err := r.Delete(ctx, &pod); err != nil && !apierrors.IsNotFound(err) {
-		// 	klog.ErrorS(err, "Failed to delete pod", "pod", pod.Name)
-		// 	return fmt.Errorf("failed to delete pod %s: %w", pod.Name, err)
-		// }
+		if err := r.Delete(ctx, &pod); err != nil && !apierrors.IsNotFound(err) {
+			klog.ErrorS(err, "Failed to delete pod", "pod", pod.Name)
+			return fmt.Errorf("failed to delete pod %s: %w", pod.Name, err)
+		}
 	}
 
 	if len(podList.Items) > 0 {
