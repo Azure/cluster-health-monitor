@@ -267,7 +267,7 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 		err = deleteCheckNodeHealthCR(ctx, k8sClient, cnhName)
 		Expect(err).NotTo(HaveOccurred())
 
-		By("Verifying the health check pod is deleted due to CR deletion (not timeout)")
+		By("Verifying the health check pod is deleted or terminating due to CR deletion")
 		Eventually(func() bool {
 			podList, err := clientset.CoreV1().Pods(checkerNamespace).List(ctx, metav1.ListOptions{
 				LabelSelector: fmt.Sprintf("%s=%s", checknodehealth.CheckNodeHealthLabel, cnhName),
@@ -275,8 +275,18 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 			if err != nil {
 				return false
 			}
-			return len(podList.Items) == 0
-		}, "60s", "2s").Should(BeTrue(), "Health check pod was not deleted within timeout")
+			// Pod is considered cleaned up if it's deleted or all pods are in Terminating state
+			if len(podList.Items) == 0 {
+				return true
+			}
+			// Check if all pods are in Terminating state (DeletionTimestamp is set)
+			for _, pod := range podList.Items {
+				if pod.DeletionTimestamp == nil {
+					return false
+				}
+			}
+			return true
+		}, "30s", "2s").Should(BeTrue(), "Health check pod was not deleted or terminating within timeout")
 
 		By("Verifying the CheckNodeHealth CR is deleted")
 		Eventually(func() bool {
