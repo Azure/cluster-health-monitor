@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"os"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -10,6 +11,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	ctrlmetricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
@@ -46,11 +48,29 @@ func main() {
 	flag.Parse()
 	defer klog.Flush()
 
+	// Set up controller-runtime logger
+	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
+
 	klog.InfoS("Starting CheckNodeHealth Controller")
+
+	// Get checker pod image from environment variable
+	checkerImage := os.Getenv("CHECKER_IMAGE")
+	if checkerImage == "" {
+		klog.ErrorS(nil, "CHECKER_IMAGE environment variable is not set")
+		klog.FlushAndExit(klog.ExitFlushTimeout, 1)
+	}
+	klog.InfoS("Using checker pod image from CHECKER_IMAGE", "image", checkerImage)
+
+	// Get Kubernetes config
+	cfg, err := ctrl.GetConfig()
+	if err != nil {
+		klog.ErrorS(err, "Unable to get kubeconfig")
+		klog.FlushAndExit(klog.ExitFlushTimeout, 1)
+	}
 
 	// Create manager
 	syncPeriod := checknodehealth.SyncPeriod
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
 		Scheme: scheme,
 		Metrics: ctrlmetricsserver.Options{
 			BindAddress: metricsAddr,
@@ -72,7 +92,7 @@ func main() {
 		Client:              mgr.GetClient(),
 		Scheme:              mgr.GetScheme(),
 		CheckerPodLabel:     "checknodehealth", // Label to identify health check pods
-		CheckerPodImage:     podImage,
+		CheckerPodImage:     checkerImage,
 		CheckerPodNamespace: podNamespace,
 	}).SetupWithManager(mgr); err != nil {
 		klog.ErrorS(err, "Unable to create controller", "controller", "CheckNodeHealth")
