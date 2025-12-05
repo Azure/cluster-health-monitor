@@ -11,7 +11,6 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
-	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	ctrlmetricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
@@ -47,12 +46,11 @@ func main() {
 	defer klog.Flush()
 
 	// Set up controller-runtime logger
-	ctrl.SetLogger(zap.New(zap.UseDevMode(true)))
+	ctrl.SetLogger(klog.NewKlogr())
 
 	klog.InfoS("Starting CheckNodeHealth Controller")
 
 	// Get checker pod image from environment variable
-	// TODO: config this via in manifest
 	checkerPodImage := os.Getenv("CHECKER_POD_IMAGE")
 	if checkerPodImage == "" {
 		klog.ErrorS(nil, "CHECKER_POD_IMAGE environment variable is not set")
