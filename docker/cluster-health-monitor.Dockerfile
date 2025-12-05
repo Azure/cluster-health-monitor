@@ -1,4 +1,4 @@
-# Build the clusterhealthmonitor binary
+# Build the clusterhealthmonitor, controller, and nodechecker binaries
 FROM mcr.microsoft.com/oss/go/microsoft/golang:1.24.9 AS builder
 
 WORKDIR /workspace
@@ -10,18 +10,23 @@ COPY go.sum go.sum
 RUN go mod download
 
 # Copy the go source
-COPY cmd/clusterhealthmonitor/ cmd/clusterhealthmonitor/
+COPY cmd/ cmd/
 COPY pkg/ pkg/
+COPY apis/ apis/
 
-# Build
+# Build all binaries
 RUN CGO_ENABLED=1 GOEXPERIMENT=systemcrypto go build -o clusterhealthmonitor cmd/clusterhealthmonitor/main.go
+RUN CGO_ENABLED=1 GOEXPERIMENT=systemcrypto go build -o controller cmd/controller/checknodehealth/main.go
+RUN CGO_ENABLED=1 GOEXPERIMENT=systemcrypto go build -o nodechecker cmd/nodechecker/main.go
 
-# Use distroless as minimal base image to package the clusterhealthmonitor binary
+# Use distroless as minimal base image to package the binaries
 # Using distroless/base instead of distroless/minimal because it comes with SymCrypt and SymCrypt-OpenSSL which are required FIPS/Azure compliance
 # Refer to https://mcr.microsoft.com/en-us/artifact/mar/azurelinux/distroless/base/about for more details
 FROM mcr.microsoft.com/azurelinux/distroless/base:3.0
 WORKDIR /
 COPY --from=builder /workspace/clusterhealthmonitor .
+COPY --from=builder /workspace/controller .
+COPY --from=builder /workspace/nodechecker .
 USER 65532:65532
 
 ENTRYPOINT ["/clusterhealthmonitor"]

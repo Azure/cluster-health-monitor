@@ -1,20 +1,5 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  - ../../base
-patches:
-  - target:
-      kind: Deployment
-      name: cluster-health-monitor
-      namespace: kube-system
-    path: image.patch.yaml
-  - target:
-      kind: Deployment
-      name: cluster-health-monitor
-      namespace: kube-system
-    path: localdns.patch.yaml
-  - target:
-      kind: ConfigMap
-      name: cluster-health-monitor-config
-      namespace: kube-system
-    path: configmap.patch.yaml
+  - cluster-health-monitor
+  - checknodehealth-controller
