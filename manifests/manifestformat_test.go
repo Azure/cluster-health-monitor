@@ -16,7 +16,7 @@ import (
 
 func Test_ValidateConfigMapFile(t *testing.T) {
 	g := NewWithT(t)
-	data, err := os.ReadFile("base/configmap.yaml")
+	data, err := os.ReadFile("base/cluster-health-monitor/configmap.yaml")
 	g.Expect(err).ToNot(HaveOccurred())
 
 	var configMap corev1.ConfigMap
