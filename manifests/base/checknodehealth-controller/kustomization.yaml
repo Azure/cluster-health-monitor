@@ -4,5 +4,6 @@ resources:
   - crd.yaml
   - role.yaml
   - serviceaccount.yaml
+  - rolebinding.yaml
   - deployment.yaml
   - nodechecker

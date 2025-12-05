@@ -4,7 +4,6 @@ ifndef TAG
 endif
 CLUSTER_HEALTH_MONITOR_IMAGE_VERSION ?= $(TAG)
 CLUSTER_HEALTH_MONITOR_IMAGE_NAME ?= cluster-health-monitor
-CONTROLLER_IMAGE_NAME ?= controller
 
 ## --------------------------------------
 ## Build
@@ -32,7 +31,6 @@ PLATFORM ?= linux/amd64,linux/arm64
 .PHONY: push
 push:
 	$(MAKE) OUTPUT_TYPE="type=registry" docker-build-cluster-health-monitor
-	$(MAKE) OUTPUT_TYPE="type=registry" docker-build-controller
 
 # By default, docker buildx create will pull image moby/buildkit:buildx-stable-1 and hit the too many requests error
 .PHONY: docker-buildx-builder
@@ -51,15 +49,6 @@ docker-build-cluster-health-monitor: docker-buildx-builder
 		--platform="$(PLATFORM)" \
 		--pull \
 		--tag $(REGISTRY)/$(CLUSTER_HEALTH_MONITOR_IMAGE_NAME):$(CLUSTER_HEALTH_MONITOR_IMAGE_VERSION) .
-
-.PHONY: docker-build-controller
-docker-build-controller: docker-buildx-builder
-	docker buildx build \
-		--file docker/$(CONTROLLER_IMAGE_NAME).Dockerfile \
-		--output=$(OUTPUT_TYPE) \
-		--platform="$(PLATFORM)" \
-		--pull \
-		--tag $(REGISTRY)/$(CONTROLLER_IMAGE_NAME):$(CLUSTER_HEALTH_MONITOR_IMAGE_VERSION) .
 
 ## -----------------------------------
 ## Tests
