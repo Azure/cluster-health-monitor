@@ -10,7 +10,7 @@ spec:
   replicas: 1
   selector:
     matchLabels:
-      app: cluster-health-monitor
+      app.kubernetes.io/name: cluster-health-monitor
   template:
     metadata:
       labels:
