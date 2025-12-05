@@ -13,4 +13,4 @@ subjects:
 - kind: ServiceAccount
   name: checknodehealth-controller
   namespace: kube-system
-  
+ 
