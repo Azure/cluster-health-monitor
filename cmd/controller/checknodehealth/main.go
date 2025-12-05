@@ -29,9 +29,7 @@ func init() {
 }
 
 const (
-	// TODO: make configurable
-	podImage     = "ubuntu:latest"
-	podNamespace = "kube-system"
+	checkerPodNamespace = "kube-system"
 )
 
 func main() {
@@ -54,12 +52,13 @@ func main() {
 	klog.InfoS("Starting CheckNodeHealth Controller")
 
 	// Get checker pod image from environment variable
-	checkerImage := os.Getenv("CHECKER_IMAGE")
-	if checkerImage == "" {
-		klog.ErrorS(nil, "CHECKER_IMAGE environment variable is not set")
+	// TODO: config this via in manifest
+	checkerPodImage := os.Getenv("CHECKER_POD_IMAGE")
+	if checkerPodImage == "" {
+		klog.ErrorS(nil, "CHECKER_POD_IMAGE environment variable is not set")
 		klog.FlushAndExit(klog.ExitFlushTimeout, 1)
 	}
-	klog.InfoS("Using checker pod image from CHECKER_IMAGE", "image", checkerImage)
+	klog.InfoS("Using checker pod image from CHECKER_POD_IMAGE", "image", checkerPodImage)
 
 	// Get Kubernetes config
 	cfg, err := ctrl.GetConfig()
@@ -92,8 +91,8 @@ func main() {
 		Client:              mgr.GetClient(),
 		Scheme:              mgr.GetScheme(),
 		CheckerPodLabel:     "checknodehealth", // Label to identify health check pods
-		CheckerPodImage:     checkerImage,
-		CheckerPodNamespace: podNamespace,
+		CheckerPodImage:     checkerPodImage,
+		CheckerPodNamespace: checkerPodNamespace,
 	}).SetupWithManager(mgr); err != nil {
 		klog.ErrorS(err, "Unable to create controller", "controller", "CheckNodeHealth")
 		klog.FlushAndExit(klog.ExitFlushTimeout, 1)
