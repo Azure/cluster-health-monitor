@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"os"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -27,9 +28,7 @@ func init() {
 }
 
 const (
-	// TODO: make configurable
-	podImage     = "ubuntu:latest"
-	podNamespace = "kube-system"
+	checkerPodNamespace = "kube-system"
 )
 
 func main() {
@@ -46,11 +45,29 @@ func main() {
 	flag.Parse()
 	defer klog.Flush()
 
+	// Set up controller-runtime logger
+	ctrl.SetLogger(klog.NewKlogr())
+
 	klog.InfoS("Starting CheckNodeHealth Controller")
+
+	// Get checker pod image from environment variable
+	checkerPodImage := os.Getenv("CHECKER_POD_IMAGE")
+	if checkerPodImage == "" {
+		klog.ErrorS(nil, "CHECKER_POD_IMAGE environment variable is not set")
+		klog.FlushAndExit(klog.ExitFlushTimeout, 1)
+	}
+	klog.InfoS("Using checker pod image from CHECKER_POD_IMAGE", "image", checkerPodImage)
+
+	// Get Kubernetes config
+	cfg, err := ctrl.GetConfig()
+	if err != nil {
+		klog.ErrorS(err, "Unable to get kubeconfig")
+		klog.FlushAndExit(klog.ExitFlushTimeout, 1)
+	}
 
 	// Create manager
 	syncPeriod := checknodehealth.SyncPeriod
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
 		Scheme: scheme,
 		Metrics: ctrlmetricsserver.Options{
 			BindAddress: metricsAddr,
@@ -72,8 +89,8 @@ func main() {
 		Client:              mgr.GetClient(),
 		Scheme:              mgr.GetScheme(),
 		CheckerPodLabel:     "checknodehealth", // Label to identify health check pods
-		CheckerPodImage:     podImage,
-		CheckerPodNamespace: podNamespace,
+		CheckerPodImage:     checkerPodImage,
+		CheckerPodNamespace: checkerPodNamespace,
 	}).SetupWithManager(mgr); err != nil {
 		klog.ErrorS(err, "Unable to create controller", "controller", "CheckNodeHealth")
 		klog.FlushAndExit(klog.ExitFlushTimeout, 1)

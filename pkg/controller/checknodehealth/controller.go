@@ -40,6 +40,16 @@ const (
 	// CheckNodeHealthLabel is the label key used to identify check node health pods
 	CheckNodeHealthLabel = "clusterhealthmonitor.azure.com/checknodehealth"
 
+	// DefaultCheckerServiceAccount is the default service account name for checker pods
+	DefaultCheckerServiceAccount = "checknodehealth-checker"
+
+	// AnnotationCheckerServiceAccount is the annotation key to override the checker pod service account.
+	// This is primarily for E2E testing purposes to simulate failure scenarios where the checker
+	// pod cannot successfully complete its checks. By specifying a service account without proper
+	// permissions (e.g., "default"), E2E tests can verify the controller's behavior when the checker
+	// fails to write results to the CheckNodeHealth status, which should result in Healthy=Unknown.
+	AnnotationCheckerServiceAccount = "checknodehealth.azure.com/checker-service-account"
+
 	// ConditionTypeHealthy is the condition type used to indicate a healthy state.
 	ConditionTypeHealthy = "Healthy"
 
