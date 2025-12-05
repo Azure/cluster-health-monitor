@@ -1,0 +1,85 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-health-monitor-config
+  namespace: kube-system
+data:
+  config.yaml: |
+    checkers:
+      - name: "InternalCoreDNS"
+        type: "DNS"
+        interval: "10s"
+        timeout: "5s"
+        dnsConfig:
+          domain: "kubernetes.default.svc.cluster.local"
+          target: "CoreDNS"
+          queryTimeout: "2s"
+      - name: "ExternalCoreDNS"
+        type: "DNS"
+        interval: "10s"
+        timeout: "5s"
+        dnsConfig:
+          domain: "mcr.microsoft.com"
+          target: "CoreDNS"
+          queryTimeout: "2s"
+      - name: "InternalCoreDNSPerPod"
+        type: "DNS"
+        interval: "10s"
+        timeout: "5s"
+        dnsConfig:
+          domain: "kubernetes.default.svc.cluster.local"
+          target: "CoreDNSPerPod"
+          queryTimeout: "2s"
+      - name: "ExternalCoreDNSPerPod"
+        type: "DNS"
+        interval: "10s"
+        timeout: "5s"
+        dnsConfig:
+          domain: "mcr.microsoft.com"
+          target: "CoreDNSPerPod"
+          queryTimeout: "2s"
+      - name: "InternalLocalDNS"
+        type: "DNS"
+        interval: "10s"
+        timeout: "5s"
+        dnsConfig:
+          domain: "kubernetes.default.svc.cluster.local"
+          target: "LocalDNS"
+          queryTimeout: "2s"
+      - name: "ExternalLocalDNS"
+        type: "DNS"
+        interval: "10s"
+        timeout: "5s"
+        dnsConfig:
+          domain: "mcr.microsoft.com"
+          target: "LocalDNS"
+          queryTimeout: "2s"
+      - name: "PodStartup"
+        type: "PodStartup"
+        interval: "1m"
+        timeout: "30s"
+        podStartupConfig:
+          syntheticPodNamespace: "kube-system"
+          syntheticPodLabelKey: "kubernetes.azure.com/cluster-health-monitor-checker-synthetic"
+          syntheticPodStartupTimeout: "5s"
+          maxSyntheticPods: 10
+          tcpTimeout: "2s"
+      - name: "APIServer"
+        type: "APIServer"
+        interval: "30s"
+        timeout: "5s"
+        apiServerConfig:
+          namespace: "kube-system"
+          labelKey: "kubernetes.azure.com/cluster-health-monitor-checker-apiserver"
+          mutateTimeout: "1s"
+          readTimeout: "1s"
+          maxObjects: 10
+      - name: "MetricsServer"
+        type: "MetricsServer"
+        interval: "30s"
+        timeout: "10s"
+      - name: "AzurePolicy"
+        type: "AzurePolicy"
+        interval: "1m"
+        timeout: "10s"
