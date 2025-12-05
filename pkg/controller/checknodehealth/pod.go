@@ -98,6 +98,12 @@ func (r *CheckNodeHealthReconciler) buildHealthCheckPod(cnh *chmv1alpha1.CheckNo
 		CheckNodeHealthLabel: cnh.Name,
 	}
 
+	// Determine service account name from annotation or use default
+	serviceAccountName := DefaultCheckerServiceAccount
+	if sa, ok := cnh.Annotations[AnnotationCheckerServiceAccount]; ok && sa != "" {
+		serviceAccountName = sa
+	}
+
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      podName,
@@ -105,16 +111,15 @@ func (r *CheckNodeHealthReconciler) buildHealthCheckPod(cnh *chmv1alpha1.CheckNo
 			Labels:    labels,
 		},
 		Spec: corev1.PodSpec{
-			RestartPolicy: corev1.RestartPolicyNever,
-			NodeName:      cnh.Spec.NodeRef.Name, // Schedule on specific node
+			ServiceAccountName: serviceAccountName,
+			RestartPolicy:      corev1.RestartPolicyNever,
+			NodeName:           cnh.Spec.NodeRef.Name, // Schedule on specific node
 			Containers: []corev1.Container{
 				{
-					Name:  "node-health-checker",
-					Image: r.CheckerPodImage,
-
-					//TODO: this is placeholder command for test; replace with actual health check logic
-					Command: []string{"/bin/sh", "-c"},
-					Args:    []string{"sleep 10"},
+					Name:    "node-health-checker",
+					Image:   r.CheckerPodImage,
+					Command: []string{"/nodechecker"},
+					Args:    []string{fmt.Sprintf("--name=%s", cnh.Name)},
 				},
 			},
 		},
