@@ -4,6 +4,8 @@ kind: ServiceAccount
 metadata:
   name: cluster-health-monitor
   namespace: kube-system
+  labels:
+    app.kubernetes.io/name: cluster-health-monitor
 ---
 # Role for accessing kube-dns and endpointslices in kube-system.
 apiVersion: rbac.authorization.k8s.io/v1
@@ -11,6 +13,8 @@ kind: Role
 metadata:
   name: cluster-health-monitor-kubedns-reader
   namespace: kube-system
+  labels:
+    app.kubernetes.io/name: cluster-health-monitor
 rules:
   - apiGroups: [ "" ]
     resources: [ "services" ]
@@ -175,6 +179,3 @@ subjects:
   - kind: ServiceAccount
     name: cluster-health-monitor
     namespace: kube-system
----
-
-

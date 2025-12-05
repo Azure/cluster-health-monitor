@@ -94,8 +94,8 @@ func (r *CheckNodeHealthReconciler) ensureHealthCheckPod(ctx context.Context, cn
 func (r *CheckNodeHealthReconciler) buildHealthCheckPod(cnh *chmv1alpha1.CheckNodeHealth) (*corev1.Pod, error) {
 	podName := generateHealthCheckPodName(cnh)
 	labels := map[string]string{
-		"app":                "cluster-health-monitor",
-		CheckNodeHealthLabel: cnh.Name,
+		"app.kubernetes.io/name": "cluster-health-monitor",
+		CheckNodeHealthLabel:     cnh.Name,
 	}
 
 	// Determine service account name from annotation or use default

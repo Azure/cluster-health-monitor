@@ -4,7 +4,7 @@ kind: ClusterRole
 metadata:
   name: checknodehealth-checker
   labels:
-    app: checknodehealth-checker
+    app.kubernetes.io/name: cluster-health-monitor
 rules:
   # Allow updating CheckNodeHealth status
   - apiGroups: ["clusterhealthmonitor.azure.com"]

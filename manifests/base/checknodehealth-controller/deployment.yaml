@@ -5,7 +5,7 @@ metadata:
   name: checknodehealth-controller
   namespace: kube-system
   labels:
-    app: checknodehealth-controller
+    app.kubernetes.io/name: cluster-health-monitor
 spec:
   replicas: 1
   selector:
@@ -14,7 +14,7 @@ spec:
   template:
     metadata:
       labels:
-        app: checknodehealth-controller
+        app.kubernetes.io/name: cluster-health-monitor
     spec:
       serviceAccountName: checknodehealth-controller
       containers:
@@ -25,12 +25,12 @@ spec:
             - "--v=5"
           imagePullPolicy: IfNotPresent
           env:
-            - name: CHECKER_IMAGE
+            - name: CHECKER_POD_IMAGE
               value: "mcr.microsoft.com/aks/cluster-health-monitor/cluster-health-monitor:latest"
           resources:
             requests:
-              cpu: 10m
-              memory: 32Mi
+              cpu: 20m
+              memory: 64Mi
             limits:
               cpu: 100m
-              memory: 128Mi
+              memory: 256Mi
