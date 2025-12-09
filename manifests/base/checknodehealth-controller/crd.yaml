@@ -5,8 +5,6 @@ metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.19.0
   name: checknodehealths.clusterhealthmonitor.azure.com
-  labels:
-    app.kubernetes.io/name: cluster-health-monitor
 spec:
   group: clusterhealthmonitor.azure.com
   names:

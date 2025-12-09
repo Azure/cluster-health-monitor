@@ -5,16 +5,16 @@ metadata:
   name: checknodehealth-controller
   namespace: kube-system
   labels:
-    app.kubernetes.io/name: cluster-health-monitor
+    app: checknodehealth-controller
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app.kubernetes.io/name: cluster-health-monitor
+      app: checknodehealth-controller
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: cluster-health-monitor
+        app: checknodehealth-controller
     spec:
       serviceAccountName: checknodehealth-controller
       containers:

@@ -4,8 +4,6 @@ kind: ServiceAccount
 metadata:
   name: cluster-health-monitor
   namespace: kube-system
-  labels:
-    app.kubernetes.io/name: cluster-health-monitor
 ---
 # Role for accessing kube-dns and endpointslices in kube-system.
 apiVersion: rbac.authorization.k8s.io/v1
@@ -13,8 +11,6 @@ kind: Role
 metadata:
   name: cluster-health-monitor-kubedns-reader
   namespace: kube-system
-  labels:
-    app.kubernetes.io/name: cluster-health-monitor
 rules:
   - apiGroups: [ "" ]
     resources: [ "services" ]
@@ -44,8 +40,6 @@ kind: Role
 metadata:
   name: cluster-health-monitor-synth-pod-manager
   namespace: kube-system
-  labels:
-    app.kubernetes.io/name: cluster-health-monitor
 rules:
   - apiGroups: [ "" ]
     resources: [ "pods" ]
@@ -59,8 +53,6 @@ kind: RoleBinding
 metadata:
   name: cluster-health-monitor-synth-pod-manager
   namespace: kube-system
-  labels:
-    app.kubernetes.io/name: cluster-health-monitor
 subjects:
   - kind: ServiceAccount
     name: cluster-health-monitor
@@ -76,8 +68,6 @@ kind: Role
 metadata:
   name: cluster-health-monitor-configmap-manager
   namespace: kube-system
-  labels:
-    app.kubernetes.io/name: cluster-health-monitor
 rules:
   - apiGroups: [ "" ]
     resources: [ "configmaps" ]
@@ -88,8 +78,6 @@ kind: RoleBinding
 metadata:
   name: cluster-health-monitor-configmap-manager
   namespace: kube-system
-  labels:
-    app.kubernetes.io/name: cluster-health-monitor
 subjects:
   - kind: ServiceAccount
     name: cluster-health-monitor
@@ -108,8 +96,6 @@ kind: Role
 metadata:
   name: cluster-health-monitor-default-pod-manager
   namespace: default
-  labels:
-    app.kubernetes.io/name: cluster-health-monitor
 rules:
   - apiGroups: [ "" ]
     resources: [ "pods" ]
@@ -120,8 +106,6 @@ kind: RoleBinding
 metadata:
   name: cluster-health-monitor-default-pod-manager
   namespace: default
-  labels:
-    app.kubernetes.io/name: cluster-health-monitor
 subjects:
   - kind: ServiceAccount
     name: cluster-health-monitor
@@ -136,8 +120,6 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: cluster-health-monitor-metrics-server-reader
-  labels:
-    app.kubernetes.io/name: cluster-health-monitor
 rules:
   - apiGroups: [ "metrics.k8s.io" ]
     resources: [ "nodes", "pods" ]
@@ -147,8 +129,6 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
   name: cluster-health-monitor-metrics-server-reader
-  labels:
-    app.kubernetes.io/name: cluster-health-monitor
 subjects:
   - kind: ServiceAccount
     name: cluster-health-monitor
@@ -163,8 +143,6 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: cluster-health-monitor-karpenter-admin
-  labels:
-    app.kubernetes.io/name: cluster-health-monitor
 rules:
   - apiGroups: [ "apiextensions.k8s.io" ]
     resources: [ "customresourcedefinitions" ]
@@ -189,8 +167,6 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
   name: cluster-health-monitor-karpenter-admin
-  labels:
-    app.kubernetes.io/name: cluster-health-monitor
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole

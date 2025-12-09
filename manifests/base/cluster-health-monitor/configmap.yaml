@@ -4,8 +4,6 @@ kind: ConfigMap
 metadata:
   name: cluster-health-monitor-config
   namespace: kube-system
-  labels:
-    app.kubernetes.io/name: cluster-health-monitor
 data:
   config.yaml: |
     checkers:
