@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -87,6 +88,18 @@ func (c *PodStartupChecker) deleteAllKarpenterNodePools(ctx context.Context) err
 	return errors.Join(errs...)
 }
 
+func (c *PodStartupChecker) syntheticNodeTaints() []v1.Taint {
+	return []v1.Taint{
+		{
+			// This taint is to prevent any pods that are not part of the synthetic test from being scheduled on the nodes created by this NodePool.
+			// This is to prevent node consolidation by Karpenter that could potentially disrupt pods and workloads that are not part of the test.
+			// Pods created by the synthetic test are expected to have a toleration for this taint.
+			Key:    c.config.SyntheticPodLabelKey,
+			Effect: v1.TaintEffectNoSchedule,
+		},
+	}
+}
+
 func (c *PodStartupChecker) karpenterNodePool(nodePoolName, timestampStr string) *karpenter.NodePool {
 	return &karpenter.NodePool{
 		TypeMeta: metav1.TypeMeta{
@@ -114,6 +127,7 @@ func (c *PodStartupChecker) karpenterNodePool(nodePoolName, timestampStr string)
 						Name:  "default",
 					},
 					Requirements: []karpenter.NodeSelectorRequirementWithMinValues{},
+					Taints:       c.syntheticNodeTaints(),
 				},
 			},
 		},

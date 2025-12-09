@@ -142,6 +142,15 @@ func (c *PodStartupChecker) generateSyntheticPod(timestampStr string) *corev1.Po
 		podSpec.NodeSelector = map[string]string{
 			c.config.SyntheticPodLabelKey: timestampStr,
 		}
+
+		if podSpec.Tolerations == nil {
+			podSpec.Tolerations = []corev1.Toleration{}
+		}
+		podSpec.Tolerations = append(podSpec.Tolerations, corev1.Toleration{
+			Key:      c.config.SyntheticPodLabelKey,
+			Operator: corev1.TolerationOpEqual,
+			Effect:   corev1.TaintEffectNoSchedule,
+		})
 	}
 
 	return &corev1.Pod{

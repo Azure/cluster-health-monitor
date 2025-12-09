@@ -10,6 +10,7 @@ import (
 	"github.com/Azure/cluster-health-monitor/pkg/config"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/validation"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -72,6 +73,12 @@ func TestGenerateSyntheticPod(t *testing.T) {
 
 			if tt.enableNodeProvisioningTest {
 				g.Expect(pod.Spec.NodeSelector).To(HaveKeyWithValue(_testSyntheticLabelKey, timestampStr))
+				// ensure a toleration is added so the pod can be scheduled to synthetic nodes
+				g.Expect(pod.Spec.Tolerations).To(ContainElement(v1.Toleration{
+					Key:      _testSyntheticLabelKey,
+					Operator: corev1.TolerationOpEqual,
+					Effect:   corev1.TaintEffectNoSchedule,
+				}))
 			} else {
 				g.Expect(pod.Spec.NodeSelector).ToNot(HaveKey(_testSyntheticLabelKey))
 			}
