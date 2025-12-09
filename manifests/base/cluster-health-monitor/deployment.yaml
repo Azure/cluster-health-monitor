@@ -5,7 +5,7 @@ metadata:
   name: cluster-health-monitor
   namespace: kube-system
   labels:
-     app: cluster-health-monitor
+    app: cluster-health-monitor
 spec:
   replicas: 1
   selector:
