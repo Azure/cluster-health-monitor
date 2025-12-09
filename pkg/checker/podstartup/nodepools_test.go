@@ -57,7 +57,7 @@ func TestKarpenterNodePool(t *testing.T) {
 	g.Expect(karpenterNodePool.Name).To(Equal("test-nodepool"))
 
 	// system node label is present
-	g.Expect(karpenterNodePool.Labels["kubernetes.azure.com/mode"]).To(Equal("system"))
+	g.Expect(karpenterNodePool.Spec.Template.Labels["kubernetes.azure.com/mode"]).To(Equal("system"))
 
 	// synthetic label is present and timestamp matches what was passed in
 	g.Expect(karpenterNodePool.Labels[_testSyntheticLabelKey]).To(Equal("123456"))
