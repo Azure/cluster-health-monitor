@@ -23,7 +23,7 @@ spec:
           image: mcr.microsoft.com/aks/cluster-health-monitor/cluster-health-monitor:v0.0.17
           args:
             - "--v=3"
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 9800
               name: metrics
