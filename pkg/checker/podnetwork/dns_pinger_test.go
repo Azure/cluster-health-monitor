@@ -84,19 +84,27 @@ func startTestDNSServer(t *testing.T) (string, func()) {
 				resp.Answer = append(resp.Answer, rr)
 			}
 		}
-		w.WriteMsg(resp)
+		if err := w.WriteMsg(resp); err != nil {
+			panic(fmt.Sprintf("Should never happen. Failed to write DNS response: %v", err))
+		}
 	})
 
 	server := &dns.Server{PacketConn: pc}
 
 	// Start server in background
-	go server.ActivateAndServe()
+	go func() {
+		if err := server.ActivateAndServe(); err != nil {
+			panic(fmt.Sprintf("Should never happen. DNS server failed: %v", err))
+		}
+	}()
 
 	// Give server time to start
 	time.Sleep(50 * time.Millisecond)
 
 	cleanup := func() {
-		server.Shutdown()
+		if err := server.Shutdown(); err != nil {
+			panic(fmt.Sprintf("Should never happen. DNS server shutdown failed: %v", err))
+		}
 	}
 
 	return pc.LocalAddr().String(), cleanup
