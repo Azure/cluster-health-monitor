@@ -75,7 +75,7 @@ func TestGenerateSyntheticPod(t *testing.T) {
 				// ensure a toleration is added so the pod can be scheduled to synthetic nodes
 				g.Expect(pod.Spec.Tolerations).To(ContainElement(corev1.Toleration{
 					Key:      _testSyntheticLabelKey,
-					Operator: corev1.TolerationOpEqual,
+					Operator: corev1.TolerationOpExists,
 					Effect:   corev1.TaintEffectNoSchedule,
 				}))
 			} else {
