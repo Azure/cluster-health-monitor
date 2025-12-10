@@ -23,7 +23,7 @@ spec:
           command: ["/controller"]
           args:
             - "--v=5"
-          imagePullPolicy: IfNotPresent
+          imagePullPolicy: Always
           env:
             - name: CHECKER_POD_IMAGE
               value: "mcr.microsoft.com/aks/cluster-health-monitor/cluster-health-monitor:latest"

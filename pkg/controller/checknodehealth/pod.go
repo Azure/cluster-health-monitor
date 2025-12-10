@@ -18,6 +18,7 @@ const (
 	// maxPodNameLength is the maximum allowed length for Kubernetes pod names
 	maxPodNameLength = 253
 	// podNamePrefix is the prefix used for health check pod names
+	// TODO: rename the prefix to "check-node-health-"
 	podNamePrefix = "check-node-health-"
 )
 

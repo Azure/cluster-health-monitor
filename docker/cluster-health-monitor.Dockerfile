@@ -29,4 +29,5 @@ COPY --from=builder /workspace/controller .
 COPY --from=builder /workspace/nodechecker .
 USER 65532:65532
 
+# TODO: remove the ENTRYPOINT since all component builds are in the same image now. This needs changes in existing deployment manifests as well.
 ENTRYPOINT ["/clusterhealthmonitor"]
