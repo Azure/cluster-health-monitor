@@ -16,7 +16,7 @@ import (
 
 func Test_ValidateConfigMapFile(t *testing.T) {
 	g := NewWithT(t)
-	data, err := os.ReadFile("base/configmap.yaml")
+	data, err := os.ReadFile("base/cluster-health-monitor/configmap.yaml")
 	g.Expect(err).ToNot(HaveOccurred())
 
 	var configMap corev1.ConfigMap
@@ -34,7 +34,7 @@ func Test_ValidateConfigMapFile(t *testing.T) {
 
 func Test_ValidateConfigMapPatchFile(t *testing.T) {
 	g := NewWithT(t)
-	data, err := os.ReadFile("overlays/test/configmap.patch.yaml")
+	data, err := os.ReadFile("overlays/test/cluster-health-monitor/configmap.patch.yaml")
 	g.Expect(err).ToNot(HaveOccurred())
 
 	// convert data to string

@@ -18,6 +18,7 @@ const (
 	// maxPodNameLength is the maximum allowed length for Kubernetes pod names
 	maxPodNameLength = 253
 	// podNamePrefix is the prefix used for health check pod names
+	// TODO: rename the prefix to "check-node-health-"
 	podNamePrefix = "check-node-health-"
 )
 
@@ -94,7 +95,6 @@ func (r *CheckNodeHealthReconciler) ensureHealthCheckPod(ctx context.Context, cn
 func (r *CheckNodeHealthReconciler) buildHealthCheckPod(cnh *chmv1alpha1.CheckNodeHealth) (*corev1.Pod, error) {
 	podName := generateHealthCheckPodName(cnh)
 	labels := map[string]string{
-		"app":                "cluster-health-monitor",
 		CheckNodeHealthLabel: cnh.Name,
 	}
 
