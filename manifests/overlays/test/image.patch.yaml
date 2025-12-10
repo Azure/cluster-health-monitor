@@ -4,9 +4,9 @@
 - op: replace
   path: /spec/template/spec/containers/0/image
   value: cluster-health-monitor:test-latest
-# Change imagePullPolicy to IfNotPresent for testing purposes. Using `imagePullPolicy: Always` forces the image to be pulled from a remote
-# registry. This does not exist because when testing, a locally built image is used instead. IfNotPresent allows the local image to be used, 
-# thus allowing the test to proceed. If we would rather not do this, an alternate approach could be to use KIND local registries 
+# Change imagePullPolicy to IfNotPresent for local testing purposes. Using `imagePullPolicy: Always` forces the image to be pulled from a
+# remote registry. This does not exist because a locally built image is used in this scenario. IfNotPresent allows the local image to be 
+# used, thus allowing the test to proceed. If we would rather not do this, an alternate approach could be to use KIND local registries 
 # https://kind.sigs.k8s.io/docs/user/local-registry/.
 - op: replace
   path: /spec/template/spec/containers/0/imagePullPolicy
