@@ -78,7 +78,7 @@ type CheckNodeHealthReconciler struct {
 
 // +kubebuilder:rbac:groups=clusterhealthmonitor.azure.com,resources=checknodehealths,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=clusterhealthmonitor.azure.com,resources=checknodehealths/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;create;delete,namespace=kube-system
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;create;delete
 
 // SetupWithManager sets up the controller with the Manager
 func (r *CheckNodeHealthReconciler) SetupWithManager(mgr ctrl.Manager) error {
