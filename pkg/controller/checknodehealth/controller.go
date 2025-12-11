@@ -243,8 +243,8 @@ func (r *CheckNodeHealthReconciler) determineHealthyCondition(cnh *chmv1alpha1.C
 		return metav1.ConditionFalse, ReasonCheckFailed, "At least one health check result is Unhealthy"
 	}
 
-	// Rule 2: Check if any Result.Status == "Unknown". This must be checked after Unhealthy
-	if r.hasUnknownResult(cnh) {
+	// Rule 2: Check if any Result.Status == "Unknown" or required results is missing. This must be checked after Unhealthy
+	if r.hasUnknownResultOrMissing(cnh) {
 		return metav1.ConditionUnknown, ReasonCheckUnknown, "At least one health check result has Unknown status"
 	}
 
@@ -262,7 +262,7 @@ func (r *CheckNodeHealthReconciler) determineHealthyCondition(cnh *chmv1alpha1.C
 	return metav1.ConditionUnknown, ReasonCheckUnknown, "Unable to determine health status"
 }
 
-// hasUnknownResult checks whether any result reported by a checker has an Unknown status.
+// hasunknownresult checks whether any result reported by a checker has an Unknown status.
 // If the required results are missing, it also returns true because the default result is Unknown.
 func (r *CheckNodeHealthReconciler) hasUnknownResultOrMissing(cnh *chmv1alpha1.CheckNodeHealth) bool {
 	// First check if any required result is missing
