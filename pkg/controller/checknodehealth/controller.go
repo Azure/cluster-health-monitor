@@ -62,8 +62,9 @@ const (
 )
 
 var (
-	// ExpectedResults is the list of all expected health check results
-	ExpectedResults = []string{"PodStartup", "PodNetwork"}
+	// RequiredCheckResults defines the list of health check results that must ALL be present
+	// If that is missing, then it's result will be Unknown by default.
+	RequiredCheckResults = []string{"PodStartup", "PodNetwork"}
 )
 
 // CheckNodeHealthReconciler reconciles a CheckNodeHealth object
@@ -261,8 +262,16 @@ func (r *CheckNodeHealthReconciler) determineHealthyCondition(cnh *chmv1alpha1.C
 	return metav1.ConditionUnknown, ReasonCheckUnknown, "Unable to determine health status"
 }
 
-// hasUnknownResult checks if any result has Unknown status
-func (r *CheckNodeHealthReconciler) hasUnknownResult(cnh *chmv1alpha1.CheckNodeHealth) bool {
+// hasUnknownResult checks whether any result reported by a checker has an Unknown status.
+// If the required results are missing, it also returns true because the default result is Unknown.
+func (r *CheckNodeHealthReconciler) hasUnknownResultOrMissing(cnh *chmv1alpha1.CheckNodeHealth) bool {
+	// First check if any required result is missing
+	for _, requiredCheckName := range RequiredCheckResults {
+		if found, _ := r.findResult(cnh, requiredCheckName); !found {
+			return true
+		}
+	}
+
 	for _, result := range cnh.Status.Results {
 		if result.Status == chmv1alpha1.CheckStatusUnknown {
 			return true
@@ -271,7 +280,7 @@ func (r *CheckNodeHealthReconciler) hasUnknownResult(cnh *chmv1alpha1.CheckNodeH
 	return false
 }
 
-// hasUnhealthyResult checks if any result has Unhealthy status
+// hasUnhealthyResult checks whether any result reported by a checker has an Unhealthy status.
 func (r *CheckNodeHealthReconciler) hasUnhealthyResult(cnh *chmv1alpha1.CheckNodeHealth) bool {
 	for _, result := range cnh.Status.Results {
 		if result.Status == chmv1alpha1.CheckStatusUnhealthy {
@@ -279,6 +288,16 @@ func (r *CheckNodeHealthReconciler) hasUnhealthyResult(cnh *chmv1alpha1.CheckNod
 		}
 	}
 	return false
+}
+
+// allResultsHealthy verifies that all result reported by checker has Healthy status.
+func (r *CheckNodeHealthReconciler) allResultsHealthy(cnh *chmv1alpha1.CheckNodeHealth) bool {
+	for _, result := range cnh.Status.Results {
+		if result.Status != chmv1alpha1.CheckStatusHealthy {
+			return false
+		}
+	}
+	return true
 }
 
 // findResult searches for a result by name in the CheckNodeHealth status
@@ -289,17 +308,6 @@ func (r *CheckNodeHealthReconciler) findResult(cnh *chmv1alpha1.CheckNodeHealth,
 		}
 	}
 	return false, chmv1alpha1.CheckResult{}
-}
-
-// allResultsHealthy checks if all expected results have Healthy status
-func (r *CheckNodeHealthReconciler) allResultsHealthy(cnh *chmv1alpha1.CheckNodeHealth) bool {
-	for _, expectedName := range ExpectedResults {
-		found, result := r.findResult(cnh, expectedName)
-		if !found || result.Status != chmv1alpha1.CheckStatusHealthy {
-			return false
-		}
-	}
-	return true
 }
 
 func isCompleted(cnh *chmv1alpha1.CheckNodeHealth) bool {
