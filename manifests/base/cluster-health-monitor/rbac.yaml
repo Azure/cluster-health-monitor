@@ -175,6 +175,3 @@ subjects:
   - kind: ServiceAccount
     name: cluster-health-monitor
     namespace: kube-system
----
-
-

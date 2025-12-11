@@ -82,7 +82,8 @@ type PodStartupConfig struct {
 	// The namespace in which synthetic pods are created.
 	SyntheticPodNamespace string `yaml:"syntheticPodNamespace"`
 	// Required.
-	// The Kubernetes label key used to identify synthetic pods created by the checker.
+	// The Kubernetes label key used to identify synthetic pods created by the checker. It is also applied as a taint to any synthetic nodes
+	// created by the checker when EnableNodeProvisioningTest is true.
 	SyntheticPodLabelKey string `yaml:"syntheticPodLabelKey"`
 	// Required.
 	// The maximum synthetic pod startup duration for which the checker will return healthy status. Exceeding this duration will cause the

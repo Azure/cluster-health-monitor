@@ -12,3 +12,14 @@ patches:
       name: cluster-health-monitor-config
       namespace: kube-system
     path: configmap.patch.yaml
+  # Override imagePullPolicy to Always for AKS testing. This should be the default value on the deployment. However, the test overlay
+  # changes it to IfNotPresent for local testing purposes because otherwise it attempts to pull from a non-existent remote registry. In the
+  # AKS test scenario, a remote registry is required. Thus, it can be set back to Always to more closely mimic production behavior.
+  - target:
+      kind: Deployment
+      name: cluster-health-monitor
+      namespace: kube-system
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: Always
