@@ -66,26 +66,6 @@ const (
 	NodeHealthConditionHealthy NodeHealthConditionType = "Healthy"
 )
 
-// CheckerType represents the category of health checker
-type CheckerType string
-
-const (
-	// CheckerTypeAPIServer represents API server health checks
-	CheckerTypeAPIServer CheckerType = "APIServer"
-
-	// CheckerTypeDNS represents DNS resolution health checks
-	CheckerTypeDNS CheckerType = "DNS"
-
-	// CheckerTypeMetricsServer represents metrics server health checks
-	CheckerTypeMetricsServer CheckerType = "MetricsServer"
-
-	// CheckerTypePodStartup represents pod startup health checks
-	CheckerTypePodStartup CheckerType = "PodStartup"
-
-	// CheckerTypeAzurePolicy represents Azure policy health checks
-	CheckerTypeAzurePolicy CheckerType = "AzurePolicy"
-)
-
 // CheckStatus represents the health status of a check
 type CheckStatus string
 

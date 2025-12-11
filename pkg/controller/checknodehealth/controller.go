@@ -63,7 +63,11 @@ const (
 
 var (
 	// RequiredCheckResults defines the list of health check results that must ALL be present
-	// If that is missing, then it's result will be Unknown by default.
+	// and have Healthy status for the overall Healthy condition to be True.
+	// If any required check is missing, the result will be Unknown by default.
+	// The "PodStartup" result is reported by the controller. All other results in this list
+	// are reported by the Node Checker pod.
+	// See pkg/nodecheckerrunner/runner.go for the complete list of checkers running in the Node Checker pod.
 	RequiredCheckResults = []string{"PodStartup", "PodNetwork"}
 )
 
