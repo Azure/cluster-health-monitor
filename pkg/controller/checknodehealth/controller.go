@@ -10,8 +10,10 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
 )
@@ -59,6 +61,11 @@ const (
 	ReasonPodStartupTimeout = "PodStartupTimeout"
 )
 
+var (
+	// ExpectedResults is the list of all expected health check results
+	ExpectedResults = []string{"PodStartup", "PodNetwork"}
+)
+
 // CheckNodeHealthReconciler reconciles a CheckNodeHealth object
 type CheckNodeHealthReconciler struct {
 	client.Client
@@ -74,9 +81,13 @@ type CheckNodeHealthReconciler struct {
 
 // SetupWithManager sets up the controller with the Manager
 func (r *CheckNodeHealthReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	// Only watch pods in the same namespace where we create them
+	podPredicate := predicate.NewPredicateFuncs(func(obj client.Object) bool {
+		return obj.GetNamespace() == r.CheckerPodNamespace
+	})
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&chmv1alpha1.CheckNodeHealth{}).
-		Owns(&corev1.Pod{}). // Watch pods created by this controller
+		Owns(&corev1.Pod{}, builder.WithPredicates(podPredicate)).
 		Complete(r)
 }
 
@@ -270,12 +281,21 @@ func (r *CheckNodeHealthReconciler) hasUnhealthyResult(cnh *chmv1alpha1.CheckNod
 	return false
 }
 
-// allResultsHealthy checks if all results have Healthy status (or there are no results)
-func (r *CheckNodeHealthReconciler) allResultsHealthy(cnh *chmv1alpha1.CheckNodeHealth) bool {
-
-	// All results must be healthy
+// findResult searches for a result by name in the CheckNodeHealth status
+func (r *CheckNodeHealthReconciler) findResult(cnh *chmv1alpha1.CheckNodeHealth, name string) (bool, chmv1alpha1.CheckResult) {
 	for _, result := range cnh.Status.Results {
-		if result.Status != chmv1alpha1.CheckStatusHealthy {
+		if result.Name == name {
+			return true, result
+		}
+	}
+	return false, chmv1alpha1.CheckResult{}
+}
+
+// allResultsHealthy checks if all expected results have Healthy status
+func (r *CheckNodeHealthReconciler) allResultsHealthy(cnh *chmv1alpha1.CheckNodeHealth) bool {
+	for _, expectedName := range ExpectedResults {
+		found, result := r.findResult(cnh, expectedName)
+		if !found || result.Status != chmv1alpha1.CheckStatusHealthy {
 			return false
 		}
 	}
