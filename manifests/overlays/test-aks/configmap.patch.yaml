@@ -1,10 +1,9 @@
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: cluster-health-monitor-config
-  namespace: kube-system
-data:
-  config.yaml: |
+- op: test
+  path: /metadata/name
+  value: cluster-health-monitor-config
+- op: replace
+  path: /data/config.yaml
+  value: |
     checkers:
       - name: "TestInternalCoreDNS"
         type: "DNS"
