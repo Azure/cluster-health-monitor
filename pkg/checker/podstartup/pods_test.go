@@ -72,6 +72,12 @@ func TestGenerateSyntheticPod(t *testing.T) {
 
 			if tt.enableNodeProvisioningTest {
 				g.Expect(pod.Spec.NodeSelector).To(HaveKeyWithValue(_testSyntheticLabelKey, timestampStr))
+				// ensure a toleration is added so the pod can be scheduled to synthetic nodes
+				g.Expect(pod.Spec.Tolerations).To(ContainElement(corev1.Toleration{
+					Key:      _testSyntheticLabelKey,
+					Operator: corev1.TolerationOpExists,
+					Effect:   corev1.TaintEffectNoSchedule,
+				}))
 			} else {
 				g.Expect(pod.Spec.NodeSelector).ToNot(HaveKey(_testSyntheticLabelKey))
 			}

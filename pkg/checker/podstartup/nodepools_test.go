@@ -8,6 +8,7 @@ import (
 	"github.com/Azure/cluster-health-monitor/pkg/config"
 	. "github.com/onsi/gomega"
 
+	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -17,6 +18,53 @@ import (
 )
 
 const _testSyntheticLabelKey = "test-synthetic-label-key"
+
+func TestSyntheticNodeTaints(t *testing.T) {
+	g := NewWithT(t)
+
+	checker := &PodStartupChecker{
+		dynamicClient: nil, // no client necessary for this test. Just validating the taints.
+		config: &config.PodStartupConfig{
+			SyntheticPodNamespace: "test",
+			SyntheticPodLabelKey:  _testSyntheticLabelKey,
+		},
+	}
+
+	taints := checker.syntheticNodeTaints()
+
+	// Ensure there is a taint to prevent scheduling any pods that are not synthetics created by the checker.
+	// This is to prevent node consolidation by Karpenter that could potentially disrupt pods and workloads that are not part of the test.
+	g.Expect(taints).To(ContainElement(v1.Taint{
+		Key:    _testSyntheticLabelKey,
+		Effect: v1.TaintEffectNoSchedule,
+	}))
+}
+
+func TestKarpenterNodePool(t *testing.T) {
+	g := NewWithT(t)
+
+	checker := &PodStartupChecker{
+		dynamicClient: nil, // no client necessary for this test. Just validating the nodepool spec.
+		config: &config.PodStartupConfig{
+			SyntheticPodNamespace: "test",
+			SyntheticPodLabelKey:  _testSyntheticLabelKey,
+		},
+	}
+
+	karpenterNodePool := checker.karpenterNodePool("test-nodepool", "123456")
+
+	// name matches what was passed in
+	g.Expect(karpenterNodePool.Name).To(Equal("test-nodepool"))
+
+	// system node label is present
+	g.Expect(karpenterNodePool.Spec.Template.Labels["kubernetes.azure.com/mode"]).To(Equal("system"))
+
+	// synthetic label is present and timestamp matches what was passed in
+	g.Expect(karpenterNodePool.Labels[_testSyntheticLabelKey]).To(Equal("123456"))
+
+	// taints are set
+	g.Expect(karpenterNodePool.Spec.Template.Spec.Taints).To(Equal(checker.syntheticNodeTaints()))
+}
 
 func TestCreateKarpenterNodePool(t *testing.T) {
 	g := NewWithT(t)

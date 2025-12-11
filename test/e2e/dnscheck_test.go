@@ -21,7 +21,6 @@ const (
 	checkerTypeDNS = string(config.CheckTypeDNS)
 
 	localDNSTimeoutErrorCode = dnscheck.ErrCodeLocalDNSTimeout
-	serviceTimeoutErrorCode  = dnscheck.ErrCodeServiceTimeout
 )
 
 var (
