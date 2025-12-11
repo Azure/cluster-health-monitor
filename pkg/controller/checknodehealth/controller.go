@@ -249,7 +249,7 @@ func (r *CheckNodeHealthReconciler) determineHealthyCondition(cnh *chmv1alpha1.C
 
 	// Rule 2: Check if any Result.Status == "Unknown" or required results is missing. This must be checked after Unhealthy
 	if r.hasUnknownResultOrMissing(cnh) {
-		return metav1.ConditionUnknown, ReasonCheckUnknown, "At least one health check result has Unknown status"
+		return metav1.ConditionUnknown, ReasonCheckUnknown, "At least one health check result has Unknown status or is missing"
 	}
 
 	// Rule 3: Check if no results
@@ -272,6 +272,7 @@ func (r *CheckNodeHealthReconciler) hasUnknownResultOrMissing(cnh *chmv1alpha1.C
 	// First check if any required result is missing
 	for _, requiredCheckName := range RequiredCheckResults {
 		if found, _ := r.findResult(cnh, requiredCheckName); !found {
+			klog.Warningf("required checker result %q is missing", requiredCheckName)
 			return true
 		}
 	}
