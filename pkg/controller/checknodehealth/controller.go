@@ -264,7 +264,7 @@ func (r *CheckNodeHealthReconciler) determineHealthyCondition(cnh *chmv1alpha1.C
 
 // hasUnknownResult checks whether any result reported by a checker has an Unknown status.
 // If the required results are missing, it also returns true because the default result is Unknown.
-func (r *CheckNodeHealthReconciler) hasUnknownResult(cnh *chmv1alpha1.CheckNodeHealth) bool {
+func (r *CheckNodeHealthReconciler) hasUnknownResultOrMissing(cnh *chmv1alpha1.CheckNodeHealth) bool {
 	// First check if any required result is missing
 	for _, requiredCheckName := range RequiredCheckResults {
 		if found, _ := r.findResult(cnh, requiredCheckName); !found {
