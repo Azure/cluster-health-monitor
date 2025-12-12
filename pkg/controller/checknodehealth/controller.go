@@ -10,8 +10,10 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
 )
@@ -59,6 +61,16 @@ const (
 	ReasonPodStartupTimeout = "PodStartupTimeout"
 )
 
+var (
+	// RequiredCheckResults defines the list of health check results that must ALL be present
+	// and have Healthy status for the overall Healthy condition to be True.
+	// If any required check is missing, the result will be Unknown by default.
+	// The "PodStartup" result is reported by the controller. All other results in this list
+	// are reported by the Node Checker pod.
+	// See pkg/nodecheckerrunner/runner.go for the complete list of checkers running in the Node Checker pod.
+	RequiredCheckResults = []string{"PodStartup", "PodNetwork"}
+)
+
 // CheckNodeHealthReconciler reconciles a CheckNodeHealth object
 type CheckNodeHealthReconciler struct {
 	client.Client
@@ -74,9 +86,13 @@ type CheckNodeHealthReconciler struct {
 
 // SetupWithManager sets up the controller with the Manager
 func (r *CheckNodeHealthReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	// Only watch pods in the same namespace where we create them
+	podPredicate := predicate.NewPredicateFuncs(func(obj client.Object) bool {
+		return obj.GetNamespace() == r.CheckerPodNamespace
+	})
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&chmv1alpha1.CheckNodeHealth{}).
-		Owns(&corev1.Pod{}). // Watch pods created by this controller
+		Owns(&corev1.Pod{}, builder.WithPredicates(podPredicate)).
 		Complete(r)
 }
 
@@ -233,15 +249,21 @@ func (r *CheckNodeHealthReconciler) determineHealthyCondition(cnh *chmv1alpha1.C
 
 	// Rule 2: Check if any Result.Status == "Unknown". This must be checked after Unhealthy
 	if r.hasUnknownResult(cnh) {
-		return metav1.ConditionUnknown, ReasonCheckUnknown, "At least one health check result has Unknown status"
+		return metav1.ConditionUnknown, ReasonCheckUnknown, "At least one health check result has Unknown status or is missing"
 	}
 
-	// Rule 3: Check if no results
+	// Rule 3: Check if any required results are missing
+	missingResults := r.findMissingResult(cnh)
+	if len(missingResults) > 0 {
+		return metav1.ConditionUnknown, ReasonCheckUnknown, fmt.Sprintf("Missing required health check results: %v", missingResults)
+	}
+
+	// Rule 4: Check if no results
 	if len(cnh.Status.Results) == 0 {
 		return metav1.ConditionUnknown, ReasonCheckUnknown, "No health check results available"
 	}
 
-	// Rule 4: All Results.Status == "Healthy" (or yet)
+	// Rule 5: All Results.Status == "Healthy" (or yet)
 	if r.allResultsHealthy(cnh) {
 		return metav1.ConditionTrue, ReasonCheckPassed, "All health checks completed successfully"
 	}
@@ -250,7 +272,8 @@ func (r *CheckNodeHealthReconciler) determineHealthyCondition(cnh *chmv1alpha1.C
 	return metav1.ConditionUnknown, ReasonCheckUnknown, "Unable to determine health status"
 }
 
-// hasUnknownResult checks if any result has Unknown status
+// hasunknownresult checks whether any result reported by a checker has an Unknown status.
+// If the required results are missing, it also returns true because the default result is Unknown.
 func (r *CheckNodeHealthReconciler) hasUnknownResult(cnh *chmv1alpha1.CheckNodeHealth) bool {
 	for _, result := range cnh.Status.Results {
 		if result.Status == chmv1alpha1.CheckStatusUnknown {
@@ -260,7 +283,18 @@ func (r *CheckNodeHealthReconciler) hasUnknownResult(cnh *chmv1alpha1.CheckNodeH
 	return false
 }
 
-// hasUnhealthyResult checks if any result has Unhealthy status
+func (r *CheckNodeHealthReconciler) findMissingResult(cnh *chmv1alpha1.CheckNodeHealth) []string {
+	missed := []string{}
+	for _, requiredCheckName := range RequiredCheckResults {
+		if found, _ := r.findResult(cnh, requiredCheckName); !found {
+			klog.Warningf("required checker result %q is missing", requiredCheckName)
+			missed = append(missed, requiredCheckName)
+		}
+	}
+	return missed
+}
+
+// hasUnhealthyResult checks whether any result reported by a checker has an Unhealthy status.
 func (r *CheckNodeHealthReconciler) hasUnhealthyResult(cnh *chmv1alpha1.CheckNodeHealth) bool {
 	for _, result := range cnh.Status.Results {
 		if result.Status == chmv1alpha1.CheckStatusUnhealthy {
@@ -270,16 +304,24 @@ func (r *CheckNodeHealthReconciler) hasUnhealthyResult(cnh *chmv1alpha1.CheckNod
 	return false
 }
 
-// allResultsHealthy checks if all results have Healthy status (or there are no results)
+// allResultsHealthy verifies that all result reported by checker has Healthy status.
 func (r *CheckNodeHealthReconciler) allResultsHealthy(cnh *chmv1alpha1.CheckNodeHealth) bool {
-
-	// All results must be healthy
 	for _, result := range cnh.Status.Results {
 		if result.Status != chmv1alpha1.CheckStatusHealthy {
 			return false
 		}
 	}
 	return true
+}
+
+// findResult searches for a result by name in the CheckNodeHealth status
+func (r *CheckNodeHealthReconciler) findResult(cnh *chmv1alpha1.CheckNodeHealth, name string) (bool, chmv1alpha1.CheckResult) {
+	for _, result := range cnh.Status.Results {
+		if result.Name == name {
+			return true, result
+		}
+	}
+	return false, chmv1alpha1.CheckResult{}
 }
 
 func isCompleted(cnh *chmv1alpha1.CheckNodeHealth) bool {
