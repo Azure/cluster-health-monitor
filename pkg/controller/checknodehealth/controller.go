@@ -253,7 +253,7 @@ func (r *CheckNodeHealthReconciler) determineHealthyCondition(cnh *chmv1alpha1.C
 	}
 
 	// Rule 3: Check if any required results are missing
-	missingResults := r.hasMissingResult(cnh)
+	missingResults := r.findMissingResult(cnh)
 	if len(missingResults) > 0 {
 		return metav1.ConditionUnknown, ReasonCheckUnknown, fmt.Sprintf("Missing required health check results: %v", missingResults)
 	}
@@ -283,7 +283,7 @@ func (r *CheckNodeHealthReconciler) hasUnknownResult(cnh *chmv1alpha1.CheckNodeH
 	return false
 }
 
-func (r *CheckNodeHealthReconciler) hasMissingResult(cnh *chmv1alpha1.CheckNodeHealth) []string {
+func (r *CheckNodeHealthReconciler) findMissingResult(cnh *chmv1alpha1.CheckNodeHealth) []string {
 	missed := []string{}
 	for _, requiredCheckName := range RequiredCheckResults {
 		if found, _ := r.findResult(cnh, requiredCheckName); !found {
