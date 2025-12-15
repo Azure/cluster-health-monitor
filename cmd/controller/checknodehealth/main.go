@@ -5,6 +5,7 @@ import (
 	"os"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -81,6 +82,7 @@ func main() {
 					Namespaces: map[string]cache.Config{
 						checkerPodNamespace: {},
 					},
+					Label: labels.SelectorFromSet(labels.Set{checknodehealth.CheckNodeHealthLabel: ""}),
 				},
 			},
 		},
