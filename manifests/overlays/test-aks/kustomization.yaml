@@ -5,8 +5,8 @@ kind: Kustomization
 resources:
   - ../test
 
-# Only patch the podStartup checker configuration
 patches:
+# Patch the checker configuration
   - target:
       kind: ConfigMap
       name: cluster-health-monitor-config

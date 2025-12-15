@@ -33,25 +33,34 @@ func Test_ValidateConfigMapFile(t *testing.T) {
 }
 
 func Test_ValidateConfigMapPatchFile(t *testing.T) {
-	g := NewWithT(t)
-	data, err := os.ReadFile("overlays/test/cluster-health-monitor/configmap.patch.yaml")
-	g.Expect(err).ToNot(HaveOccurred())
+	patchFiles := []string{
+		"overlays/test/cluster-health-monitor/configmap.patch.yaml",
+		"overlays/test-aks/configmap.patch.yaml",
+	}
 
-	// convert data to string
-	patch, err := kyaml.Parse(string(data)) // verify valid yaml
-	g.Expect(err).ToNot(HaveOccurred())
+	for _, patchFile := range patchFiles {
+		t.Run(patchFile, func(t *testing.T) {
+			g := NewWithT(t)
+			data, err := os.ReadFile(patchFile)
+			g.Expect(err).ToNot(HaveOccurred())
 
-	configPatch, err := patch.Pipe(kyaml.GetElementByIndex(1)) // Index 1 is the replace operation
-	g.Expect(err).ToNot(HaveOccurred())
-	g.Expect(configPatch).ToNot(BeNil())
+			// convert data to string
+			patch, err := kyaml.Parse(string(data)) // verify valid yaml
+			g.Expect(err).ToNot(HaveOccurred())
 
-	configPatchStr, err := configPatch.GetString("value") // get string value
-	g.Expect(err).ToNot(HaveOccurred())
-	g.Expect(configPatchStr).ToNot(BeEmpty())
+			configPatch, err := patch.Pipe(kyaml.GetElementByIndex(1)) // Index 1 is the replace operation
+			g.Expect(err).ToNot(HaveOccurred())
+			g.Expect(configPatch).ToNot(BeNil())
 
-	cfg, err := config.ParseFromYAML([]byte(configPatchStr)) // verify valid config
-	g.Expect(err).ToNot(HaveOccurred())
-	g.Expect(cfg).ToNot(BeNil())
+			configPatchStr, err := configPatch.GetString("value") // get string value
+			g.Expect(err).ToNot(HaveOccurred())
+			g.Expect(configPatchStr).ToNot(BeEmpty())
+
+			cfg, err := config.ParseFromYAML([]byte(configPatchStr)) // verify valid config
+			g.Expect(err).ToNot(HaveOccurred())
+			g.Expect(cfg).ToNot(BeNil())
+		})
+	}
 }
 
 func Test_ValidateYamlFormat_AllFiles(t *testing.T) {
