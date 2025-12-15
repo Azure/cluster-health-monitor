@@ -1,0 +1,12 @@
+# Patch to add tolerations for CriticalAddonsOnly to the checknodehealth-controller deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: checknodehealth-controller
+  namespace: kube-system
+spec:
+  template:
+    spec:
+      tolerations:
+        - key: "CriticalAddonsOnly"
+          operator: "Exists"
