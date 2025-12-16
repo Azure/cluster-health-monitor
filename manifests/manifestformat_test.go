@@ -35,7 +35,7 @@ func Test_ValidateConfigMapFile(t *testing.T) {
 func Test_ValidateConfigMapPatchFile(t *testing.T) {
 	patchFiles := []string{
 		"overlays/test/cluster-health-monitor/configmap.patch.yaml",
-		"overlays/test-aks/configmap.patch.yaml",
+		"overlays/test-aks/cluster-health-monitor/configmap.patch.yaml",
 	}
 
 	for _, patchFile := range patchFiles {
