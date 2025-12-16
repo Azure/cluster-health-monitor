@@ -71,8 +71,8 @@ func getGitRoot() (string, error) {
 }
 
 // getKubeClient creates a Kubernetes clientset using the provided kubeconfig path.
-func getKubeClient() (*kubernetes.Clientset, error) {
-	config, err := getKubeConfig()
+func getKubeClient(kubeConfigPath string) (*kubernetes.Clientset, error) {
+	config, err := clientcmd.BuildConfigFromFlags("", kubeConfigPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build Kubernetes config: %w", err)
 	}
