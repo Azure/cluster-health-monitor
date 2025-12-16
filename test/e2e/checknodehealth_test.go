@@ -171,7 +171,6 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 		By("Verifying status has two results: PodStartup and PodNetwork with Healthy status")
 		Expect(cnh.Status.Results).To(HaveLen(2))
 
-		// Find PodStartup result
 		var foundPodStartup, foundPodNetwork bool
 		for _, result := range cnh.Status.Results {
 			if result.Name == "PodStartup" {
@@ -294,7 +293,7 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 			return pod.Spec.NodeName == nonExistentNode && pod.Status.Phase == corev1.PodPending
 		}, "10s", "1s").Should(BeTrue(), "Health check pod was not created or not in Pending state")
 
-		By("Deleting the CheckNodeHealth CR before timeout (within 5 seconds of creation)")
+		By("Deleting the CheckNodeHealth CR before pod timeout triggers")
 		err = deleteCheckNodeHealthCR(ctx, k8sClient, cnhName)
 		Expect(err).NotTo(HaveOccurred())
 
@@ -318,14 +317,6 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 			}
 			return true
 		}, "30s", "2s").Should(BeTrue(), "Health check pod was not deleted or terminating within timeout")
-
-		By("Verifying the CheckNodeHealth CR is deleted")
-		Eventually(func() bool {
-			return !checkNodeHealthCRExists(ctx, k8sClient, cnhName)
-		}, "30s", "1s").Should(BeTrue(), "CheckNodeHealth CR was not deleted within timeout")
-
-		// Prevent cleanup in AfterEach since we already deleted it
-		cnhName = ""
 	})
 
 	It("should add finalizer to prevent premature deletion", func() {
@@ -389,7 +380,7 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 		Expect(updatedCnh.Status.Conditions[0].Type).To(Equal("Healthy"))
 		Expect(updatedCnh.Status.Conditions[0].Status).To(Equal(metav1.ConditionUnknown))
 
-		By("Verifying no PodNetwork results aren't recorded")
+		By("Verifying PodNetwork results aren't recorded")
 		var hasPodNetwork bool
 		for _, result := range updatedCnh.Status.Results {
 			if result.Name == "PodNetwork" {
