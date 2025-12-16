@@ -91,14 +91,23 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 		Expect(err).NotTo(HaveOccurred())
 		Expect(len(nodeList.Items)).To(BeNumerically(">", 0), "No nodes found in cluster")
 
+		// Log all nodes
+		GinkgoWriter.Printf("Found %d nodes in cluster:\n", len(nodeList.Items))
+		for _, node := range nodeList.Items {
+			GinkgoWriter.Printf("  - %s\n", node.Name)
+		}
+
 		// Get all CoreDNS pods and collect their node names
 		corednsPods, err := clientset.CoreV1().Pods("kube-system").List(ctx, metav1.ListOptions{
 			LabelSelector: "k8s-app=kube-dns",
 		})
 		Expect(err).NotTo(HaveOccurred())
 
+		// Log CoreDNS pod distribution
+		GinkgoWriter.Printf("Found %d CoreDNS pods:\n", len(corednsPods.Items))
 		corednsNodeSet := make(map[string]struct{})
 		for _, pod := range corednsPods.Items {
+			GinkgoWriter.Printf("  - %s on node %s (phase: %s)\n", pod.Name, pod.Spec.NodeName, pod.Status.Phase)
 			if pod.Spec.NodeName != "" {
 				corednsNodeSet[pod.Spec.NodeName] = struct{}{}
 			}
@@ -112,7 +121,7 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 				break
 			}
 		}
-		Expect(testNodeName).NotTo(BeEmpty(), "No node found that does not run CoreDNS")
+		Expect(testNodeName).NotTo(BeEmpty(), "No node found that does not run CoreDNS. Nodes with CoreDNS: %v", corednsNodeSet)
 		GinkgoWriter.Printf("Using node %s for tests\n", testNodeName)
 	})
 
