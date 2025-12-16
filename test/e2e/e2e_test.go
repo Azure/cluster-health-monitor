@@ -4,6 +4,7 @@ package e2e
 import (
 	"os"
 	"os/exec"
+	"path/filepath"
 	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -23,8 +24,14 @@ var (
 	skipClusterCleanup = os.Getenv("E2E_SKIP_CLUSTER_CLEANUP") == "true"
 )
 
-// globalSetup runs once before all test processes.
-func globalSetup() []byte {
+func beforeSuiteAllProcesses() []byte {
+	By("Getting kubeconfig path from KUBECONFIG or defaulting to $(HOME)/.kube/config")
+	kubeConfigPath := os.Getenv("KUBECONFIG")
+	if kubeConfigPath == "" {
+		kubeConfigPath = filepath.Join(os.Getenv("HOME"), ".kube", "config")
+	}
+	GinkgoWriter.Println("Using kubeconfig:", kubeConfigPath)
+
 	if !skipClusterSetup {
 		By("Setting up a Kind cluster for E2E")
 		cmd := exec.Command("make", "kind-test-local")
@@ -34,7 +41,7 @@ func globalSetup() []byte {
 	}
 
 	// Initialize Kubernetes client.
-	clientset, err := getKubeClient()
+	clientset, err := getKubeClient(kubeConfigPath)
 	Expect(err).NotTo(HaveOccurred())
 
 	By("Waiting for CoreDNS pods to be running")
@@ -66,18 +73,16 @@ func globalSetup() []byte {
 	Expect(err).NotTo(HaveOccurred(), "Failed to list pods: %s", string(output))
 	GinkgoWriter.Println(string(output))
 
-	return nil
+	return []byte(kubeConfigPath)
 }
 
-// perProcessSetup runs once per test process.
-func perProcessSetup(_ []byte) {
+var _ = SynchronizedBeforeSuite(beforeSuiteAllProcesses, func(kubeConfigPath []byte) {
 	var err error
-	clientset, err = getKubeClient()
+	clientset, err = getKubeClient(string(kubeConfigPath))
 	Expect(err).NotTo(HaveOccurred())
-}
+})
 
-// globalTeardown runs once after all test processes have finished.
-func globalTeardown() {
+func afterSuiteAllProcesses() {
 	if skipAllCleanup {
 		GinkgoWriter.Println("Skipping all cleanup as E2E_SKIP_ALL_CLEANUP is set to true")
 		return
@@ -99,5 +104,4 @@ func globalTeardown() {
 	GinkgoWriter.Println(string(output))
 }
 
-var _ = SynchronizedBeforeSuite(globalSetup, perProcessSetup)
-var _ = SynchronizedAfterSuite(func() {}, globalTeardown)
+var _ = SynchronizedAfterSuite(func() {}, afterSuiteAllProcesses)
