@@ -41,7 +41,7 @@ func beforeSuiteAllProcesses() []byte {
 	}
 
 	// Initialize Kubernetes client.
-	clientset, err := getKubeClient(kubeConfigPath)
+	clientset, err := getKubeClient()
 	Expect(err).NotTo(HaveOccurred())
 
 	By("Waiting for CoreDNS pods to be running")
@@ -73,12 +73,12 @@ func beforeSuiteAllProcesses() []byte {
 	Expect(err).NotTo(HaveOccurred(), "Failed to list pods: %s", string(output))
 	GinkgoWriter.Println(string(output))
 
-	return []byte(kubeConfigPath)
+	return nil
 }
 
-var _ = SynchronizedBeforeSuite(beforeSuiteAllProcesses, func(kubeConfigPath []byte) {
+var _ = SynchronizedBeforeSuite(beforeSuiteAllProcesses, func(_ []byte) {
 	var err error
-	clientset, err = getKubeClient(string(kubeConfigPath))
+	clientset, err = getKubeClient()
 	Expect(err).NotTo(HaveOccurred())
 })
 

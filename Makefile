@@ -73,8 +73,23 @@ KUBECONFIG ?= $(HOME)/.kube/config
 
 .PHONY: kind-create-cluster
 kind-create-cluster:
-	@echo "Creating Kind cluster '$(KIND_CLUSTER_NAME)' with kubeconfig at $(KUBECONFIG)"
-	@kind create cluster --name $(KIND_CLUSTER_NAME) --kubeconfig $(KUBECONFIG)
+	@if kind get clusters | grep -q "^$(KIND_CLUSTER_NAME)$$"; then \
+		echo "Kind cluster '$(KIND_CLUSTER_NAME)' already exists, skipping creation"; \
+	else \
+		echo "Creating Kind cluster '$(KIND_CLUSTER_NAME)' with 3 nodes"; \
+		{ \
+			echo "kind: Cluster"; \
+			echo "apiVersion: kind.x-k8s.io/v1alpha4"; \
+			echo "nodes:"; \
+			echo "- role: control-plane"; \
+			echo "- role: worker"; \
+			echo "- role: worker"; \
+		} | kind create cluster --name $(KIND_CLUSTER_NAME) --config=-; \
+		# Configure CoreDNS with 2 replicas on different nodes so CheckNodeHealth can successfully run the PodNetwork checker \
+		echo "Configuring CoreDNS with 2 replicas spread across nodes"; \
+		kubectl --context kind-$(KIND_CLUSTER_NAME) patch deployment coredns -n kube-system -p '{"spec":{"replicas":2,"strategy":{"type":"RollingUpdate","rollingUpdate":{"maxSurge":0,"maxUnavailable":1}},"template":{"spec":{"affinity":{"podAntiAffinity":{"requiredDuringSchedulingIgnoredDuringExecution":[{"labelSelector":{"matchLabels":{"k8s-app":"kube-dns"}},"topologyKey":"kubernetes.io/hostname"}]}}}}}}'; \
+		kubectl --context kind-$(KIND_CLUSTER_NAME) rollout status deployment coredns -n kube-system --timeout=120s; \
+	fi
 
 .PHONY: kind-build-image
 kind-build-image:

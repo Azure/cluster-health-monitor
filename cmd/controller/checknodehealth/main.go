@@ -4,12 +4,16 @@ import (
 	"flag"
 	"os"
 
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/selection"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	ctrlmetricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
@@ -65,6 +69,15 @@ func main() {
 		klog.FlushAndExit(klog.ExitFlushTimeout, 1)
 	}
 
+	// Build label selector for checker pods
+	checkerPodSelector := labels.NewSelector()
+	req, err := labels.NewRequirement(checknodehealth.CheckNodeHealthLabel, selection.Exists, nil)
+	if err != nil {
+		klog.ErrorS(err, "Unable to build pod label selector")
+		klog.FlushAndExit(klog.ExitFlushTimeout, 1)
+	}
+	checkerPodSelector = checkerPodSelector.Add(*req)
+
 	// Create manager
 	syncPeriod := checknodehealth.SyncPeriod
 	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
@@ -74,6 +87,14 @@ func main() {
 		},
 		Cache: cache.Options{
 			SyncPeriod: &syncPeriod,
+			ByObject: map[client.Object]cache.ByObject{
+				&corev1.Pod{}: {
+					Namespaces: map[string]cache.Config{
+						checkerPodNamespace: {},
+					},
+					Label: checkerPodSelector,
+				},
+			},
 		},
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
