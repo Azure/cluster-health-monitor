@@ -165,15 +165,16 @@ func (c DNSChecker) checkCoreDNSPerPod(ctx context.Context) {
 
 		// Query CoreDNS endpoint.
 		podname := endpoint.TargetRef.Name
+		podNamespace := endpoint.TargetRef.Namespace
 		err := c.queryEndpoint(ctx, endpoint)
 		if err != nil {
 			if errors.Is(err, context.DeadlineExceeded) {
-				checker.RecordCoreDNSPodResult(c, podname, checker.Unhealthy(ErrCodePodTimeout, "CoreDNS pod query timed out"), nil)
+				checker.RecordCoreDNSPodResult(c, podNamespace, podname, checker.Unhealthy(ErrCodePodTimeout, "CoreDNS pod query timed out"), nil)
 			} else {
-				checker.RecordCoreDNSPodResult(c, podname, nil, err)
+				checker.RecordCoreDNSPodResult(c, podNamespace, podname, nil, err)
 			}
 		} else {
-			checker.RecordCoreDNSPodResult(c, podname, checker.Healthy(), nil)
+			checker.RecordCoreDNSPodResult(c, podNamespace, podname, checker.Healthy(), nil)
 		}
 	}
 }
