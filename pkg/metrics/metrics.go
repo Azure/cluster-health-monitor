@@ -29,6 +29,6 @@ var (
 			Name: "cluster_health_monitor_pod_health_result_total",
 			Help: "Total number of per-pod health checks, labeled by status and code",
 		},
-		[]string{"checker_type", "checker_name", "pod_name", "status", "error_code"},
+		[]string{"checker_type", "checker_name", "pod_namespace", "pod_name", "status", "error_code"},
 	)
 )
