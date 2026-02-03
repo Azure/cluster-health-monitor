@@ -4,6 +4,7 @@ metadata:
   name: clusterhealth-example
 spec:
   type: NodeHealth
+  Source: ClusterHealthMonitor
   target:
       nodeName: aks-agentpool-31207608-vmss000000
 status:

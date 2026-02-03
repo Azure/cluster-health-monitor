@@ -46,6 +46,7 @@ type UpgradeNodeInProgressList struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster,shortName=hs
+// +kubebuilder:printcolumn:name="Source",type=string,JSONPath=`.spec.source`
 // +kubebuilder:printcolumn:name="Type",type=string,JSONPath=`.spec.type`
 // +kubebuilder:printcolumn:name="Node",type=string,JSONPath=`.spec.target.nodeName`
 // +kubebuilder:printcolumn:name="Healthy",type=string,JSONPath=`.status.condition[?(@.type=="Healthy")].status`
@@ -63,6 +64,13 @@ type HealthSignal struct {
 
 // HealthSignalSpec defines the desired state of HealthSignal
 type HealthSignalSpec struct {
+	// Source identifies the checker that created this health signal
+	// For example: "ClusterHealthMonitor", "AKSNodeHealthChecker"
+	// +required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	Source string `json:"source"`
+
 	// Type specifies the type of health signal (e.g., NodeHealth)
 	// +required
 	// +kubebuilder:validation:Enum=NodeHealth
