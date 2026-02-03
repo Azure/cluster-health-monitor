@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/samber/lo"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/klog/v2"
@@ -24,8 +25,11 @@ const (
 	// HealthSignalSource identifies this controller as the source of HealthSignal
 	HealthSignalSource = "ClusterHealthMonitor"
 
-	// HealthSignalNameSuffix is appended to UpgradeNodeInProgress name to form HealthSignal name
-	HealthSignalNameSuffix = "-" + HealthSignalSource
+	// healthSignalOwnerUIDIndex is the field index for HealthSignal by owner UID
+	healthSignalOwnerUIDIndex = ".metadata.ownerReferences.healthSignal.uid"
+
+	// checkNodeHealthOwnerUIDIndex is the field index for CheckNodeHealth by owner UID
+	checkNodeHealthOwnerUIDIndex = ".metadata.ownerReferences.checkNodeHealth.uid"
 )
 
 // UpgradeNodeInProgressReconciler reconciles an UpgradeNodeInProgress object
@@ -42,6 +46,34 @@ type UpgradeNodeInProgressReconciler struct {
 
 // SetupWithManager sets up the controller with the Manager
 func (r *UpgradeNodeInProgressReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	// Set up field indexer to find HealthSignals by owner UID
+	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &unipv1alpha1.HealthSignal{}, healthSignalOwnerUIDIndex, func(obj client.Object) []string {
+		hs := obj.(*unipv1alpha1.HealthSignal)
+		var uids []string
+		for _, ref := range hs.OwnerReferences {
+			if ref.Kind == "UpgradeNodeInProgress" {
+				uids = append(uids, string(ref.UID))
+			}
+		}
+		return uids
+	}); err != nil {
+		return err
+	}
+
+	// Set up field indexer to find CheckNodeHealths by owner UID
+	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &chmv1alpha1.CheckNodeHealth{}, checkNodeHealthOwnerUIDIndex, func(obj client.Object) []string {
+		cnh := obj.(*chmv1alpha1.CheckNodeHealth)
+		var uids []string
+		for _, ref := range cnh.OwnerReferences {
+			if ref.Kind == "HealthSignal" {
+				uids = append(uids, string(ref.UID))
+			}
+		}
+		return uids
+	}); err != nil {
+		return err
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&unipv1alpha1.UpgradeNodeInProgress{}).
 		Watches(&chmv1alpha1.CheckNodeHealth{}, handler.EnqueueRequestsFromMapFunc(r.mapCheckNodeHealthToUpgradeNodeInProgress)).
@@ -58,14 +90,10 @@ func (r *UpgradeNodeInProgressReconciler) mapCheckNodeHealthToUpgradeNodeInProgr
 	}
 
 	// Find the HealthSignal owner of this CheckNodeHealth
-	var hsOwnerRef *metav1.OwnerReference
-	for i := range cnh.OwnerReferences {
-		if cnh.OwnerReferences[i].Kind == "HealthSignal" {
-			hsOwnerRef = &cnh.OwnerReferences[i]
-			break
-		}
-	}
-	if hsOwnerRef == nil {
+	hsOwnerRef, found := lo.Find(cnh.OwnerReferences, func(ref metav1.OwnerReference) bool {
+		return ref.Kind == "HealthSignal"
+	})
+	if !found {
 		return nil
 	}
 
@@ -100,7 +128,7 @@ func (r *UpgradeNodeInProgressReconciler) Reconcile(ctx context.Context, req ctr
 
 	klog.InfoS("Reconciling UpgradeNodeInProgress", "name", unip.Name, "node", unip.Spec.NodeRef.Name)
 
-	// Skip if being deleted - Kubernetes GC will clean up CheckNodeHealth via OwnerReference
+	// Skip if being deleted - Kubernetes GC will clean up HealthSignal and CheckNodeHealth via OwnerReference
 	if unip.DeletionTimestamp != nil {
 		klog.InfoS("UpgradeNodeInProgress is being deleted, skipping", "name", unip.Name)
 		return ctrl.Result{}, nil
@@ -121,39 +149,37 @@ func (r *UpgradeNodeInProgressReconciler) Reconcile(ctx context.Context, req ctr
 		return ctrl.Result{}, err
 	}
 
-	// Check if CheckNodeHealth has completed
-	if cnh.Status.FinishedAt != nil {
-		// Copy results from CheckNodeHealth to HealthSignal
-		if err := r.syncHealthSignalStatus(ctx, healthSignal, cnh); err != nil {
-			klog.ErrorS(err, "Failed to sync HealthSignal status")
-			return ctrl.Result{}, err
-		}
-		klog.InfoS("CheckNodeHealth completed, synced to HealthSignal", "name", unip.Name)
-		return ctrl.Result{}, nil
+	if cnh.Status.FinishedAt == nil {
+		klog.V(1).InfoS("CheckNodeHealth still in progress", "name", cnh.Name)
+		return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
 	}
 
-	// CheckNodeHealth is still in progress, requeue to check later
-	klog.V(1).InfoS("CheckNodeHealth still in progress", "name", cnh.Name)
-	return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+	// Check if CheckNodeHealth has completed
+	// Copy results from CheckNodeHealth to HealthSignal
+	if err := r.syncHealthSignalStatus(ctx, healthSignal, cnh); err != nil {
+		klog.ErrorS(err, "Failed to sync HealthSignal status")
+		return ctrl.Result{}, err
+	}
+	klog.InfoS("CheckNodeHealth completed, synced to HealthSignal", "name", unip.Name)
+	return ctrl.Result{}, nil
 }
 
 // ensureHealthSignal creates or retrieves the HealthSignal for the given UpgradeNodeInProgress
 func (r *UpgradeNodeInProgressReconciler) ensureHealthSignal(ctx context.Context, unip *unipv1alpha1.UpgradeNodeInProgress) (*unipv1alpha1.HealthSignal, error) {
-	// Use naming convention: {unipName}-{source}
+	// Find HealthSignal owned by this UpgradeNodeInProgress using the field index
+	healthSignalList := &unipv1alpha1.HealthSignalList{}
+	if err := r.List(ctx, healthSignalList, client.MatchingFields{healthSignalOwnerUIDIndex: string(unip.UID)}); err != nil {
+		return nil, fmt.Errorf("failed to list HealthSignals by owner UID: %w", err)
+	}
+
+	if len(healthSignalList.Items) > 0 {
+		// Return the first (and should be only) HealthSignal owned by this UpgradeNodeInProgress
+		return &healthSignalList.Items[0], nil
+	}
+
+	// Create new HealthSignal with naming convention: {unipName}-{source}
 	healthSignalName := fmt.Sprintf("%s-%s", unip.Name, HealthSignalSource)
-
-	healthSignal := &unipv1alpha1.HealthSignal{}
-	err := r.Get(ctx, client.ObjectKey{Name: healthSignalName}, healthSignal)
-	if err == nil {
-		return healthSignal, nil
-	}
-
-	if client.IgnoreNotFound(err) != nil {
-		return nil, fmt.Errorf("failed to get HealthSignal: %w", err)
-	}
-
-	// Create new HealthSignal
-	healthSignal = &unipv1alpha1.HealthSignal{
+	healthSignal := &unipv1alpha1.HealthSignal{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: healthSignalName,
 			OwnerReferences: []metav1.OwnerReference{
@@ -185,21 +211,18 @@ func (r *UpgradeNodeInProgressReconciler) ensureHealthSignal(ctx context.Context
 // ensureCheckNodeHealth creates or retrieves the CheckNodeHealth for the given HealthSignal
 // CheckNodeHealth is owned by HealthSignal (Controller=true)
 func (r *UpgradeNodeInProgressReconciler) ensureCheckNodeHealth(ctx context.Context, hs *unipv1alpha1.HealthSignal, nodeName string) (*chmv1alpha1.CheckNodeHealth, error) {
-	// Use the same name as HealthSignal for CheckNodeHealth
+	// Find CheckNodeHealth owned by this HealthSignal using the field index
+	cnhList := &chmv1alpha1.CheckNodeHealthList{}
+	if err := r.List(ctx, cnhList, client.MatchingFields{checkNodeHealthOwnerUIDIndex: string(hs.UID)}); err != nil {
+		return nil, fmt.Errorf("failed to list CheckNodeHealths by owner UID: %w", err)
+	}
+
+	if len(cnhList.Items) > 0 {
+		return &cnhList.Items[0], nil
+	}
+
 	cnhName := hs.Name
-
-	cnh := &chmv1alpha1.CheckNodeHealth{}
-	err := r.Get(ctx, client.ObjectKey{Name: cnhName}, cnh)
-	if err == nil {
-		return cnh, nil
-	}
-
-	if client.IgnoreNotFound(err) != nil {
-		return nil, fmt.Errorf("failed to get CheckNodeHealth: %w", err)
-	}
-
-	// Create new CheckNodeHealth
-	cnh = &chmv1alpha1.CheckNodeHealth{
+	cnh := &chmv1alpha1.CheckNodeHealth{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: cnhName,
 		},
@@ -210,9 +233,7 @@ func (r *UpgradeNodeInProgressReconciler) ensureCheckNodeHealth(ctx context.Cont
 		},
 	}
 
-	// Set HealthSignal as the owner (Controller=true) - this enables:
-	// 1. Automatic garbage collection when HealthSignal is deleted
-	// 2. Tracing back to UpgradeNodeInProgress via HealthSignal's owner
+	// Set HealthSignal as the owner (Controller=true) - this blocks deletion of CheckNodeHealth until HealthSignal is deleted
 	if err := controllerutil.SetControllerReference(hs, cnh, r.Scheme); err != nil {
 		return nil, fmt.Errorf("failed to set controller reference: %w", err)
 	}
@@ -227,11 +248,6 @@ func (r *UpgradeNodeInProgressReconciler) ensureCheckNodeHealth(ctx context.Cont
 
 // syncHealthSignalStatus copies the status from CheckNodeHealth to HealthSignal
 func (r *UpgradeNodeInProgressReconciler) syncHealthSignalStatus(ctx context.Context, hs *unipv1alpha1.HealthSignal, cnh *chmv1alpha1.CheckNodeHealth) error {
-	// Check if already synced (FinishedAt is set)
-	if hs.Status.FinishedAt != nil {
-		return nil
-	}
-
 	// Copy timing information
 	hs.Status.StartedAt = cnh.Status.StartedAt
 	hs.Status.FinishedAt = cnh.Status.FinishedAt
