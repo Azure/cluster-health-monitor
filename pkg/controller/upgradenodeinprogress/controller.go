@@ -3,6 +3,7 @@ package upgradenodeinprogress
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/samber/lo"
@@ -177,8 +178,8 @@ func (r *UpgradeNodeInProgressReconciler) ensureHealthSignal(ctx context.Context
 		return &healthSignalList.Items[0], nil
 	}
 
-	// Create new HealthSignal with naming convention: {unipName}-{source}
-	healthSignalName := fmt.Sprintf("%s-%s", unip.Name, HealthSignalSource)
+	// Create new HealthSignal with naming convention: {unipName}-{source} (lowercase for RFC 1123)
+	healthSignalName := strings.ToLower(fmt.Sprintf("%s-%s", unip.Name, HealthSignalSource))
 	healthSignal := &unipv1alpha1.HealthSignal{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: healthSignalName,
