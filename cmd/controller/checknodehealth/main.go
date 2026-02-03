@@ -18,7 +18,9 @@ import (
 	ctrlmetricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
+	unipv1alpha1 "github.com/Azure/cluster-health-monitor/apis/upgradenodeinprogresses/v1alpha1"
 	"github.com/Azure/cluster-health-monitor/pkg/controller/checknodehealth"
+	"github.com/Azure/cluster-health-monitor/pkg/controller/upgradenodeinprogress"
 )
 
 var (
@@ -29,6 +31,7 @@ func init() {
 	klog.InitFlags(nil)
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(chmv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(unipv1alpha1.AddToScheme(scheme))
 }
 
 const (
@@ -105,7 +108,7 @@ func main() {
 		klog.FlushAndExit(klog.ExitFlushTimeout, 1)
 	}
 
-	// Setup controller
+	// Setup CheckNodeHealth controller
 	if err = (&checknodehealth.CheckNodeHealthReconciler{
 		Client:              mgr.GetClient(),
 		Scheme:              mgr.GetScheme(),
@@ -114,6 +117,15 @@ func main() {
 		CheckerPodNamespace: checkerPodNamespace,
 	}).SetupWithManager(mgr); err != nil {
 		klog.ErrorS(err, "Unable to create controller", "controller", "CheckNodeHealth")
+		klog.FlushAndExit(klog.ExitFlushTimeout, 1)
+	}
+
+	// Setup UpgradeNodeInProgress controller
+	if err = (&upgradenodeinprogress.UpgradeNodeInProgressReconciler{
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
+	}).SetupWithManager(mgr); err != nil {
+		klog.ErrorS(err, "Unable to create controller", "controller", "UpgradeNodeInProgress")
 		klog.FlushAndExit(klog.ExitFlushTimeout, 1)
 	}
 
