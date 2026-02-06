@@ -10,6 +10,9 @@ import (
 	"k8s.io/apimachinery/pkg/selection"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/component-base/logs"
+	logsapi "k8s.io/component-base/logs/api/v1"
+	_ "k8s.io/component-base/logs/json/register" // Register JSON log format
 	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
@@ -19,6 +22,7 @@ import (
 
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
 	"github.com/Azure/cluster-health-monitor/pkg/controller/checknodehealth"
+	"github.com/spf13/pflag"
 )
 
 var (
@@ -26,7 +30,6 @@ var (
 )
 
 func init() {
-	klog.InitFlags(nil)
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(chmv1alpha1.AddToScheme(scheme))
 }
@@ -46,13 +49,27 @@ func main() {
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
 
-	flag.Parse()
-	defer klog.Flush()
+	// Set up logging configuration with JSON format
+	logConfig := logsapi.NewLoggingConfiguration()
+	logConfig.Format = logsapi.JSONLogFormat
+	logsapi.AddFlags(logConfig, pflag.CommandLine)
+
+	pflag.CommandLine.AddGoFlagSet(flag.CommandLine)
+	pflag.Parse()
+
+	// Apply logging configuration
+	logs.InitLogs()
+	if err := logsapi.ValidateAndApply(logConfig, nil); err != nil {
+		klog.ErrorS(err, "Failed to validate and apply logging configuration")
+		os.Exit(1)
+	}
+	defer logs.FlushLogs()
 
 	// Set up controller-runtime logger
 	ctrl.SetLogger(klog.NewKlogr())
 
 	klog.InfoS("Starting CheckNodeHealth Controller")
+	klog.InfoS("This is json", "key1", "value1", "key2", "value2") // Example structured log
 
 	// Get checker pod image from environment variable
 	checkerPodImage := os.Getenv("CHECKER_POD_IMAGE")
