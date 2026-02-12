@@ -61,7 +61,7 @@ func main() {
 	logs.InitLogs()
 	if err := logsapi.ValidateAndApply(logConfig, nil); err != nil {
 		klog.ErrorS(err, "Failed to validate and apply logging configuration")
-		os.Exit(1)
+		klog.FlushAndExit(klog.ExitFlushTimeout, 1)
 	}
 	defer logs.FlushLogs()
 
