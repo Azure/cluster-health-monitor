@@ -69,7 +69,6 @@ func main() {
 	ctrl.SetLogger(klog.NewKlogr())
 
 	klog.InfoS("Starting CheckNodeHealth Controller")
-	klog.InfoS("This is json", "key1", "value1", "key2", "value2") // Example structured log
 
 	// Get checker pod image from environment variable
 	checkerPodImage := os.Getenv("CHECKER_POD_IMAGE")
