@@ -6,8 +6,9 @@ import (
 	"strings"
 	"time"
 
+	healthv1alpha1 "github.com/Azure/aks-health-signal/api/health/v1alpha1"
+	upgradev1alpha1 "github.com/Azure/aks-health-signal/api/upgrade/v1alpha1"
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
-	unipv1alpha1 "github.com/Azure/cluster-health-monitor/apis/upgradenodeinprogresses/v1alpha1"
 	"github.com/Azure/cluster-health-monitor/pkg/controller/upgradenodeinprogress"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -19,12 +20,12 @@ import (
 
 // Helper functions for UpgradeNodeInProgress CR operations
 func createUpgradeNodeInProgressCR(ctx context.Context, k8sClient client.Client, name, nodeName string) error {
-	unip := &unipv1alpha1.UpgradeNodeInProgress{
+	unip := &upgradev1alpha1.UpgradeNodeInProgress{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name,
 		},
-		Spec: unipv1alpha1.UpgradeNodeInProgressSpec{
-			NodeRef: unipv1alpha1.NodeReference{
+		Spec: upgradev1alpha1.UpgradeNodeInProgressSpec{
+			NodeRef: upgradev1alpha1.NodeReference{
 				Name: nodeName,
 			},
 		},
@@ -32,17 +33,8 @@ func createUpgradeNodeInProgressCR(ctx context.Context, k8sClient client.Client,
 	return k8sClient.Create(ctx, unip)
 }
 
-func getUpgradeNodeInProgressCR(ctx context.Context, k8sClient client.Client, name string) (*unipv1alpha1.UpgradeNodeInProgress, error) {
-	unip := &unipv1alpha1.UpgradeNodeInProgress{}
-	err := k8sClient.Get(ctx, client.ObjectKey{Name: name}, unip)
-	if err != nil {
-		return nil, err
-	}
-	return unip, nil
-}
-
 func deleteUpgradeNodeInProgressCR(ctx context.Context, k8sClient client.Client, name string) error {
-	unip := &unipv1alpha1.UpgradeNodeInProgress{
+	unip := &upgradev1alpha1.UpgradeNodeInProgress{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name,
 		},
@@ -55,14 +47,14 @@ func deleteUpgradeNodeInProgressCR(ctx context.Context, k8sClient client.Client,
 }
 
 func upgradeNodeInProgressCRExists(ctx context.Context, k8sClient client.Client, name string) bool {
-	unip := &unipv1alpha1.UpgradeNodeInProgress{}
+	unip := &upgradev1alpha1.UpgradeNodeInProgress{}
 	err := k8sClient.Get(ctx, client.ObjectKey{Name: name}, unip)
 	return err == nil
 }
 
 // Helper functions for HealthSignal CR operations
-func getHealthSignalCR(ctx context.Context, k8sClient client.Client, name string) (*unipv1alpha1.HealthSignal, error) {
-	hs := &unipv1alpha1.HealthSignal{}
+func getHealthSignalCR(ctx context.Context, k8sClient client.Client, name string) (*healthv1alpha1.HealthSignal, error) {
+	hs := &healthv1alpha1.HealthSignal{}
 	err := k8sClient.Get(ctx, client.ObjectKey{Name: name}, hs)
 	if err != nil {
 		return nil, err
@@ -71,7 +63,7 @@ func getHealthSignalCR(ctx context.Context, k8sClient client.Client, name string
 }
 
 func healthSignalCRExists(ctx context.Context, k8sClient client.Client, name string) bool {
-	hs := &unipv1alpha1.HealthSignal{}
+	hs := &healthv1alpha1.HealthSignal{}
 	err := k8sClient.Get(ctx, client.ObjectKey{Name: name}, hs)
 	return err == nil
 }
@@ -89,7 +81,9 @@ var _ = Describe("UpgradeNodeInProgress Controller", Ordered, ContinueOnFailure,
 		// Register CRD schemes
 		err := chmv1alpha1.AddToScheme(scheme.Scheme)
 		Expect(err).NotTo(HaveOccurred())
-		err = unipv1alpha1.AddToScheme(scheme.Scheme)
+		err = upgradev1alpha1.AddToScheme(scheme.Scheme)
+		Expect(err).NotTo(HaveOccurred())
+		err = healthv1alpha1.AddToScheme(scheme.Scheme)
 		Expect(err).NotTo(HaveOccurred())
 
 		// Create controller-runtime client for CRD operations
@@ -173,16 +167,16 @@ var _ = Describe("UpgradeNodeInProgress Controller", Ordered, ContinueOnFailure,
 		expectedHSName := strings.ToLower(fmt.Sprintf("%s-%s", unipName, upgradenodeinprogress.HealthSignalSource))
 
 		By("Verifying HealthSignal is created with correct owner reference")
-		var hs *unipv1alpha1.HealthSignal
+		var hs *healthv1alpha1.HealthSignal
 		Eventually(func() bool {
 			hs, err = getHealthSignalCR(ctx, k8sClient, expectedHSName)
 			return err == nil
 		}, "30s", "2s").Should(BeTrue(), "HealthSignal was not created within timeout")
 
 		// Verify HealthSignal spec
-		Expect(hs.Spec.Source).To(Equal(upgradenodeinprogress.HealthSignalSource))
-		Expect(hs.Spec.Type).To(Equal(unipv1alpha1.HealthSignalTypeNodeHealth))
-		Expect(hs.Spec.Target.NodeName).To(Equal(testNodeName))
+		Expect(hs.Spec.Source.Name).To(Equal(upgradenodeinprogress.HealthSignalSource))
+		Expect(hs.Spec.Type).To(Equal(healthv1alpha1.NodeHealth))
+		Expect(hs.Spec.Target.Name).To(Equal(testNodeName))
 
 		// Verify owner reference
 		Expect(hs.OwnerReferences).To(HaveLen(1))
@@ -221,19 +215,15 @@ var _ = Describe("UpgradeNodeInProgress Controller", Ordered, ContinueOnFailure,
 			if err != nil {
 				return false
 			}
-			return hs.Status.FinishedAt != nil
+			return len(hs.Status.Conditions) > 0
 		}, "30s", "2s").Should(BeTrue(), "HealthSignal status was not synced within timeout")
 
-		// Verify timing information is synced
-		Expect(hs.Status.StartedAt).NotTo(BeNil())
-		Expect(hs.Status.FinishedAt).NotTo(BeNil())
-
 		// Verify conditions are synced
-		Expect(hs.Status.Condition).NotTo(BeEmpty())
+		Expect(hs.Status.Conditions).NotTo(BeEmpty())
 		var healthyCondition *metav1.Condition
-		for i := range hs.Status.Condition {
-			if hs.Status.Condition[i].Type == "Healthy" {
-				healthyCondition = &hs.Status.Condition[i]
+		for i := range hs.Status.Conditions {
+			if hs.Status.Conditions[i].Type == "Healthy" {
+				healthyCondition = &hs.Status.Conditions[i]
 				break
 			}
 		}

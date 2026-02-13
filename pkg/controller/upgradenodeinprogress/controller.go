@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/samber/lo"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/klog/v2"
@@ -15,8 +16,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 
+	healthv1alpha1 "github.com/Azure/aks-health-signal/api/health/v1alpha1"
+	upgradev1alpha1 "github.com/Azure/aks-health-signal/api/upgrade/v1alpha1"
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
-	unipv1alpha1 "github.com/Azure/cluster-health-monitor/apis/upgradenodeinprogresses/v1alpha1"
 )
 
 const (
@@ -25,6 +27,9 @@ const (
 
 	// HealthSignalSource identifies this controller as the source of HealthSignal
 	HealthSignalSource = "ClusterHealthMonitor"
+
+	// UpgradeNodeInProgressKind is the kind string for UpgradeNodeInProgress resources
+	UpgradeNodeInProgressKind = "UpgradeNodeInProgress"
 
 	// healthSignalOwnerUIDIndex is the field index for HealthSignal by owner UID
 	healthSignalOwnerUIDIndex = ".metadata.ownerReferences.healthSignal.uid"
@@ -40,7 +45,7 @@ type UpgradeNodeInProgressReconciler struct {
 	Scheme *runtime.Scheme
 }
 
-// +kubebuilder:rbac:groups=health.aks.io,resources=upgradenodeinprogresses,verbs=get;list;watch
+// +kubebuilder:rbac:groups=upgrade.aks.io,resources=upgradenodeinprogresses,verbs=get;list;watch
 // +kubebuilder:rbac:groups=health.aks.io,resources=healthsignals,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=health.aks.io,resources=healthsignals/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=clusterhealthmonitor.azure.com,resources=checknodehealths,verbs=get;list;watch;create;update;patch;delete
@@ -48,11 +53,11 @@ type UpgradeNodeInProgressReconciler struct {
 // SetupWithManager sets up the controller with the Manager
 func (r *UpgradeNodeInProgressReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	// Set up field indexer to find HealthSignals by owner UID
-	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &unipv1alpha1.HealthSignal{}, healthSignalOwnerUIDIndex, func(obj client.Object) []string {
-		hs := obj.(*unipv1alpha1.HealthSignal)
+	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &healthv1alpha1.HealthSignal{}, healthSignalOwnerUIDIndex, func(obj client.Object) []string {
+		hs := obj.(*healthv1alpha1.HealthSignal)
 		var uids []string
 		for _, ref := range hs.OwnerReferences {
-			if ref.Kind == "UpgradeNodeInProgress" {
+			if ref.Kind == UpgradeNodeInProgressKind {
 				uids = append(uids, string(ref.UID))
 			}
 		}
@@ -76,7 +81,7 @@ func (r *UpgradeNodeInProgressReconciler) SetupWithManager(mgr ctrl.Manager) err
 	}
 
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&unipv1alpha1.UpgradeNodeInProgress{}).
+		For(&upgradev1alpha1.UpgradeNodeInProgress{}).
 		Watches(&chmv1alpha1.CheckNodeHealth{}, handler.EnqueueRequestsFromMapFunc(r.mapCheckNodeHealthToUpgradeNodeInProgress)).
 		Complete(r)
 }
@@ -99,7 +104,7 @@ func (r *UpgradeNodeInProgressReconciler) mapCheckNodeHealthToUpgradeNodeInProgr
 	}
 
 	// Get the HealthSignal to find its UpgradeNodeInProgress owner
-	hs := &unipv1alpha1.HealthSignal{}
+	hs := &healthv1alpha1.HealthSignal{}
 	if err := r.Get(ctx, client.ObjectKey{Name: hsOwnerRef.Name}, hs); err != nil {
 		klog.V(1).ErrorS(err, "Failed to get HealthSignal for mapping", "healthSignal", hsOwnerRef.Name)
 		return nil
@@ -107,7 +112,7 @@ func (r *UpgradeNodeInProgressReconciler) mapCheckNodeHealthToUpgradeNodeInProgr
 
 	// Find the UpgradeNodeInProgress owner of the HealthSignal
 	for _, ownerRef := range hs.OwnerReferences {
-		if ownerRef.Kind == "UpgradeNodeInProgress" {
+		if ownerRef.Kind == UpgradeNodeInProgressKind {
 			return []ctrl.Request{
 				{NamespacedName: client.ObjectKey{Name: ownerRef.Name}},
 			}
@@ -122,7 +127,7 @@ func (r *UpgradeNodeInProgressReconciler) mapCheckNodeHealthToUpgradeNodeInProgr
 // and copies results to HealthSignal.
 func (r *UpgradeNodeInProgressReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	// Fetch the UpgradeNodeInProgress instance
-	unip := &unipv1alpha1.UpgradeNodeInProgress{}
+	unip := &upgradev1alpha1.UpgradeNodeInProgress{}
 	if err := r.Get(ctx, req.NamespacedName, unip); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
@@ -166,9 +171,9 @@ func (r *UpgradeNodeInProgressReconciler) Reconcile(ctx context.Context, req ctr
 }
 
 // ensureHealthSignal creates or retrieves the HealthSignal for the given UpgradeNodeInProgress
-func (r *UpgradeNodeInProgressReconciler) ensureHealthSignal(ctx context.Context, unip *unipv1alpha1.UpgradeNodeInProgress) (*unipv1alpha1.HealthSignal, error) {
+func (r *UpgradeNodeInProgressReconciler) ensureHealthSignal(ctx context.Context, unip *upgradev1alpha1.UpgradeNodeInProgress) (*healthv1alpha1.HealthSignal, error) {
 	// Find HealthSignal owned by this UpgradeNodeInProgress using the field index
-	healthSignalList := &unipv1alpha1.HealthSignalList{}
+	healthSignalList := &healthv1alpha1.HealthSignalList{}
 	if err := r.List(ctx, healthSignalList, client.MatchingFields{healthSignalOwnerUIDIndex: string(unip.UID)}); err != nil {
 		return nil, fmt.Errorf("failed to list HealthSignals by owner UID: %w", err)
 	}
@@ -180,23 +185,26 @@ func (r *UpgradeNodeInProgressReconciler) ensureHealthSignal(ctx context.Context
 
 	// Create new HealthSignal with naming convention: {unipName}-{source} (lowercase for RFC 1123)
 	healthSignalName := strings.ToLower(fmt.Sprintf("%s-%s", unip.Name, HealthSignalSource))
-	healthSignal := &unipv1alpha1.HealthSignal{
+	healthSignal := &healthv1alpha1.HealthSignal{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: healthSignalName,
 			OwnerReferences: []metav1.OwnerReference{
 				{
-					APIVersion: unipv1alpha1.SchemeGroupVersion.String(),
-					Kind:       "UpgradeNodeInProgress",
+					APIVersion: upgradev1alpha1.GroupVersion.String(),
+					Kind:       UpgradeNodeInProgressKind,
 					Name:       unip.Name,
 					UID:        unip.UID,
 				},
 			},
 		},
-		Spec: unipv1alpha1.HealthSignalSpec{
-			Source: HealthSignalSource,
-			Type:   unipv1alpha1.HealthSignalTypeNodeHealth,
-			Target: unipv1alpha1.HealthSignalTarget{
-				NodeName: unip.Spec.NodeRef.Name,
+		Spec: healthv1alpha1.HealthSignalSpec{
+			Source: corev1.ObjectReference{
+				Name: HealthSignalSource,
+			},
+			Type: healthv1alpha1.NodeHealth,
+			Target: &corev1.ObjectReference{
+				Kind: "Node",
+				Name: unip.Spec.NodeRef.Name,
 			},
 		},
 	}
@@ -211,7 +219,7 @@ func (r *UpgradeNodeInProgressReconciler) ensureHealthSignal(ctx context.Context
 
 // ensureCheckNodeHealth creates or retrieves the CheckNodeHealth for the given HealthSignal
 // CheckNodeHealth is owned by HealthSignal (Controller=true)
-func (r *UpgradeNodeInProgressReconciler) ensureCheckNodeHealth(ctx context.Context, hs *unipv1alpha1.HealthSignal, nodeName string) (*chmv1alpha1.CheckNodeHealth, error) {
+func (r *UpgradeNodeInProgressReconciler) ensureCheckNodeHealth(ctx context.Context, hs *healthv1alpha1.HealthSignal, nodeName string) (*chmv1alpha1.CheckNodeHealth, error) {
 	// Find CheckNodeHealth owned by this HealthSignal using the field index
 	cnhList := &chmv1alpha1.CheckNodeHealthList{}
 	if err := r.List(ctx, cnhList, client.MatchingFields{checkNodeHealthOwnerUIDIndex: string(hs.UID)}); err != nil {
@@ -248,14 +256,10 @@ func (r *UpgradeNodeInProgressReconciler) ensureCheckNodeHealth(ctx context.Cont
 }
 
 // syncHealthSignalStatus copies the status from CheckNodeHealth to HealthSignal
-func (r *UpgradeNodeInProgressReconciler) syncHealthSignalStatus(ctx context.Context, hs *unipv1alpha1.HealthSignal, cnh *chmv1alpha1.CheckNodeHealth) error {
-	// Copy timing information
-	hs.Status.StartedAt = cnh.Status.StartedAt
-	hs.Status.FinishedAt = cnh.Status.FinishedAt
-
+func (r *UpgradeNodeInProgressReconciler) syncHealthSignalStatus(ctx context.Context, hs *healthv1alpha1.HealthSignal, cnh *chmv1alpha1.CheckNodeHealth) error {
 	// Copy conditions from CheckNodeHealth to HealthSignal
-	hs.Status.Condition = make([]metav1.Condition, len(cnh.Status.Conditions))
-	copy(hs.Status.Condition, cnh.Status.Conditions)
+	hs.Status.Conditions = make([]metav1.Condition, len(cnh.Status.Conditions))
+	copy(hs.Status.Conditions, cnh.Status.Conditions)
 
 	if err := r.Status().Update(ctx, hs); err != nil {
 		return fmt.Errorf("failed to update HealthSignal status: %w", err)

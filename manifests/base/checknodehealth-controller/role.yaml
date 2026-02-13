@@ -25,7 +25,7 @@ rules:
   - patch
   - update
 - apiGroups:
-  - health.aks.io
+  - upgrade.aks.io
   resources:
   - upgradenodeinprogresses
   verbs:

@@ -3,6 +3,7 @@ module github.com/Azure/cluster-health-monitor
 go 1.24.9
 
 require (
+	github.com/Azure/aks-health-signal v0.0.0-20260213012850-52957dab38b7
 	github.com/avast/retry-go/v4 v4.7.0
 	github.com/miekg/dns v1.1.66
 	github.com/onsi/ginkgo/v2 v2.23.4
