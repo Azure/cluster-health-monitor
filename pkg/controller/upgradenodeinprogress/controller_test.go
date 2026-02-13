@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -12,8 +13,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
+	healthv1alpha1 "github.com/Azure/aks-health-signal/api/health/v1alpha1"
+	upgradev1alpha1 "github.com/Azure/aks-health-signal/api/upgrade/v1alpha1"
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
-	unipv1alpha1 "github.com/Azure/cluster-health-monitor/apis/upgradenodeinprogresses/v1alpha1"
 )
 
 func newScheme() *runtime.Scheme {
@@ -21,7 +23,10 @@ func newScheme() *runtime.Scheme {
 	if err := chmv1alpha1.AddToScheme(scheme); err != nil {
 		panic(err)
 	}
-	if err := unipv1alpha1.AddToScheme(scheme); err != nil {
+	if err := upgradev1alpha1.AddToScheme(scheme); err != nil {
+		panic(err)
+	}
+	if err := healthv1alpha1.AddToScheme(scheme); err != nil {
 		panic(err)
 	}
 	return scheme
@@ -30,9 +35,9 @@ func newScheme() *runtime.Scheme {
 func newFakeClientBuilder(scheme *runtime.Scheme) *fake.ClientBuilder {
 	return fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithStatusSubresource(&unipv1alpha1.HealthSignal{}, &chmv1alpha1.CheckNodeHealth{}).
-		WithIndex(&unipv1alpha1.HealthSignal{}, healthSignalOwnerUIDIndex, func(obj client.Object) []string {
-			hs := obj.(*unipv1alpha1.HealthSignal)
+		WithStatusSubresource(&healthv1alpha1.HealthSignal{}, &chmv1alpha1.CheckNodeHealth{}).
+		WithIndex(&healthv1alpha1.HealthSignal{}, healthSignalOwnerUIDIndex, func(obj client.Object) []string {
+			hs := obj.(*healthv1alpha1.HealthSignal)
 			var uids []string
 			for _, ref := range hs.OwnerReferences {
 				if ref.Kind == "UpgradeNodeInProgress" {
@@ -71,14 +76,12 @@ func TestReconcile(t *testing.T) {
 		{
 			name: "creates HealthSignal and CheckNodeHealth for new UpgradeNodeInProgress",
 			existingObjects: []client.Object{
-				&unipv1alpha1.UpgradeNodeInProgress{
+				&upgradev1alpha1.UpgradeNodeInProgress{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "test-unip",
 						UID:  types.UID("test-unip-uid"),
 					},
-					Spec: unipv1alpha1.UpgradeNodeInProgressSpec{
-						NodeRef: unipv1alpha1.NodeReference{Name: "test-node"},
-					},
+					Spec: upgradev1alpha1.UpgradeNodeInProgressSpec{NodeRef: upgradev1alpha1.NodeReference{Name: "test-node"}},
 				},
 			},
 			reconcileName:           "test-unip",
@@ -90,19 +93,19 @@ func TestReconcile(t *testing.T) {
 				ctx := context.Background()
 
 				// Verify HealthSignal was created with correct fields
-				hsList := &unipv1alpha1.HealthSignalList{}
+				hsList := &healthv1alpha1.HealthSignalList{}
 				if err := c.List(ctx, hsList); err != nil {
 					t.Fatalf("Failed to list HealthSignals: %v", err)
 				}
 				hs := &hsList.Items[0]
-				if hs.Name != "test-unip-ClusterHealthMonitor" {
-					t.Errorf("Expected HealthSignal name 'test-unip-ClusterHealthMonitor', got %s", hs.Name)
+				if hs.Name != "test-unip-clusterhealthmonitor" {
+					t.Errorf("Expected HealthSignal name 'test-unip-clusterhealthmonitor', got %s", hs.Name)
 				}
-				if hs.Spec.Source != HealthSignalSource {
-					t.Errorf("Expected source %s, got %s", HealthSignalSource, hs.Spec.Source)
+				if hs.Spec.Source.Name != HealthSignalSource {
+					t.Errorf("Expected source name %s, got %s", HealthSignalSource, hs.Spec.Source.Name)
 				}
-				if hs.Spec.Target.NodeName != "test-node" {
-					t.Errorf("Expected node name 'test-node', got %s", hs.Spec.Target.NodeName)
+				if hs.Spec.Target == nil || hs.Spec.Target.Name != "test-node" {
+					t.Errorf("Expected target node name 'test-node', got %v", hs.Spec.Target)
 				}
 				// Verify HealthSignal owner reference
 				if len(hs.OwnerReferences) != 1 {
@@ -154,16 +157,14 @@ func TestReconcile(t *testing.T) {
 		{
 			name: "skips UpgradeNodeInProgress being deleted",
 			existingObjects: []client.Object{
-				&unipv1alpha1.UpgradeNodeInProgress{
+				&upgradev1alpha1.UpgradeNodeInProgress{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:              "test-unip",
 						UID:               types.UID("test-unip-uid"),
 						DeletionTimestamp: &now,
 						Finalizers:        []string{"test-finalizer"},
 					},
-					Spec: unipv1alpha1.UpgradeNodeInProgressSpec{
-						NodeRef: unipv1alpha1.NodeReference{Name: "test-node"},
-					},
+					Spec: upgradev1alpha1.UpgradeNodeInProgressSpec{NodeRef: upgradev1alpha1.NodeReference{Name: "test-node"}},
 				},
 			},
 			reconcileName:           "test-unip",
@@ -175,32 +176,36 @@ func TestReconcile(t *testing.T) {
 		{
 			name: "reuses existing HealthSignal and CheckNodeHealth on subsequent reconcile",
 			existingObjects: func() []client.Object {
-				unip := &unipv1alpha1.UpgradeNodeInProgress{
+				unip := &upgradev1alpha1.UpgradeNodeInProgress{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "test-unip",
 						UID:  types.UID("test-unip-uid"),
 					},
-					Spec: unipv1alpha1.UpgradeNodeInProgressSpec{
-						NodeRef: unipv1alpha1.NodeReference{Name: "test-node"},
-					},
+					Spec: upgradev1alpha1.UpgradeNodeInProgressSpec{NodeRef: upgradev1alpha1.NodeReference{Name: "test-node"}},
 				}
-				hs := &unipv1alpha1.HealthSignal{
+				hs := &healthv1alpha1.HealthSignal{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "existing-hs",
 						UID:  types.UID("existing-hs-uid"),
 						OwnerReferences: []metav1.OwnerReference{
 							{
-								APIVersion: unipv1alpha1.SchemeGroupVersion.String(),
+								APIVersion: upgradev1alpha1.GroupVersion.String(),
 								Kind:       "UpgradeNodeInProgress",
 								Name:       unip.Name,
 								UID:        unip.UID,
 							},
 						},
 					},
-					Spec: unipv1alpha1.HealthSignalSpec{
-						Source: HealthSignalSource,
-						Type:   unipv1alpha1.HealthSignalTypeNodeHealth,
-						Target: unipv1alpha1.HealthSignalTarget{NodeName: "test-node"},
+					Spec: healthv1alpha1.HealthSignalSpec{
+						Source: corev1.ObjectReference{
+							Kind: "DaemonSet",
+							Name: HealthSignalSource,
+						},
+						Type: healthv1alpha1.NodeHealth,
+						Target: &corev1.ObjectReference{
+							Kind: "Node",
+							Name: "test-node",
+						},
 					},
 				}
 				cnh := &chmv1alpha1.CheckNodeHealth{
@@ -209,7 +214,7 @@ func TestReconcile(t *testing.T) {
 						UID:  types.UID("existing-cnh-uid"),
 						OwnerReferences: []metav1.OwnerReference{
 							{
-								APIVersion:         unipv1alpha1.SchemeGroupVersion.String(),
+								APIVersion:         healthv1alpha1.GroupVersion.String(),
 								Kind:               "HealthSignal",
 								Name:               hs.Name,
 								UID:                hs.UID,
@@ -234,7 +239,7 @@ func TestReconcile(t *testing.T) {
 				ctx := context.Background()
 
 				// Verify the existing HealthSignal was reused (not created new)
-				hsList := &unipv1alpha1.HealthSignalList{}
+				hsList := &healthv1alpha1.HealthSignalList{}
 				if err := c.List(ctx, hsList); err != nil {
 					t.Fatalf("Failed to list HealthSignals: %v", err)
 				}
@@ -255,41 +260,45 @@ func TestReconcile(t *testing.T) {
 		{
 			name: "syncs status when CheckNodeHealth is completed",
 			existingObjects: func() []client.Object {
-				unip := &unipv1alpha1.UpgradeNodeInProgress{
+				unip := &upgradev1alpha1.UpgradeNodeInProgress{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "test-unip",
 						UID:  types.UID("test-unip-uid"),
 					},
-					Spec: unipv1alpha1.UpgradeNodeInProgressSpec{
-						NodeRef: unipv1alpha1.NodeReference{Name: "test-node"},
-					},
+					Spec: upgradev1alpha1.UpgradeNodeInProgressSpec{NodeRef: upgradev1alpha1.NodeReference{Name: "test-node"}},
 				}
-				hs := &unipv1alpha1.HealthSignal{
+				hs := &healthv1alpha1.HealthSignal{
 					ObjectMeta: metav1.ObjectMeta{
-						Name: "test-unip-ClusterHealthMonitor",
+						Name: "test-unip-clusterhealthmonitor",
 						UID:  types.UID("test-hs-uid"),
 						OwnerReferences: []metav1.OwnerReference{
 							{
-								APIVersion: unipv1alpha1.SchemeGroupVersion.String(),
+								APIVersion: upgradev1alpha1.GroupVersion.String(),
 								Kind:       "UpgradeNodeInProgress",
 								Name:       unip.Name,
 								UID:        unip.UID,
 							},
 						},
 					},
-					Spec: unipv1alpha1.HealthSignalSpec{
-						Source: HealthSignalSource,
-						Type:   unipv1alpha1.HealthSignalTypeNodeHealth,
-						Target: unipv1alpha1.HealthSignalTarget{NodeName: "test-node"},
+					Spec: healthv1alpha1.HealthSignalSpec{
+						Source: corev1.ObjectReference{
+							Kind: "DaemonSet",
+							Name: HealthSignalSource,
+						},
+						Type: healthv1alpha1.NodeHealth,
+						Target: &corev1.ObjectReference{
+							Kind: "Node",
+							Name: "test-node",
+						},
 					},
 				}
 				cnh := &chmv1alpha1.CheckNodeHealth{
 					ObjectMeta: metav1.ObjectMeta{
-						Name: "test-unip-ClusterHealthMonitor",
+						Name: "test-unip-clusterhealthmonitor",
 						UID:  types.UID("test-cnh-uid"),
 						OwnerReferences: []metav1.OwnerReference{
 							{
-								APIVersion:         unipv1alpha1.SchemeGroupVersion.String(),
+								APIVersion:         healthv1alpha1.GroupVersion.String(),
 								Kind:               "HealthSignal",
 								Name:               hs.Name,
 								UID:                hs.UID,
@@ -331,24 +340,18 @@ func TestReconcile(t *testing.T) {
 			expectedCheckNodeHealth: 1,
 			validateFunc: func(t *testing.T, c client.Client) {
 				ctx := context.Background()
-				hs := &unipv1alpha1.HealthSignal{}
-				if err := c.Get(ctx, client.ObjectKey{Name: "test-unip-ClusterHealthMonitor"}, hs); err != nil {
+				hs := &healthv1alpha1.HealthSignal{}
+				if err := c.Get(ctx, client.ObjectKey{Name: "test-unip-clusterhealthmonitor"}, hs); err != nil {
 					t.Fatalf("Failed to get HealthSignal: %v", err)
 				}
-				// Verify status was synced
-				if hs.Status.StartedAt == nil {
-					t.Error("Expected HealthSignal StartedAt to be set")
-				}
-				if hs.Status.FinishedAt == nil {
-					t.Error("Expected HealthSignal FinishedAt to be set")
-				}
-				if len(hs.Status.Condition) != 2 {
-					t.Errorf("Expected 2 conditions, got %d", len(hs.Status.Condition))
+				// Verify conditions were synced
+				if len(hs.Status.Conditions) != 2 {
+					t.Errorf("Expected 2 conditions, got %d", len(hs.Status.Conditions))
 				}
 				// Verify conditions were copied correctly
 				foundHealthy := false
 				foundDNS := false
-				for _, cond := range hs.Status.Condition {
+				for _, cond := range hs.Status.Conditions {
 					if cond.Type == "Healthy" && cond.Status == metav1.ConditionTrue {
 						foundHealthy = true
 					}
@@ -367,41 +370,45 @@ func TestReconcile(t *testing.T) {
 		{
 			name: "syncs unhealthy status when CheckNodeHealth fails",
 			existingObjects: func() []client.Object {
-				unip := &unipv1alpha1.UpgradeNodeInProgress{
+				unip := &upgradev1alpha1.UpgradeNodeInProgress{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "test-unip",
 						UID:  types.UID("test-unip-uid"),
 					},
-					Spec: unipv1alpha1.UpgradeNodeInProgressSpec{
-						NodeRef: unipv1alpha1.NodeReference{Name: "test-node"},
-					},
+					Spec: upgradev1alpha1.UpgradeNodeInProgressSpec{NodeRef: upgradev1alpha1.NodeReference{Name: "test-node"}},
 				}
-				hs := &unipv1alpha1.HealthSignal{
+				hs := &healthv1alpha1.HealthSignal{
 					ObjectMeta: metav1.ObjectMeta{
-						Name: "test-unip-ClusterHealthMonitor",
+						Name: "test-unip-clusterhealthmonitor",
 						UID:  types.UID("test-hs-uid"),
 						OwnerReferences: []metav1.OwnerReference{
 							{
-								APIVersion: unipv1alpha1.SchemeGroupVersion.String(),
+								APIVersion: upgradev1alpha1.GroupVersion.String(),
 								Kind:       "UpgradeNodeInProgress",
 								Name:       unip.Name,
 								UID:        unip.UID,
 							},
 						},
 					},
-					Spec: unipv1alpha1.HealthSignalSpec{
-						Source: HealthSignalSource,
-						Type:   unipv1alpha1.HealthSignalTypeNodeHealth,
-						Target: unipv1alpha1.HealthSignalTarget{NodeName: "test-node"},
+					Spec: healthv1alpha1.HealthSignalSpec{
+						Source: corev1.ObjectReference{
+							Kind: "DaemonSet",
+							Name: HealthSignalSource,
+						},
+						Type: healthv1alpha1.NodeHealth,
+						Target: &corev1.ObjectReference{
+							Kind: "Node",
+							Name: "test-node",
+						},
 					},
 				}
 				cnh := &chmv1alpha1.CheckNodeHealth{
 					ObjectMeta: metav1.ObjectMeta{
-						Name: "test-unip-ClusterHealthMonitor",
+						Name: "test-unip-clusterhealthmonitor",
 						UID:  types.UID("test-cnh-uid"),
 						OwnerReferences: []metav1.OwnerReference{
 							{
-								APIVersion:         unipv1alpha1.SchemeGroupVersion.String(),
+								APIVersion:         healthv1alpha1.GroupVersion.String(),
 								Kind:               "HealthSignal",
 								Name:               hs.Name,
 								UID:                hs.UID,
@@ -436,15 +443,15 @@ func TestReconcile(t *testing.T) {
 			expectedCheckNodeHealth: 1,
 			validateFunc: func(t *testing.T, c client.Client) {
 				ctx := context.Background()
-				hs := &unipv1alpha1.HealthSignal{}
-				if err := c.Get(ctx, client.ObjectKey{Name: "test-unip-ClusterHealthMonitor"}, hs); err != nil {
+				hs := &healthv1alpha1.HealthSignal{}
+				if err := c.Get(ctx, client.ObjectKey{Name: "test-unip-clusterhealthmonitor"}, hs); err != nil {
 					t.Fatalf("Failed to get HealthSignal: %v", err)
 				}
-				if len(hs.Status.Condition) != 1 {
-					t.Errorf("Expected 1 condition, got %d", len(hs.Status.Condition))
+				if len(hs.Status.Conditions) != 1 {
+					t.Errorf("Expected 1 condition, got %d", len(hs.Status.Conditions))
 				}
-				if hs.Status.Condition[0].Status != metav1.ConditionFalse {
-					t.Errorf("Expected Healthy condition to be False, got %s", hs.Status.Condition[0].Status)
+				if hs.Status.Conditions[0].Status != metav1.ConditionFalse {
+					t.Errorf("Expected Healthy condition to be False, got %s", hs.Status.Conditions[0].Status)
 				}
 			},
 		},
@@ -477,7 +484,7 @@ func TestReconcile(t *testing.T) {
 			}
 
 			// Verify counts
-			hsList := &unipv1alpha1.HealthSignalList{}
+			hsList := &healthv1alpha1.HealthSignalList{}
 			if err := fakeClient.List(ctx, hsList); err != nil {
 				t.Fatalf("Failed to list HealthSignals: %v", err)
 			}

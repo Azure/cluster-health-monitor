@@ -1,3 +1,5 @@
+github.com/Azure/aks-health-signal v0.0.0-20260213012850-52957dab38b7 h1:MXZVRUfsfqL7cgBBjmCFtQmtRsMQaL5cKWi+MX8hRqw=
+github.com/Azure/aks-health-signal v0.0.0-20260213012850-52957dab38b7/go.mod h1:yVf+NUQThLduI3SC/u6W8tq5gKEm91sSGig+NWYrYnc=
 github.com/Pallinder/go-randomdata v1.2.0 h1:DZ41wBchNRb/0GfsePLiSwb0PHZmT67XY00lCDlaYPg=
 github.com/Pallinder/go-randomdata v1.2.0/go.mod h1:yHmJgulpD2Nfrm0cR9tI/+oAgRqCQQixsA8HyRZfV9Y=
 github.com/avast/retry-go v3.0.0+incompatible h1:4SOWQ7Qs+oroOTQOYnAHqelpCO0biHSxpiH9JdtuBj0=

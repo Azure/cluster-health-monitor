@@ -17,8 +17,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	ctrlmetricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
+	healthv1alpha1 "github.com/Azure/aks-health-signal/api/health/v1alpha1"
+	upgradev1alpha1 "github.com/Azure/aks-health-signal/api/upgrade/v1alpha1"
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
-	unipv1alpha1 "github.com/Azure/cluster-health-monitor/apis/upgradenodeinprogresses/v1alpha1"
 	"github.com/Azure/cluster-health-monitor/pkg/controller/checknodehealth"
 	"github.com/Azure/cluster-health-monitor/pkg/controller/upgradenodeinprogress"
 )
@@ -31,7 +32,8 @@ func init() {
 	klog.InitFlags(nil)
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(chmv1alpha1.AddToScheme(scheme))
-	utilruntime.Must(unipv1alpha1.AddToScheme(scheme))
+	utilruntime.Must(upgradev1alpha1.AddToScheme(scheme))
+	utilruntime.Must(healthv1alpha1.AddToScheme(scheme))
 }
 
 const (

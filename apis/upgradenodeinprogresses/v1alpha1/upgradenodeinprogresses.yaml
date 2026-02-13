@@ -1,8 +1,0 @@
-
-apiVersion: health.aks.io/v1alpha1
-kind: UpgradeNodeInProgress
-metadata:
-  name: aks-agentpool-31207608-vmss000000
-spec:
-  nodeRef:
-    name: aks-agentpool-31207608-vmss000000

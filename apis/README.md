@@ -13,5 +13,8 @@ controller-gen object paths=./apis/...
 # Generate CRD YAML
 ```
 controller-gen crd:crdVersions=v1 paths=./apis/chm/... output:crd:stdout > ./manifests/base/checknodehealth-controller/crd.yaml
-controller-gen crd:crdVersions=v1 paths=./apis/upgradenodeinprogresses/... output:crd:stdout > ./manifests/base/upgradenodeinprogresses/crd.yaml
+controller-gen crd \
+  paths=github.com/Azure/aks-health-signal/api/health/... \
+  paths=github.com/Azure/aks-health-signal/api/upgrade/... \
+  output:crd:stdout > ./manifests/base/upgradenodeinprogress-controller/crd.yaml
 ```
