@@ -11,6 +11,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -30,6 +31,9 @@ const (
 
 	// UpgradeNodeInProgressKind is the kind string for UpgradeNodeInProgress resources
 	UpgradeNodeInProgressKind = "UpgradeNodeInProgress"
+
+	// HealthSignalKind is the kind string for HealthSignal resources
+	HealthSignalKind = "HealthSignal"
 
 	// healthSignalOwnerUIDIndex is the field index for HealthSignal by owner UID
 	healthSignalOwnerUIDIndex = ".metadata.ownerReferences.healthSignal.uid"
@@ -52,7 +56,7 @@ type UpgradeNodeInProgressReconciler struct {
 
 // SetupWithManager sets up the controller with the Manager
 func (r *UpgradeNodeInProgressReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	// Set up field indexer to find HealthSignals by owner UID
+	// Set up field indexer to find HealthSignals by owner UID, so that we can efficiently find the HealthSignal associated with an UpgradeNodeInProgress
 	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &healthv1alpha1.HealthSignal{}, healthSignalOwnerUIDIndex, func(obj client.Object) []string {
 		hs := obj.(*healthv1alpha1.HealthSignal)
 		var uids []string
@@ -66,12 +70,12 @@ func (r *UpgradeNodeInProgressReconciler) SetupWithManager(mgr ctrl.Manager) err
 		return err
 	}
 
-	// Set up field indexer to find CheckNodeHealths by owner UID
+	// Set up field indexer to find CheckNodeHealths by owner UID, so that we can efficiently find the CheckNodeHealth associated with a HealthSignal
 	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &chmv1alpha1.CheckNodeHealth{}, checkNodeHealthOwnerUIDIndex, func(obj client.Object) []string {
 		cnh := obj.(*chmv1alpha1.CheckNodeHealth)
 		var uids []string
 		for _, ref := range cnh.OwnerReferences {
-			if ref.Kind == "HealthSignal" {
+			if ref.Kind == HealthSignalKind {
 				uids = append(uids, string(ref.UID))
 			}
 		}
@@ -97,7 +101,7 @@ func (r *UpgradeNodeInProgressReconciler) mapCheckNodeHealthToUpgradeNodeInProgr
 
 	// Find the HealthSignal owner of this CheckNodeHealth
 	hsOwnerRef, found := lo.Find(cnh.OwnerReferences, func(ref metav1.OwnerReference) bool {
-		return ref.Kind == "HealthSignal"
+		return ref.Kind == HealthSignalKind
 	})
 	if !found {
 		return nil
@@ -188,12 +192,15 @@ func (r *UpgradeNodeInProgressReconciler) ensureHealthSignal(ctx context.Context
 	healthSignal := &healthv1alpha1.HealthSignal{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: healthSignalName,
+			// don't use SetControllerReference here because we don't want block deletion of HealthSignal when UpgradeNodeInProgress is deleted
+			// We only want Kubernetes GC to handle cleanup of HealthSignal
 			OwnerReferences: []metav1.OwnerReference{
 				{
-					APIVersion: upgradev1alpha1.GroupVersion.String(),
-					Kind:       UpgradeNodeInProgressKind,
-					Name:       unip.Name,
-					UID:        unip.UID,
+					APIVersion:         upgradev1alpha1.GroupVersion.String(),
+					Kind:               UpgradeNodeInProgressKind,
+					Name:               unip.Name,
+					UID:                unip.UID,
+					BlockOwnerDeletion: ptr.To(false),
 				},
 			},
 		},
