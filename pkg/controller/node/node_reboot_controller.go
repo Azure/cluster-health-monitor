@@ -1,4 +1,4 @@
-package checknodehealth
+package node
 
 import (
 	"context"
@@ -37,14 +37,14 @@ type NodeRebootReconciler struct {
 	Scheme *runtime.Scheme
 }
 
-// +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch;update;patch
-
 // SetupWithManager sets up the controller with the Manager.
 func (r *NodeRebootReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&corev1.Node{}, builder.WithPredicates(r.nodeRebootPredicate())).
 		Complete(r)
 }
+
+// +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch;update;patch
 
 // Reconcile detects node reboots by comparing the node's current bootID
 // against the last-seen bootID stored in an annotation. When a reboot is
@@ -80,7 +80,6 @@ func (r *NodeRebootReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 
 	// Reboot detected.
 	klog.InfoS("Node reboot detected", "node", node.Name, "oldBootID", lastBootID, "newBootID", currentBootID)
-
 	if err := r.createCheckNodeHealth(ctx, node, currentBootID); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -92,8 +91,7 @@ func (r *NodeRebootReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 // If a CR with the same name already exists (e.g., from a duplicate reconcile),
 // the AlreadyExists error is safely ignored.
 func (r *NodeRebootReconciler) createCheckNodeHealth(ctx context.Context, node *corev1.Node, bootID string) error {
-	crName := generateCNHName(node.Name, bootID)
-
+	crName := GenerateCNHName(node.Name, bootID)
 	cnh := &chmv1alpha1.CheckNodeHealth{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: crName,
@@ -112,7 +110,6 @@ func (r *NodeRebootReconciler) createCheckNodeHealth(ctx context.Context, node *
 		}
 		return fmt.Errorf("failed to create CheckNodeHealth for node %s: %w", node.Name, err)
 	}
-
 	klog.InfoS("Created CheckNodeHealth for rebooted node", "name", crName, "node", node.Name, "bootID", bootID)
 	return nil
 }
@@ -130,10 +127,10 @@ func (r *NodeRebootReconciler) updateBootIDAnnotation(ctx context.Context, node 
 	return nil
 }
 
-// generateCNHName builds a deterministic CheckNodeHealth CR name from the node
+// GenerateCNHName builds a deterministic CheckNodeHealth CR name from the node
 // name and bootID. The bootID is hashed to keep the name short and DNS-safe.
 // Format: reboot-<nodeName>-<hash8>
-func generateCNHName(nodeName, bootID string) string {
+func GenerateCNHName(nodeName, bootID string) string {
 	hash := fmt.Sprintf("%x", sha256.Sum256([]byte(bootID)))[:8]
 	name := fmt.Sprintf("%s%s-%s", cnhRebootPrefix, nodeName, hash)
 	if len(name) > maxCNHNameLength {

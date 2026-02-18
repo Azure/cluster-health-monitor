@@ -24,6 +24,7 @@ import (
 	upgradev1alpha1 "github.com/Azure/aks-health-signal/api/upgrade/v1alpha1"
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
 	"github.com/Azure/cluster-health-monitor/pkg/controller/checknodehealth"
+	nodecontroller "github.com/Azure/cluster-health-monitor/pkg/controller/node"
 	"github.com/Azure/cluster-health-monitor/pkg/controller/upgradenodeinprogress"
 	"github.com/spf13/pflag"
 )

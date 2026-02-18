@@ -1,4 +1,4 @@
-package checknodehealth
+package node
 
 import (
 	"context"
@@ -89,7 +89,7 @@ func TestNodeRebootReconcile(t *testing.T) {
 			}),
 			existingCNH: &chmv1alpha1.CheckNodeHealth{
 				ObjectMeta: metav1.ObjectMeta{
-					Name: generateCNHName("node-1", "boot-bbb"),
+					Name: GenerateCNHName("node-1", "boot-bbb"),
 				},
 				Spec: chmv1alpha1.CheckNodeHealthSpec{
 					NodeRef: chmv1alpha1.NodeReference{Name: "node-1"},
@@ -136,7 +136,7 @@ func TestNodeRebootReconcile(t *testing.T) {
 
 			// Check CNH existence
 			if tc.node.Status.NodeInfo.BootID != "" {
-				cnhName := generateCNHName(tc.node.Name, tc.node.Status.NodeInfo.BootID)
+				cnhName := GenerateCNHName(tc.node.Name, tc.node.Status.NodeInfo.BootID)
 				cnh := &chmv1alpha1.CheckNodeHealth{}
 				err := fc.Get(context.Background(), client.ObjectKey{Name: cnhName}, cnh)
 				if tc.expectCNH {
@@ -157,14 +157,14 @@ func TestNodeRebootReconcile(t *testing.T) {
 
 func TestGenerateCNHName(t *testing.T) {
 	// Deterministic: same inputs → same output
-	name1 := generateCNHName("node-1", "boot-abc")
-	name2 := generateCNHName("node-1", "boot-abc")
+	name1 := GenerateCNHName("node-1", "boot-abc")
+	name2 := GenerateCNHName("node-1", "boot-abc")
 	if name1 != name2 {
 		t.Errorf("should be deterministic: %q != %q", name1, name2)
 	}
 
 	// Different bootID → different name
-	name3 := generateCNHName("node-1", "boot-xyz")
+	name3 := GenerateCNHName("node-1", "boot-xyz")
 	if name1 == name3 {
 		t.Errorf("different bootIDs should produce different names: %q == %q", name1, name3)
 	}
@@ -180,7 +180,7 @@ func TestGenerateCNHName(t *testing.T) {
 	for i := 0; i < 260; i++ {
 		longNode += "a"
 	}
-	name := generateCNHName(longNode, "boot")
+	name := GenerateCNHName(longNode, "boot")
 	if len(name) > maxCNHNameLength {
 		t.Errorf("name length %d exceeds max %d", len(name), maxCNHNameLength)
 	}
