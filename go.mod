@@ -1,6 +1,6 @@
 module github.com/Azure/cluster-health-monitor
 
-go 1.24.9
+go 1.24.13
 
 require (
 	github.com/Azure/aks-health-signal v0.0.0-20260213012850-52957dab38b7
