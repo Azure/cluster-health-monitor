@@ -97,9 +97,24 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 			GinkgoWriter.Printf("  - %s\n", node.Name)
 		}
 
+		// Wait for CoreDNS deployment to stabilize at its target replica count.
+		// During rolling updates, extra pods may temporarily run on all nodes,
+		// which would prevent us from finding a node without CoreDNS.
+		By("Waiting for CoreDNS deployment to stabilize")
+		Eventually(func() bool {
+			deploy, err := clientset.AppsV1().Deployments("kube-system").Get(ctx, "coredns", metav1.GetOptions{})
+			if err != nil {
+				return false
+			}
+			return deploy.Status.ReadyReplicas == *deploy.Spec.Replicas &&
+				deploy.Status.UpdatedReplicas == *deploy.Spec.Replicas &&
+				deploy.Status.AvailableReplicas == *deploy.Spec.Replicas
+		}, "120s", "2s").Should(BeTrue(), "CoreDNS deployment did not stabilize")
+
 		// Get all CoreDNS pods and collect their node names
 		corednsPods, err := clientset.CoreV1().Pods("kube-system").List(ctx, metav1.ListOptions{
 			LabelSelector: "k8s-app=kube-dns",
+			FieldSelector: "status.phase=Running",
 		})
 		Expect(err).NotTo(HaveOccurred())
 
@@ -107,8 +122,9 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 		GinkgoWriter.Printf("Found %d CoreDNS pods:\n", len(corednsPods.Items))
 		corednsNodeSet := make(map[string]struct{})
 		for _, pod := range corednsPods.Items {
-			GinkgoWriter.Printf("  - %s on node %s (phase: %s)\n", pod.Name, pod.Spec.NodeName, pod.Status.Phase)
-			if pod.Spec.NodeName != "" {
+			GinkgoWriter.Printf("  - %s on node %s (phase: %s, deleting: %v)\n", pod.Name, pod.Spec.NodeName, pod.Status.Phase, pod.DeletionTimestamp != nil)
+			// Only count non-terminating pods to avoid counting pods from a rolling update
+			if pod.Spec.NodeName != "" && pod.DeletionTimestamp == nil {
 				corednsNodeSet[pod.Spec.NodeName] = struct{}{}
 			}
 		}
