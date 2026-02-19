@@ -78,6 +78,7 @@ func TestReconcile(t *testing.T) {
 		existingCR          *chmv1alpha1.CheckNodeHealth
 		existingPod         *corev1.Pod
 		existingNode        *corev1.Node
+		enableNodeCondition bool
 		triggerDeletion     bool // If true, call Delete() before Reconcile()
 		expectedResult      ctrl.Result
 		expectError         bool
@@ -305,10 +306,11 @@ func TestReconcile(t *testing.T) {
 			existingNode: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-node"},
 			},
-			expectedResult:     ctrl.Result{},
-			expectError:        false,
-			expectedPodCreated: false,
-			expectedPodDeleted: true,
+			enableNodeCondition: true,
+			expectedResult:      ctrl.Result{},
+			expectError:         false,
+			expectedPodCreated:  false,
+			expectedPodDeleted:  true,
 			validateFunc: func(t *testing.T, fakeClient client.Client, cnh *chmv1alpha1.CheckNodeHealth) {
 				updatedCR := &chmv1alpha1.CheckNodeHealth{}
 				if err := fakeClient.Get(context.Background(), client.ObjectKey{Name: cnh.Name}, updatedCR); err != nil {
@@ -410,10 +412,11 @@ func TestReconcile(t *testing.T) {
 			existingNode: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-node"},
 			},
-			expectedResult:     ctrl.Result{},
-			expectError:        false,
-			expectedPodCreated: false,
-			expectedPodDeleted: true,
+			enableNodeCondition: true,
+			expectedResult:      ctrl.Result{},
+			expectError:         false,
+			expectedPodCreated:  false,
+			expectedPodDeleted:  true,
 			validateFunc: func(t *testing.T, fakeClient client.Client, cnh *chmv1alpha1.CheckNodeHealth) {
 				updatedCR := &chmv1alpha1.CheckNodeHealth{}
 				if err := fakeClient.Get(context.Background(), client.ObjectKey{Name: cnh.Name}, updatedCR); err != nil {
@@ -483,10 +486,11 @@ func TestReconcile(t *testing.T) {
 			existingNode: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-node"},
 			},
-			expectedResult:     ctrl.Result{},
-			expectError:        false,
-			expectedPodCreated: false,
-			expectedPodDeleted: true,
+			enableNodeCondition: true,
+			expectedResult:      ctrl.Result{},
+			expectError:         false,
+			expectedPodCreated:  false,
+			expectedPodDeleted:  true,
 			validateFunc: func(t *testing.T, fakeClient client.Client, cnh *chmv1alpha1.CheckNodeHealth) {
 				updatedCR := &chmv1alpha1.CheckNodeHealth{}
 				if err := fakeClient.Get(context.Background(), client.ObjectKey{Name: cnh.Name}, updatedCR); err != nil {
@@ -688,6 +692,7 @@ func TestReconcile(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			reconciler, fakeClient, _ := setupTest()
+			reconciler.EnableNodeCondition = tt.enableNodeCondition
 			ctx := context.Background()
 
 			// Setup existing resources

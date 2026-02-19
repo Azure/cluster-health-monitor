@@ -82,6 +82,7 @@ type CheckNodeHealthReconciler struct {
 	CheckerPodLabel     string // Label to identify health check pods
 	CheckerPodImage     string // Image for the health check pod
 	CheckerPodNamespace string // Namespace to create pods in
+	EnableNodeCondition bool   // Whether to set NodeHealthy condition on the Node
 }
 
 // +kubebuilder:rbac:groups=clusterhealthmonitor.azure.com,resources=checknodehealths,verbs=get;list;watch;create;update;patch;delete
@@ -187,8 +188,10 @@ func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cn
 		}
 
 		// Step 2: Update node condition based on health status
-		if err := r.updateNodeCondition(ctx, cnh); err != nil {
-			klog.ErrorS(err, "Failed to update node condition, continuing with cleanup", "node", cnh.Spec.NodeRef.Name)
+		if r.EnableNodeCondition {
+			if err := r.updateNodeCondition(ctx, cnh); err != nil {
+				klog.ErrorS(err, "Failed to update node condition, continuing with cleanup", "node", cnh.Spec.NodeRef.Name)
+			}
 		}
 
 		// Step 3: Delete the pod
