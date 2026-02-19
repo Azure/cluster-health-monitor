@@ -29,7 +29,7 @@ func setupTest() (*CheckNodeHealthReconciler, client.Client, *runtime.Scheme) {
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithStatusSubresource(&chmv1alpha1.CheckNodeHealth{}). // Enable status subresource
+		WithStatusSubresource(&chmv1alpha1.CheckNodeHealth{}, &corev1.Node{}). // Enable status subresource
 		WithInterceptorFuncs(interceptor.Funcs{
 			Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
 				// Set CreationTimestamp if not already set
@@ -62,11 +62,22 @@ func getHealthyCondition(conditions []metav1.Condition) *metav1.Condition {
 	return nil
 }
 
+// getNodeHealthyCondition retrieves the NodeHealthy condition from a Node's status
+func getNodeHealthyCondition(conditions []corev1.NodeCondition) *corev1.NodeCondition {
+	for i, condition := range conditions {
+		if condition.Type == NodeConditionNodeHealthy {
+			return &conditions[i]
+		}
+	}
+	return nil
+}
+
 func TestReconcile(t *testing.T) {
 	tests := []struct {
 		name                string
 		existingCR          *chmv1alpha1.CheckNodeHealth
 		existingPod         *corev1.Pod
+		existingNode        *corev1.Node
 		triggerDeletion     bool // If true, call Delete() before Reconcile()
 		expectedResult      ctrl.Result
 		expectError         bool
@@ -291,6 +302,9 @@ func TestReconcile(t *testing.T) {
 				},
 				Status: corev1.PodStatus{Phase: corev1.PodPending},
 			},
+			existingNode: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-node"},
+			},
 			expectedResult:     ctrl.Result{},
 			expectError:        false,
 			expectedPodCreated: false,
@@ -318,6 +332,19 @@ func TestReconcile(t *testing.T) {
 
 				if healthyCondition.Reason != ReasonCheckFailed {
 					t.Errorf("Expected reason %q, got %q", ReasonCheckFailed, healthyCondition.Reason)
+				}
+
+				// Verify node condition is set to False
+				node := &corev1.Node{}
+				if err := fakeClient.Get(context.Background(), client.ObjectKey{Name: "test-node"}, node); err != nil {
+					t.Fatalf("Failed to get node: %v", err)
+				}
+				nodeCondition := getNodeHealthyCondition(node.Status.Conditions)
+				if nodeCondition == nil {
+					t.Fatal("Expected NodeHealthy condition on node, but not found")
+				}
+				if nodeCondition.Status != corev1.ConditionFalse {
+					t.Errorf("Expected node condition status False, got %v", nodeCondition.Status)
 				}
 			},
 		},
@@ -380,6 +407,9 @@ func TestReconcile(t *testing.T) {
 				},
 				Status: corev1.PodStatus{Phase: corev1.PodSucceeded},
 			},
+			existingNode: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-node"},
+			},
 			expectedResult:     ctrl.Result{},
 			expectError:        false,
 			expectedPodCreated: false,
@@ -402,6 +432,19 @@ func TestReconcile(t *testing.T) {
 
 				if healthyCondition.Reason != ReasonCheckFailed {
 					t.Errorf("Expected reason %q, got %q", ReasonCheckFailed, healthyCondition.Reason)
+				}
+
+				// Verify node condition is set to False
+				node := &corev1.Node{}
+				if err := fakeClient.Get(context.Background(), client.ObjectKey{Name: "test-node"}, node); err != nil {
+					t.Fatalf("Failed to get node: %v", err)
+				}
+				nodeCondition := getNodeHealthyCondition(node.Status.Conditions)
+				if nodeCondition == nil {
+					t.Fatal("Expected NodeHealthy condition on node, but not found")
+				}
+				if nodeCondition.Status != corev1.ConditionFalse {
+					t.Errorf("Expected node condition status False, got %v", nodeCondition.Status)
 				}
 			},
 		},
@@ -437,6 +480,9 @@ func TestReconcile(t *testing.T) {
 				},
 				Status: corev1.PodStatus{Phase: corev1.PodSucceeded},
 			},
+			existingNode: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-node"},
+			},
 			expectedResult:     ctrl.Result{},
 			expectError:        false,
 			expectedPodCreated: false,
@@ -459,6 +505,16 @@ func TestReconcile(t *testing.T) {
 
 				if healthyCondition.Reason != ReasonCheckPassed {
 					t.Errorf("Expected reason %q, got %q", ReasonCheckPassed, healthyCondition.Reason)
+				}
+
+				// Verify node condition is NOT set (Healthy=True should not emit node condition)
+				node := &corev1.Node{}
+				if err := fakeClient.Get(context.Background(), client.ObjectKey{Name: "test-node"}, node); err != nil {
+					t.Fatalf("Failed to get node: %v", err)
+				}
+				nodeCondition := getNodeHealthyCondition(node.Status.Conditions)
+				if nodeCondition != nil {
+					t.Error("Expected no NodeHealthy condition on node when Healthy=True")
 				}
 			},
 		},
@@ -643,6 +699,11 @@ func TestReconcile(t *testing.T) {
 			if tt.existingPod != nil {
 				if err := fakeClient.Create(ctx, tt.existingPod); err != nil {
 					t.Fatalf("Failed to create Pod: %v", err)
+				}
+			}
+			if tt.existingNode != nil {
+				if err := fakeClient.Create(ctx, tt.existingNode); err != nil {
+					t.Fatalf("Failed to create Node: %v", err)
 				}
 			}
 

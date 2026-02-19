@@ -35,6 +35,7 @@ rules:
   - patch
   - update
 - apiGroups:
+<<<<<<< HEAD
   - health.aks.io
   resources:
   - healthsignals
@@ -62,6 +63,19 @@ rules:
   - get
   - list
   - watch
+=======
+  - ""
+  resources:
+  - nodes
+  verbs:
+  - get
+- apiGroups:
+  - ""
+  resources:
+  - nodes/status
+  verbs:
+  - patch
+>>>>>>> d3932e0 (Emit NodeHealthy=False condition on Node when CheckNodeHealth Healthy=False)
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
