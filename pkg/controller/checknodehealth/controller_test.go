@@ -45,6 +45,7 @@ func setupTest() (*CheckNodeHealthReconciler, client.Client, *runtime.Scheme) {
 	reconciler := &CheckNodeHealthReconciler{
 		Client:              fakeClient,
 		Scheme:              scheme,
+		APIReader:           fakeClient,
 		CheckerPodImage:     "ubuntu:latest",
 		CheckerPodNamespace: "default",
 	}

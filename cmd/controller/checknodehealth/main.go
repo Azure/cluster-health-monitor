@@ -160,6 +160,7 @@ func main() {
 	if err = (&checknodehealth.CheckNodeHealthReconciler{
 		Client:              mgr.GetClient(),
 		Scheme:              mgr.GetScheme(),
+		APIReader:           mgr.GetAPIReader(),
 		CheckerPodLabel:     "checknodehealth", // Label to identify health check pods
 		CheckerPodImage:     checkerPodImage,
 		CheckerPodNamespace: checkerPodNamespace,

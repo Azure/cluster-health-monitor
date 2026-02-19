@@ -289,6 +289,65 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 		}, "30s", "2s").Should(Equal(0), "Timed out pod was not cleaned up within timeout")
 	})
 
+	It("should set NodeHealthy condition on node when health check fails", func() {
+		By("Creating a fake Node object for the test")
+		fakeNodeName := fmt.Sprintf("fake-node-condition-test-%d", time.Now().Unix())
+		fakeNode := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: fakeNodeName,
+			},
+		}
+		err := k8sClient.Create(ctx, fakeNode)
+		Expect(err).NotTo(HaveOccurred())
+		GinkgoWriter.Printf("Created fake Node: %s\n", fakeNodeName)
+
+		defer func() {
+			By("Cleaning up fake Node")
+			if err := k8sClient.Delete(ctx, fakeNode); err != nil {
+				GinkgoWriter.Printf("Warning: Failed to delete fake Node %s: %v\n", fakeNodeName, err)
+			}
+		}()
+
+		By("Creating a CheckNodeHealth CR targeting the fake node to trigger timeout")
+		cnhName = fmt.Sprintf("test-cnh-nodecond-%d", time.Now().Unix())
+		err = createCheckNodeHealthCR(ctx, k8sClient, cnhName, fakeNodeName)
+		Expect(err).NotTo(HaveOccurred())
+		GinkgoWriter.Printf("Created CheckNodeHealth CR: %s for fake node: %s\n", cnhName, fakeNodeName)
+
+		By("Waiting for pod timeout and FinishedAt to be set")
+		var cnh *chmv1alpha1.CheckNodeHealth
+		Eventually(func() bool {
+			cnh, err = getCheckNodeHealthCR(ctx, k8sClient, cnhName)
+			if err != nil {
+				return false
+			}
+			return cnh.Status.FinishedAt != nil
+		}, "60s", "5s").Should(BeTrue(), "Pod timeout was not detected within 1 minute")
+
+		By("Verifying Healthy condition is False")
+		Expect(cnh.Status.Conditions).To(HaveLen(1))
+		Expect(cnh.Status.Conditions[0].Type).To(Equal("Healthy"))
+		Expect(cnh.Status.Conditions[0].Status).To(Equal(metav1.ConditionFalse))
+
+		By("Verifying NodeHealthy condition is set on the Node")
+		node := &corev1.Node{}
+		err = k8sClient.Get(ctx, client.ObjectKey{Name: fakeNodeName}, node)
+		Expect(err).NotTo(HaveOccurred())
+
+		var nodeCondition *corev1.NodeCondition
+		for i, c := range node.Status.Conditions {
+			if c.Type == checknodehealth.NodeConditionNodeHealthy {
+				nodeCondition = &node.Status.Conditions[i]
+				break
+			}
+		}
+		Expect(nodeCondition).NotTo(BeNil(), "Expected NodeHealthy condition on node, but not found")
+		Expect(nodeCondition.Status).To(Equal(corev1.ConditionFalse))
+		Expect(nodeCondition.Reason).NotTo(BeEmpty())
+		GinkgoWriter.Printf("NodeHealthy condition on %s: status=%s, reason=%s, message=%s\n",
+			fakeNodeName, nodeCondition.Status, nodeCondition.Reason, nodeCondition.Message)
+	})
+
 	It("should cleanup pod when CR is deleted", func() {
 		By("Creating a CheckNodeHealth CR with non-existent node")
 		cnhName = fmt.Sprintf("test-cnh-deletion-%d", time.Now().Unix())

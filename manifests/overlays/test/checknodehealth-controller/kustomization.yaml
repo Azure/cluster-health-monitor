@@ -8,3 +8,8 @@ patches:
       name: checknodehealth-controller
       namespace: kube-system
     path: image.patch.yaml
+  - target:
+      kind: Deployment
+      name: checknodehealth-controller
+      namespace: kube-system
+    path: enable-node-condition.patch.yaml

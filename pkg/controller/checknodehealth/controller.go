@@ -79,10 +79,11 @@ var (
 type CheckNodeHealthReconciler struct {
 	client.Client
 	Scheme              *runtime.Scheme
-	CheckerPodLabel     string // Label to identify health check pods
-	CheckerPodImage     string // Image for the health check pod
-	CheckerPodNamespace string // Namespace to create pods in
-	EnableNodeCondition bool   // Whether to set NodeHealthy condition on the Node
+	APIReader           client.Reader // Direct API server reader (bypasses cache) for node operations
+	CheckerPodLabel     string        // Label to identify health check pods
+	CheckerPodImage     string        // Image for the health check pod
+	CheckerPodNamespace string        // Namespace to create pods in
+	EnableNodeCondition bool          // Whether to set NodeHealthy condition on the Node
 }
 
 // +kubebuilder:rbac:groups=clusterhealthmonitor.azure.com,resources=checknodehealths,verbs=get;list;watch;create;update;patch;delete
@@ -274,7 +275,7 @@ func (r *CheckNodeHealthReconciler) updateNodeCondition(ctx context.Context, cnh
 
 	nodeName := cnh.Spec.NodeRef.Name
 	node := &corev1.Node{}
-	if err := r.Get(ctx, client.ObjectKey{Name: nodeName}, node); err != nil {
+	if err := r.APIReader.Get(ctx, client.ObjectKey{Name: nodeName}, node); err != nil {
 		return fmt.Errorf("failed to get node %s: %w", nodeName, err)
 	}
 
