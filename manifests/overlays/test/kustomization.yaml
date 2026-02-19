@@ -3,3 +3,4 @@ kind: Kustomization
 resources:
   - cluster-health-monitor
   - checknodehealth-controller
+  - ../../base/upgradenodeinprogress-controller

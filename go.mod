@@ -1,8 +1,9 @@
 module github.com/Azure/cluster-health-monitor
 
-go 1.24.9
+go 1.24.13
 
 require (
+	github.com/Azure/aks-health-signal v0.0.0-20260213012850-52957dab38b7
 	github.com/avast/retry-go/v4 v4.7.0
 	github.com/miekg/dns v1.1.66
 	github.com/onsi/ginkgo/v2 v2.23.4
@@ -10,6 +11,7 @@ require (
 	github.com/prometheus/client_golang v1.22.0
 	github.com/prometheus/client_model v0.6.2
 	github.com/prometheus/common v0.62.0
+	github.com/samber/lo v1.51.0
 	github.com/spf13/pflag v1.0.6
 	golang.org/x/sync v0.15.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -20,6 +22,7 @@ require (
 	k8s.io/klog/v2 v2.130.1
 	k8s.io/kubectl v0.33.3
 	k8s.io/metrics v0.33.3
+	k8s.io/utils v0.0.0-20241104100929-3ea5e8cea738
 	sigs.k8s.io/controller-runtime v0.21.0
 	sigs.k8s.io/karpenter v1.6.1
 	sigs.k8s.io/kustomize/kyaml v0.19.0
@@ -59,7 +62,6 @@ require (
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/prometheus/procfs v0.15.1 // indirect
 	github.com/robfig/cron/v3 v3.0.1 // indirect
-	github.com/samber/lo v1.51.0 // indirect
 	github.com/spf13/cobra v1.8.1 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	go.opentelemetry.io/otel v1.33.0 // indirect
@@ -83,7 +85,6 @@ require (
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	k8s.io/apiextensions-apiserver v0.33.2 // indirect
 	k8s.io/kube-openapi v0.0.0-20250318190949-c8a335a9a2ff // indirect
-	k8s.io/utils v0.0.0-20241104100929-3ea5e8cea738 // indirect
 	sigs.k8s.io/json v0.0.0-20241010143419-9aa6b5e7a4b3 // indirect
 	sigs.k8s.io/randfill v1.0.0 // indirect
 	sigs.k8s.io/structured-merge-diff/v4 v4.6.0 // indirect
