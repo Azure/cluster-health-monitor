@@ -81,24 +81,36 @@ type PodStartupConfig struct {
 	// Required.
 	// The namespace in which synthetic pods are created.
 	SyntheticPodNamespace string `yaml:"syntheticPodNamespace"`
+
 	// Required.
 	// The Kubernetes label key used to identify synthetic pods created by the checker. It is also applied as a taint to any synthetic nodes
 	// created by the checker when EnableNodeProvisioningTest is true.
 	SyntheticPodLabelKey string `yaml:"syntheticPodLabelKey"`
+
 	// Required.
 	// The maximum synthetic pod startup duration for which the checker will return healthy status. Exceeding this duration will cause the
 	// checker to return unhealthy status. The pod startup duration is defined as the time between the pod's creation timestamp and the time
 	// its container starts running, minus the image pull duration (including waiting).
 	SyntheticPodStartupTimeout time.Duration `yaml:"syntheticPodStartupTimeout"`
+
 	// Required.
 	// The maximum number of synthetic pods created by the checker that can exist at any one time. If the limit has been reached, the checker
 	// will not create any more synthetic pods until some of the existing ones are deleted. Instead, it will fail the run with an error.
 	// Reaching this limit effectively disables the checker.
 	MaxSyntheticPods int `yaml:"maxSyntheticPods,omitempty"`
+
 	// Required.
 	// The maximum duration for which the checker will wait for a TCP connection to be established with a synthetic pod. Exceeding this
-	// duration will cause the checker to return unhealthy status.
+	// duration will cause the connection attempt to fail.
 	TCPTimeout time.Duration `yaml:"tcpTimeout,omitempty"`
+
+	// Required.
+	// The maximum number of TCP connection attempts to synthetic pods that can fail before the checker returns unhealthy status.
+	TCPMaxRetries int `yaml:"tcpMaxRetries,omitempty"`
+
+	// Required.
+	// The interval between TCP connection attempts to synthetic pods.
+	TCPRetryInterval time.Duration `yaml:"tcpRetryInterval,omitempty"`
 
 	// Optional.
 	// This field is meant to be enabled only on AKS Automatic clusters. If set to true, the PodStartupChecker will trigger node provisioning and deploy synthetic pods to the new node.
