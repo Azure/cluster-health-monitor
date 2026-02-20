@@ -207,12 +207,14 @@ func (c *PodStartupChecker) check(ctx context.Context) (*checker.Result, error) 
 		return nil, fmt.Errorf("failed to get synthetic pod IP: %w", err)
 	}
 
-	err = c.createTCPConnection(ctx, podIP)
-	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
+	tcpErrors := c.createTCPConnectionWithRetry(ctx, podIP)
+	if len(tcpErrors) > 0 {
+		// Return ErrCodeRequestTimeout only if every attempt times out. This is to avoid hiding potential underlying issues that may be
+		// contributing to the timeout.
+		if allErrorsAreDeadlineExceeded(tcpErrors) {
 			return checker.Unhealthy(ErrCodeRequestTimeout, "TCP request to synthetic pod timed out"), nil
 		}
-		return checker.Unhealthy(ErrCodeRequestFailed, fmt.Sprintf("TCP request to synthetic pod failed: %s", err)), nil
+		return checker.Unhealthy(ErrCodeRequestFailed, fmt.Sprintf("TCP request to synthetic pod failed: %s", errors.Join(tcpErrors...))), nil
 	}
 
 	return checker.Healthy(), nil
@@ -317,4 +319,42 @@ func (c *PodStartupChecker) createTCPConnection(ctx context.Context, podIP strin
 	}()
 
 	return nil
+}
+
+func (c *PodStartupChecker) createTCPConnectionWithRetry(ctx context.Context, podIP string) []error {
+	var errs []error
+	// start from 1 because there will always be an initial attempt before any retries and this allows for clearer error messages.
+	maxAttempts := c.config.TCPMaxRetries + 1
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		if err := c.createTCPConnection(ctx, podIP); err == nil {
+			return nil
+		} else {
+			errs = append(errs, fmt.Errorf("attempt %d: %w", attempt, err))
+		}
+
+		if attempt == maxAttempts {
+			break
+		}
+
+		timer := time.NewTimer(c.config.TCPRetryInterval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			errs = append(errs, ctx.Err())
+			return errs
+		case <-timer.C:
+		}
+	}
+
+	return errs
+}
+
+func allErrorsAreDeadlineExceeded(errs []error) bool {
+	for _, err := range errs {
+		if !errors.Is(err, context.DeadlineExceeded) {
+			return false
+		}
+	}
+
+	return true
 }
