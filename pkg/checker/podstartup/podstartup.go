@@ -350,6 +350,10 @@ func (c *PodStartupChecker) createTCPConnectionWithRetry(ctx context.Context, po
 }
 
 func allErrorsAreDeadlineExceeded(errs []error) bool {
+	if len(errs) == 0 {
+		return false
+	}
+
 	for _, err := range errs {
 		if !errors.Is(err, context.DeadlineExceeded) {
 			return false
