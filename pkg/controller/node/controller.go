@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -28,6 +29,12 @@ const (
 
 	// maxCNHNameLength is the maximum allowed length for CheckNodeHealth CR names.
 	maxCNHNameLength = 253
+
+	// newNodeThreshold is the maximum age of a node to be considered "new".
+	// Nodes created within this duration will trigger a CheckNodeHealth on
+	// first observation (no prior bootID annotation), while older nodes will
+	// only have their annotation initialized without a health check.
+	newNodeThreshold = 5 * time.Minute
 )
 
 // NodeRebootReconciler watches Node objects and creates CheckNodeHealth CRs
@@ -64,12 +71,20 @@ func (r *NodeRebootReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 
 	lastBootID := node.Annotations[AnnotationLastBootID]
 
-	// First time seeing this node — store the bootID as a baseline but don't
-	// create a health check. Without this guard, every node would trigger a
-	// CheckNodeHealth on controller startup (or restart) because there is no
-	// previous bootID to compare against, even though no reboot occurred.
+	// First time seeing this node — no prior bootID annotation exists.
+	// If the node was created recently it is genuinely new, so run a health
+	// check. Otherwise it is an existing node observed for the first time
+	// after a controller (re)start — only initialize the annotation to avoid
+	// triggering a spurious CheckNodeHealth for every node in the cluster.
 	if lastBootID == "" {
-		klog.InfoS("Initializing bootID annotation for node", "node", node.Name, "bootID", currentBootID)
+		if time.Since(node.CreationTimestamp.Time) < newNodeThreshold {
+			klog.InfoS("New node detected, creating health check", "node", node.Name, "bootID", currentBootID)
+			if err := r.createCheckNodeHealth(ctx, node, currentBootID); err != nil {
+				return ctrl.Result{}, err
+			}
+		} else {
+			klog.InfoS("Initializing bootID annotation for existing node", "node", node.Name, "bootID", currentBootID)
+		}
 		return ctrl.Result{}, r.updateBootIDAnnotation(ctx, node, currentBootID)
 	}
 

@@ -3,6 +3,7 @@ package node
 import (
 	"context"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -39,10 +40,15 @@ func setupRebootTest(objs ...client.Object) (*NodeRebootReconciler, client.Clien
 }
 
 func newNode(name, bootID string, annotations map[string]string) *corev1.Node {
+	return newNodeWithCreationTime(name, bootID, annotations, time.Time{})
+}
+
+func newNodeWithCreationTime(name, bootID string, annotations map[string]string, creationTime time.Time) *corev1.Node {
 	return &corev1.Node{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:        name,
-			Annotations: annotations,
+			Name:              name,
+			Annotations:       annotations,
+			CreationTimestamp: metav1.NewTime(creationTime),
 		},
 		Status: corev1.NodeStatus{
 			NodeInfo: corev1.NodeSystemInfo{
@@ -61,9 +67,15 @@ func TestNodeRebootReconcile(t *testing.T) {
 		expectBootAnno string // expected bootID annotation value after reconcile
 	}{
 		{
-			name:           "first time seeing a node — sets annotation, no CNH created",
+			name:           "first time seeing an existing node — sets annotation, no CNH created",
 			node:           newNode("node-1", "boot-aaa", nil),
 			expectCNH:      false,
+			expectBootAnno: "boot-aaa",
+		},
+		{
+			name:           "new node (recently created) — creates CheckNodeHealth CR",
+			node:           newNodeWithCreationTime("node-1", "boot-aaa", nil, time.Now()),
+			expectCNH:      true,
 			expectBootAnno: "boot-aaa",
 		},
 		{
