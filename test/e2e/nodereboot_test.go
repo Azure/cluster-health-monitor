@@ -66,24 +66,39 @@ var _ = Describe("NodeReboot Controller", Ordered, ContinueOnFailure, Label("nod
 		}
 	})
 
-	It("should not create CheckNodeHealth CRs on startup when no reboot occurred", func() {
-		By("Waiting a bit to ensure the controller has processed all nodes")
-		time.Sleep(10 * time.Second)
-
-		By("Listing all CheckNodeHealth CRs with reboot prefix")
-		cnhList := &chmv1alpha1.CheckNodeHealthList{}
-		err := k8sClient.List(ctx, cnhList)
+	It("should create CheckNodeHealth CRs only for nodes newer than the threshold", func() {
+		By("Getting the list of nodes")
+		nodeList, err := clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 		Expect(err).NotTo(HaveOccurred())
+		Expect(nodeList.Items).NotTo(BeEmpty())
 
-		rebootCNHCount := 0
-		for _, cnh := range cnhList.Items {
-			if len(cnh.Name) >= len("reboot-") && cnh.Name[:len("reboot-")] == "reboot-" {
-				rebootCNHCount++
-				GinkgoWriter.Printf("Found reboot-triggered CNH: %s (node: %s)\n", cnh.Name, cnh.Spec.NodeRef.Name)
+		By("Counting how many nodes are newer than the threshold")
+		expectedNewNodes := 0
+		for _, node := range nodeList.Items {
+			age := time.Since(node.CreationTimestamp.Time)
+			GinkgoWriter.Printf("Node %s age: %s\n", node.Name, age)
+			if age < nodecontroller.NewNodeThreshold {
+				expectedNewNodes++
 			}
 		}
-		Expect(rebootCNHCount).To(Equal(0),
-			"No reboot-triggered CheckNodeHealth CRs should exist on clean startup")
+		GinkgoWriter.Printf("Expecting %d new-node CheckNodeHealth CRs\n", expectedNewNodes)
+
+		By("Waiting for the controller to process all nodes")
+		Eventually(func() int {
+			cnhList := &chmv1alpha1.CheckNodeHealthList{}
+			if err := k8sClient.List(ctx, cnhList); err != nil {
+				return -1
+			}
+			count := 0
+			for _, cnh := range cnhList.Items {
+				if len(cnh.Name) >= len("reboot-") && cnh.Name[:len("reboot-")] == "reboot-" {
+					count++
+					GinkgoWriter.Printf("Found new-node CNH: %s (node: %s)\n", cnh.Name, cnh.Spec.NodeRef.Name)
+				}
+			}
+			return count
+		}, "60s", "2s").Should(Equal(expectedNewNodes),
+			"Only nodes newer than the threshold should have reboot-prefixed CheckNodeHealth CRs")
 	})
 
 	It("should create CheckNodeHealth CR when bootID annotation is stale", func() {
@@ -190,20 +205,33 @@ var _ = Describe("NodeReboot Controller", Ordered, ContinueOnFailure, Label("nod
 			return updatedNode.Annotations[nodecontroller.AnnotationLastBootID] == updatedNode.Status.NodeInfo.BootID
 		}, "30s", "2s").Should(BeTrue(), "bootID annotation should match actual bootID")
 
-		By("Waiting to confirm no reboot-triggered CRs are created")
-		time.Sleep(10 * time.Second)
-
+		By("Snapshotting the current reboot-triggered CR count")
 		cnhList := &chmv1alpha1.CheckNodeHealthList{}
 		err = k8sClient.List(ctx, cnhList)
 		Expect(err).NotTo(HaveOccurred())
 
-		rebootCNHCount := 0
+		initialRebootCNHCount := 0
 		for _, cnh := range cnhList.Items {
 			if len(cnh.Name) >= len("reboot-") && cnh.Name[:len("reboot-")] == "reboot-" {
-				rebootCNHCount++
+				initialRebootCNHCount++
 			}
 		}
-		Expect(rebootCNHCount).To(Equal(0),
-			"No reboot-triggered CRs should be created when bootID hasn't changed")
+		GinkgoWriter.Printf("Initial reboot CNH count: %d\n", initialRebootCNHCount)
+
+		By("Waiting to confirm no additional reboot-triggered CRs are created")
+		time.Sleep(10 * time.Second)
+
+		cnhList = &chmv1alpha1.CheckNodeHealthList{}
+		err = k8sClient.List(ctx, cnhList)
+		Expect(err).NotTo(HaveOccurred())
+
+		finalRebootCNHCount := 0
+		for _, cnh := range cnhList.Items {
+			if len(cnh.Name) >= len("reboot-") && cnh.Name[:len("reboot-")] == "reboot-" {
+				finalRebootCNHCount++
+			}
+		}
+		Expect(finalRebootCNHCount).To(Equal(initialRebootCNHCount),
+			"No additional reboot-triggered CRs should be created when bootID hasn't changed")
 	})
 })

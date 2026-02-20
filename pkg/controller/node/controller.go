@@ -30,11 +30,11 @@ const (
 	// maxCNHNameLength is the maximum allowed length for CheckNodeHealth CR names.
 	maxCNHNameLength = 253
 
-	// newNodeThreshold is the maximum age of a node to be considered "new".
+	// NewNodeThreshold is the maximum age of a node to be considered "new".
 	// Nodes created within this duration will trigger a CheckNodeHealth on
 	// first observation (no prior bootID annotation), while older nodes will
 	// only have their annotation initialized without a health check.
-	newNodeThreshold = 5 * time.Minute
+	NewNodeThreshold = 5 * time.Minute
 )
 
 // NodeRebootReconciler watches Node objects and creates CheckNodeHealth CRs
@@ -77,7 +77,7 @@ func (r *NodeRebootReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	// after a controller (re)start — only initialize the annotation to avoid
 	// triggering a spurious CheckNodeHealth for every node in the cluster.
 	if lastBootID == "" {
-		if time.Since(node.CreationTimestamp.Time) < newNodeThreshold {
+		if time.Since(node.CreationTimestamp.Time) < NewNodeThreshold {
 			klog.InfoS("New node detected, creating health check", "node", node.Name, "bootID", currentBootID)
 			if err := r.createCheckNodeHealth(ctx, node, currentBootID); err != nil {
 				return ctrl.Result{}, err
