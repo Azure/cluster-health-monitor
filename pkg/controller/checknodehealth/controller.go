@@ -233,6 +233,7 @@ func (r *CheckNodeHealthReconciler) markCompleted(ctx context.Context, cnh *chmv
 		},
 	}
 
+	klog.InfoS("CheckNodeHealth Result", "name", cnh.Name, "nodeName", cnh.Spec.NodeRef.Name, "status", healthyStatus, "reason", reason, "message", message)
 	if err := r.Status().Update(ctx, cnh); err != nil {
 		return fmt.Errorf("failed to update status: %w", err)
 	}
