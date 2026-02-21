@@ -10,6 +10,7 @@ import (
 
 	"github.com/Azure/cluster-health-monitor/pkg/checker"
 	"github.com/Azure/cluster-health-monitor/pkg/config"
+	retry "github.com/avast/retry-go/v4"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -933,7 +934,7 @@ func TestPodStartupChecker_createTCPConnectionWithRetry(t *testing.T) {
 		name        string
 		dialer      func(*int) Dialer
 		ctx         func() (context.Context, context.CancelFunc)
-		validateRes func(g *WithT, errs []error, calls int)
+		validateRes func(g *WithT, err error, calls int)
 	}{
 		{
 			name: "successful first try",
@@ -947,8 +948,8 @@ func TestPodStartupChecker_createTCPConnectionWithRetry(t *testing.T) {
 			ctx: func() (context.Context, context.CancelFunc) {
 				return context.WithTimeout(context.Background(), 1*time.Second)
 			},
-			validateRes: func(g *WithT, errs []error, calls int) {
-				g.Expect(errs).To(BeNil())
+			validateRes: func(g *WithT, err error, calls int) {
+				g.Expect(err).ToNot(HaveOccurred())
 				g.Expect(calls).To(Equal(1))
 			},
 		},
@@ -967,8 +968,8 @@ func TestPodStartupChecker_createTCPConnectionWithRetry(t *testing.T) {
 			ctx: func() (context.Context, context.CancelFunc) {
 				return context.WithTimeout(context.Background(), 1*time.Second)
 			},
-			validateRes: func(g *WithT, errs []error, calls int) {
-				g.Expect(errs).To(BeNil())
+			validateRes: func(g *WithT, err error, calls int) {
+				g.Expect(err).ToNot(HaveOccurred())
 				g.Expect(calls).To(Equal(2))
 			},
 		},
@@ -983,12 +984,17 @@ func TestPodStartupChecker_createTCPConnectionWithRetry(t *testing.T) {
 			ctx: func() (context.Context, context.CancelFunc) {
 				return context.WithTimeout(context.Background(), 1*time.Second)
 			},
-			validateRes: func(g *WithT, errs []error, calls int) {
-				g.Expect(errs).To(HaveLen(4))
-				g.Expect(errs[0].Error()).To(ContainSubstring("attempt 1:"))
-				g.Expect(errs[1].Error()).To(ContainSubstring("attempt 2:"))
-				g.Expect(errs[2].Error()).To(ContainSubstring("attempt 3:"))
-				g.Expect(errs[3].Error()).To(ContainSubstring("attempt 4:"))
+			validateRes: func(g *WithT, err error, calls int) {
+				g.Expect(err).To(HaveOccurred())
+				var retryErr retry.Error
+				g.Expect(errors.As(err, &retryErr)).To(BeTrue())
+				g.Expect(retryErr).To(HaveLen(4))
+				g.Expect(retryErr[0].Error()).To(ContainSubstring("attempt 1:"))
+				g.Expect(retryErr[1].Error()).To(ContainSubstring("attempt 2:"))
+				g.Expect(retryErr[2].Error()).To(ContainSubstring("attempt 3:"))
+				g.Expect(retryErr[3].Error()).To(ContainSubstring("attempt 4:"))
+				// Although calls seems redundant given we check the length of the retry error, this is used in other test cases that don't
+				// return an error to make sure that there actually were retries attempted.
 				g.Expect(calls).To(Equal(4))
 			},
 		},
@@ -1001,11 +1007,11 @@ func TestPodStartupChecker_createTCPConnectionWithRetry(t *testing.T) {
 				}}
 			},
 			ctx: func() (context.Context, context.CancelFunc) {
-				return context.WithTimeout(context.Background(), 0*time.Second)
+				return context.WithTimeout(context.Background(), 1*time.Millisecond)
 			},
-			validateRes: func(g *WithT, errs []error, calls int) {
-				g.Expect(errs).ToNot(BeEmpty())
-				g.Expect(errors.Is(errors.Join(errs...), context.DeadlineExceeded)).To(BeTrue())
+			validateRes: func(g *WithT, err error, calls int) {
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(errors.Is(err, context.DeadlineExceeded)).To(BeTrue())
 				g.Expect(calls).To(BeNumerically(">=", 1))
 				g.Expect(calls).To(BeNumerically("<=", 4))
 			},
@@ -1027,8 +1033,8 @@ func TestPodStartupChecker_createTCPConnectionWithRetry(t *testing.T) {
 				},
 			}
 
-			errs := checker.createTCPConnectionWithRetry(ctx, "10.0.0.0")
-			tt.validateRes(g, errs, calls)
+			err := checker.createTCPConnectionWithRetry(ctx, "10.0.0.0")
+			tt.validateRes(g, err, calls)
 		})
 	}
 }
@@ -1036,17 +1042,17 @@ func TestPodStartupChecker_createTCPConnectionWithRetry(t *testing.T) {
 func TestAllErrorsAreDeadlineExceeded(t *testing.T) {
 	tests := []struct {
 		name string
-		errs []error
+		err  error
 		want bool
 	}{
 		{
 			name: "nil error",
-			errs: nil,
+			err:  nil,
 			want: false,
 		},
 		{
 			name: "all deadline exceeded errors",
-			errs: []error{
+			err: retry.Error{
 				fmt.Errorf("attempt 1: %w", context.DeadlineExceeded),
 				fmt.Errorf("attempt 2: %w", context.DeadlineExceeded),
 			},
@@ -1054,10 +1060,20 @@ func TestAllErrorsAreDeadlineExceeded(t *testing.T) {
 		},
 		{
 			name: "mixed errors",
-			errs: []error{
+			err: retry.Error{
 				fmt.Errorf("attempt 1: %w", context.DeadlineExceeded),
 				errors.New("connection refused"),
 			},
+			want: false,
+		},
+		{
+			name: "single deadline exceeded error",
+			err:  context.DeadlineExceeded,
+			want: true,
+		},
+		{
+			name: "single non-timeout error",
+			err:  errors.New("connection refused"),
 			want: false,
 		},
 	}
@@ -1065,7 +1081,7 @@ func TestAllErrorsAreDeadlineExceeded(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			g := NewWithT(t)
-			g.Expect(allErrorsAreDeadlineExceeded(tt.errs)).To(Equal(tt.want))
+			g.Expect(allErrorsAreDeadlineExceeded(tt.err)).To(Equal(tt.want))
 		})
 	}
 }
