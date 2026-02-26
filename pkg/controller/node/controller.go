@@ -147,7 +147,7 @@ func (r *NodeRebootReconciler) updateBootIDAnnotation(ctx context.Context, node 
 // Format: reboot-<nodeName>-<hash8>
 func GenerateCNHName(nodeName, bootID string) string {
 	hash := fmt.Sprintf("%x", sha256.Sum256([]byte(bootID)))[:8]
-	name := fmt.Sprintf("%s%s-%s", cnhRebootPrefix, nodeName, hash)
+	name := fmt.Sprintf("%s-%s-%s", cnhRebootPrefix, hash, nodeName)
 	if len(name) > maxCNHNameLength {
 		name = name[:maxCNHNameLength]
 	}
