@@ -91,7 +91,7 @@ var _ = Describe("NodeReboot Controller", Ordered, ContinueOnFailure, Label("nod
 			}
 			count := 0
 			for _, cnh := range cnhList.Items {
-				if len(cnh.Name) >= len("reboot-") && cnh.Name[:len("reboot-")] == "reboot-" {
+				if len(cnh.Name) >= len("boot-") && cnh.Name[:len("boot-")] == "boot-" {
 					count++
 					GinkgoWriter.Printf("Found new-node CNH: %s (node: %s)\n", cnh.Name, cnh.Spec.NodeRef.Name)
 				}
@@ -212,7 +212,7 @@ var _ = Describe("NodeReboot Controller", Ordered, ContinueOnFailure, Label("nod
 
 		initialRebootCNHCount := 0
 		for _, cnh := range cnhList.Items {
-			if len(cnh.Name) >= len("reboot-") && cnh.Name[:len("reboot-")] == "reboot-" {
+			if len(cnh.Name) >= len("boot-") && cnh.Name[:len("boot-")] == "boot-" {
 				initialRebootCNHCount++
 			}
 		}
@@ -227,7 +227,7 @@ var _ = Describe("NodeReboot Controller", Ordered, ContinueOnFailure, Label("nod
 
 		finalRebootCNHCount := 0
 		for _, cnh := range cnhList.Items {
-			if len(cnh.Name) >= len("reboot-") && cnh.Name[:len("reboot-")] == "reboot-" {
+			if len(cnh.Name) >= len("boot-") && cnh.Name[:len("boot-")] == "boot-" {
 				finalRebootCNHCount++
 			}
 		}
