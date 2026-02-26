@@ -79,11 +79,12 @@ var (
 type CheckNodeHealthReconciler struct {
 	client.Client
 	Scheme              *runtime.Scheme
-	APIReader           client.Reader // Direct API server reader (bypasses cache) for node operations
-	CheckerPodLabel     string        // Label to identify health check pods
-	CheckerPodImage     string        // Image for the health check pod
-	CheckerPodNamespace string        // Namespace to create pods in
-	EnableNodeCondition bool          // Whether to set NodeHealthy condition on the Node
+	APIReader           client.Reader                // Direct API server reader (bypasses cache) for node operations
+	CheckerPodLabel     string                       // Label to identify health check pods
+	CheckerPodImage     string                       // Image for the health check pod
+	CheckerPodNamespace string                       // Namespace to create pods in
+	EnableNodeCondition bool                         // Whether to set NodeHealthy condition on the Node
+	CircuitBreaker      *NodeConditionCircuitBreaker // Circuit breaker for node condition updates
 }
 
 // +kubebuilder:rbac:groups=clusterhealthmonitor.azure.com,resources=checknodehealths,verbs=get;list;watch;create;update;patch;delete
@@ -183,7 +184,8 @@ func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cn
 		}
 
 		// Step 1: Mark as completed (determines health based on Results)
-		if err := r.markCompleted(ctx, cnh); err != nil {
+		healthyStatus, err := r.markCompleted(ctx, cnh)
+		if err != nil {
 			klog.ErrorS(err, "Failed to mark as completed")
 			return ctrl.Result{}, err
 		}
@@ -192,6 +194,13 @@ func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cn
 		if r.EnableNodeCondition {
 			if err := r.updateNodeCondition(ctx, cnh); err != nil {
 				klog.ErrorS(err, "Failed to update node condition, continuing with cleanup", "node", cnh.Spec.NodeRef.Name)
+			}
+
+			// Track consecutive unhealthy/healthy results for circuit breaker
+			if healthyStatus == metav1.ConditionFalse {
+				r.CircuitBreaker.RecordUnhealthyNode()
+			} else {
+				r.CircuitBreaker.RecordHealthyNode()
 			}
 		}
 
@@ -234,7 +243,7 @@ func (r *CheckNodeHealthReconciler) markStarted(ctx context.Context, cnh *chmv1a
 	return nil
 }
 
-func (r *CheckNodeHealthReconciler) markCompleted(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth) error {
+func (r *CheckNodeHealthReconciler) markCompleted(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth) (metav1.ConditionStatus, error) {
 	now := metav1.Now()
 	cnh.Status.FinishedAt = &now
 	healthyStatus, reason, message := r.determineHealthyCondition(cnh)
@@ -250,10 +259,10 @@ func (r *CheckNodeHealthReconciler) markCompleted(ctx context.Context, cnh *chmv
 
 	klog.InfoS("CheckNodeHealth Result", "name", cnh.Name, "nodeName", cnh.Spec.NodeRef.Name, "status", healthyStatus, "reason", reason, "message", message)
 	if err := r.Status().Update(ctx, cnh); err != nil {
-		return fmt.Errorf("failed to update status: %w", err)
+		return healthyStatus, fmt.Errorf("failed to update status: %w", err)
 	}
 
-	return nil
+	return healthyStatus, nil
 }
 
 // updateNodeCondition sets the clusterhealthmonitor.azure.com/NodeHealthy condition on the Node
@@ -270,6 +279,15 @@ func (r *CheckNodeHealthReconciler) updateNodeCondition(ctx context.Context, cnh
 
 	// Only emit node condition when Healthy=False
 	if healthyCondition == nil || healthyCondition.Status != metav1.ConditionFalse {
+		return nil
+	}
+
+	// Check circuit breaker before setting the node condition
+	if !r.CircuitBreaker.Allow() {
+		klog.InfoS("Circuit breaker is open, skipping node condition update",
+			"node", cnh.Spec.NodeRef.Name,
+			"checkNodeHealth", cnh.Name,
+		)
 		return nil
 	}
 

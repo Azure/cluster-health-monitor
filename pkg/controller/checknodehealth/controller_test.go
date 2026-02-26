@@ -80,6 +80,7 @@ func TestReconcile(t *testing.T) {
 		existingPod         *corev1.Pod
 		existingNode        *corev1.Node
 		enableNodeCondition bool
+		circuitBreaker      *NodeConditionCircuitBreaker
 		triggerDeletion     bool // If true, call Delete() before Reconcile()
 		expectedResult      ctrl.Result
 		expectError         bool
@@ -308,6 +309,7 @@ func TestReconcile(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{Name: "test-node"},
 			},
 			enableNodeCondition: true,
+			circuitBreaker:      NewNodeConditionCircuitBreaker(DefaultCircuitBreakerThreshold, DefaultCircuitBreakerWindow, DefaultCircuitBreakerCooldown),
 			expectedResult:      ctrl.Result{},
 			expectError:         false,
 			expectedPodCreated:  false,
@@ -414,6 +416,7 @@ func TestReconcile(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{Name: "test-node"},
 			},
 			enableNodeCondition: true,
+			circuitBreaker:      NewNodeConditionCircuitBreaker(DefaultCircuitBreakerThreshold, DefaultCircuitBreakerWindow, DefaultCircuitBreakerCooldown),
 			expectedResult:      ctrl.Result{},
 			expectError:         false,
 			expectedPodCreated:  false,
@@ -488,6 +491,7 @@ func TestReconcile(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{Name: "test-node"},
 			},
 			enableNodeCondition: true,
+			circuitBreaker:      NewNodeConditionCircuitBreaker(DefaultCircuitBreakerThreshold, DefaultCircuitBreakerWindow, DefaultCircuitBreakerCooldown),
 			expectedResult:      ctrl.Result{},
 			expectError:         false,
 			expectedPodCreated:  false,
@@ -630,6 +634,74 @@ func TestReconcile(t *testing.T) {
 			},
 		},
 		{
+			name: "circuit breaker open - skips node condition update",
+			existingCR: &chmv1alpha1.CheckNodeHealth{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-circuit-breaker"},
+				Spec: chmv1alpha1.CheckNodeHealthSpec{
+					NodeRef: chmv1alpha1.NodeReference{Name: "test-node"},
+				},
+				Status: chmv1alpha1.CheckNodeHealthStatus{
+					Results: []chmv1alpha1.CheckResult{
+						{
+							Name:    "PodStartup",
+							Status:  chmv1alpha1.CheckStatusUnhealthy,
+							Message: "Pod stuck in Pending",
+						},
+					},
+				},
+			},
+			existingPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:              "check-node-health-test-circuit-breaker",
+					Namespace:         "default",
+					CreationTimestamp: metav1.NewTime(time.Now().Add(-2 * time.Minute)),
+					Labels: map[string]string{
+						CheckNodeHealthLabel: "test-circuit-breaker",
+					},
+				},
+				Status: corev1.PodStatus{Phase: corev1.PodPending},
+			},
+			existingNode: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-node"},
+			},
+			enableNodeCondition: true,
+			circuitBreaker: func() *NodeConditionCircuitBreaker {
+				// Create a circuit breaker that is already open
+				cb := NewNodeConditionCircuitBreaker(1, 15*time.Minute, 10*time.Minute)
+				cb.RecordUnhealthyNode() // This trips the breaker (threshold=1)
+				return cb
+			}(),
+			expectedResult:     ctrl.Result{},
+			expectError:        false,
+			expectedPodCreated: false,
+			expectedPodDeleted: true,
+			validateFunc: func(t *testing.T, fakeClient client.Client, cnh *chmv1alpha1.CheckNodeHealth) {
+				updatedCR := &chmv1alpha1.CheckNodeHealth{}
+				if err := fakeClient.Get(context.Background(), client.ObjectKey{Name: cnh.Name}, updatedCR); err != nil {
+					t.Fatalf("Failed to get updated CheckNodeHealth: %v", err)
+				}
+
+				// Verify Healthy condition is False (CR still gets marked)
+				healthyCondition := getHealthyCondition(updatedCR.Status.Conditions)
+				if healthyCondition == nil {
+					t.Fatal("Healthy condition not found in status")
+				}
+				if healthyCondition.Status != metav1.ConditionFalse {
+					t.Errorf("Expected condition status False, got %v", healthyCondition.Status)
+				}
+
+				// Verify node condition is NOT set (circuit breaker blocked it)
+				node := &corev1.Node{}
+				if err := fakeClient.Get(context.Background(), client.ObjectKey{Name: "test-node"}, node); err != nil {
+					t.Fatalf("Failed to get node: %v", err)
+				}
+				nodeCondition := getNodeHealthyCondition(node.Status.Conditions)
+				if nodeCondition != nil {
+					t.Error("Expected no NodeHealthy condition on node when circuit breaker is open")
+				}
+			},
+		},
+		{
 			name: "extra result with all required results healthy - Healthy condition is True",
 			existingCR: &chmv1alpha1.CheckNodeHealth{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-extra-result"},
@@ -694,6 +766,7 @@ func TestReconcile(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			reconciler, fakeClient, _ := setupTest()
 			reconciler.EnableNodeCondition = tt.enableNodeCondition
+			reconciler.CircuitBreaker = tt.circuitBreaker
 			ctx := context.Background()
 
 			// Setup existing resources

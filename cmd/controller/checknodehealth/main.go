@@ -156,7 +156,25 @@ func main() {
 		klog.FlushAndExit(klog.ExitFlushTimeout, 1)
 	}
 
+<<<<<<< HEAD
 	// Setup CheckNodeHealth controller
+=======
+	// Setup controller
+	var circuitBreaker *checknodehealth.NodeConditionCircuitBreaker
+	if enableNodeCondition {
+		circuitBreaker = checknodehealth.NewNodeConditionCircuitBreaker(
+			checknodehealth.DefaultCircuitBreakerThreshold,
+			checknodehealth.DefaultCircuitBreakerWindow,
+			checknodehealth.DefaultCircuitBreakerCooldown,
+		)
+		klog.InfoS("Node condition circuit breaker enabled",
+			"threshold", checknodehealth.DefaultCircuitBreakerThreshold,
+			"window", checknodehealth.DefaultCircuitBreakerWindow,
+			"cooldown", checknodehealth.DefaultCircuitBreakerCooldown,
+		)
+	}
+
+>>>>>>> d58aead (Add circuit breaker for node condition updates)
 	if err = (&checknodehealth.CheckNodeHealthReconciler{
 		Client:              mgr.GetClient(),
 		Scheme:              mgr.GetScheme(),
@@ -165,6 +183,7 @@ func main() {
 		CheckerPodImage:     checkerPodImage,
 		CheckerPodNamespace: checkerPodNamespace,
 		EnableNodeCondition: enableNodeCondition,
+		CircuitBreaker:      circuitBreaker,
 	}).SetupWithManager(mgr); err != nil {
 		klog.ErrorS(err, "Unable to create controller", "controller", "CheckNodeHealth")
 		klog.FlushAndExit(klog.ExitFlushTimeout, 1)
