@@ -132,25 +132,6 @@ func (cb *NodeConditionCircuitBreaker) RecordHealthyNode() {
 	}
 }
 
-// IsOpen returns whether the circuit breaker is currently open (blocking updates).
-func (cb *NodeConditionCircuitBreaker) IsOpen() bool {
-	cb.mu.Lock()
-	defer cb.mu.Unlock()
-
-	if cb.openedAt == nil {
-		return false
-	}
-
-	// Check if cooldown has elapsed
-	now := cb.nowFunc()
-	if now.Sub(*cb.openedAt) >= cb.cooldown {
-		cb.reset()
-		return false
-	}
-
-	return true
-}
-
 // reset clears the circuit breaker state back to closed.
 // Must be called with the mutex held.
 func (cb *NodeConditionCircuitBreaker) reset() {
