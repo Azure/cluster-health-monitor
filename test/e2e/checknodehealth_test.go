@@ -330,18 +330,30 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 		Expect(cnh.Status.Conditions[0].Status).To(Equal(metav1.ConditionFalse))
 
 		By("Verifying NodeHealthy condition is set on the Node")
+		var nodeCondition *corev1.NodeCondition
+		Eventually(func() *corev1.NodeCondition {
+			node := &corev1.Node{}
+			if err := k8sClient.Get(ctx, client.ObjectKey{Name: fakeNodeName}, node); err != nil {
+				return nil
+			}
+			for i, c := range node.Status.Conditions {
+				if c.Type == checknodehealth.NodeConditionNodeHealthy {
+					return &node.Status.Conditions[i]
+				}
+			}
+			return nil
+		}, "30s", "2s").ShouldNot(BeNil(), "Expected NodeHealthy condition on node, but not found")
+
+		// Re-fetch to verify details
 		node := &corev1.Node{}
 		err = k8sClient.Get(ctx, client.ObjectKey{Name: fakeNodeName}, node)
 		Expect(err).NotTo(HaveOccurred())
-
-		var nodeCondition *corev1.NodeCondition
 		for i, c := range node.Status.Conditions {
 			if c.Type == checknodehealth.NodeConditionNodeHealthy {
 				nodeCondition = &node.Status.Conditions[i]
 				break
 			}
 		}
-		Expect(nodeCondition).NotTo(BeNil(), "Expected NodeHealthy condition on node, but not found")
 		Expect(nodeCondition.Status).To(Equal(corev1.ConditionFalse))
 		Expect(nodeCondition.Reason).NotTo(BeEmpty())
 		GinkgoWriter.Printf("NodeHealthy condition on %s: status=%s, reason=%s, message=%s\n",
