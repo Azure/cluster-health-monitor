@@ -25,7 +25,7 @@ const (
 	AnnotationLastBootID = "checknodehealth.clusterhealthmonitor.azure.com/last-boot-id"
 
 	// cnhRebootPrefix is the prefix used for CheckNodeHealth CR names triggered by node reboot.
-	cnhRebootPrefix = "boot-"
+	cnhRebootPrefix = "boot"
 
 	// maxCNHNameLength is the maximum allowed length for CheckNodeHealth CR names.
 	maxCNHNameLength = 253
@@ -144,10 +144,12 @@ func (r *NodeRebootReconciler) updateBootIDAnnotation(ctx context.Context, node 
 
 // GenerateCNHName builds a deterministic CheckNodeHealth CR name from the node
 // name and bootID. The bootID is hashed to keep the name short and DNS-safe.
+// The hash is placed before the node name so that truncation to maxCNHNameLength
+// never removes the hash portion.
 // Format: boot-<hash8>-<nodeName>
 func GenerateCNHName(nodeName, bootID string) string {
 	hash := fmt.Sprintf("%x", sha256.Sum256([]byte(bootID)))[:8]
-	name := fmt.Sprintf("%s%s-%s", cnhRebootPrefix, nodeName, hash)
+	name := fmt.Sprintf("%s-%s-%s", cnhRebootPrefix, hash, nodeName)
 	if len(name) > maxCNHNameLength {
 		name = name[:maxCNHNameLength]
 	}

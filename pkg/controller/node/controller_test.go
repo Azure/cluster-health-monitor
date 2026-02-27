@@ -2,6 +2,7 @@ package node
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -181,10 +182,13 @@ func TestGenerateCNHName(t *testing.T) {
 		t.Errorf("different bootIDs should produce different names: %q == %q", name1, name3)
 	}
 
-	// Prefix check
-	expected := cnhRebootPrefix + "node-1-"
-	if len(name1) < len(expected) || name1[:len(expected)] != expected {
-		t.Errorf("expected prefix %q, got %q", expected, name1)
+	// Prefix check: format is "boot-<hash8>-<nodeName>"
+	expectedPrefix := cnhRebootPrefix + "-"
+	if !strings.HasPrefix(name1, expectedPrefix) {
+		t.Errorf("expected name to start with %q, got %q", expectedPrefix, name1)
+	}
+	if !strings.HasSuffix(name1, "-node-1") {
+		t.Errorf("expected name to end with node name, got %q", name1)
 	}
 
 	// Length capped at 253
