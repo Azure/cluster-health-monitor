@@ -24,6 +24,7 @@ import (
 	upgradev1alpha1 "github.com/Azure/aks-health-signal/api/upgrade/v1alpha1"
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
 	"github.com/Azure/cluster-health-monitor/pkg/controller/checknodehealth"
+	nodecontroller "github.com/Azure/cluster-health-monitor/pkg/controller/node"
 	"github.com/Azure/cluster-health-monitor/pkg/controller/upgradenodeinprogress"
 	"github.com/spf13/pflag"
 )
@@ -47,12 +48,15 @@ func main() {
 	var metricsAddr string
 	var enableLeaderElection bool
 	var probeAddr string
+	var enableNodeRebootCheck bool
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
+	flag.BoolVar(&enableNodeRebootCheck, "enable-node-reboot-check", false,
+		"Enable the node reboot controller that automatically triggers CheckNodeHealth when a node reboot is detected.")
 
 	// Set up logging configuration with JSON format
 	logConfig := logsapi.NewLoggingConfiguration()
@@ -99,6 +103,36 @@ func main() {
 	}
 	checkerPodSelector = checkerPodSelector.Add(*req)
 
+	// Build cache config
+	cacheByObject := map[client.Object]cache.ByObject{
+		&corev1.Pod{}: {
+			Namespaces: map[string]cache.Config{
+				checkerPodNamespace: {},
+			},
+			Label: checkerPodSelector,
+		},
+	}
+
+	// When node reboot detection is enabled, cache Node objects with a transformer
+	// that strips most fields to minimize memory usage. Only metadata and bootID are retained.
+	if enableNodeRebootCheck {
+		cacheByObject[&corev1.Node{}] = cache.ByObject{
+			Transform: func(obj interface{}) (interface{}, error) {
+				node, ok := obj.(*corev1.Node)
+				if !ok {
+					return obj, nil
+				}
+				node.Status = corev1.NodeStatus{
+					NodeInfo: corev1.NodeSystemInfo{
+						BootID: node.Status.NodeInfo.BootID,
+					},
+				}
+				node.Spec = corev1.NodeSpec{}
+				return node, nil
+			},
+		}
+	}
+
 	// Create manager
 	syncPeriod := checknodehealth.SyncPeriod
 	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
@@ -108,14 +142,7 @@ func main() {
 		},
 		Cache: cache.Options{
 			SyncPeriod: &syncPeriod,
-			ByObject: map[client.Object]cache.ByObject{
-				&corev1.Pod{}: {
-					Namespaces: map[string]cache.Config{
-						checkerPodNamespace: {},
-					},
-					Label: checkerPodSelector,
-				},
-			},
+			ByObject:   cacheByObject,
 		},
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
@@ -145,6 +172,18 @@ func main() {
 	}).SetupWithManager(mgr); err != nil {
 		klog.ErrorS(err, "Unable to create controller", "controller", "UpgradeNodeInProgress")
 		klog.FlushAndExit(klog.ExitFlushTimeout, 1)
+	}
+
+	// Setup NodeReboot controller (opt-in)
+	if enableNodeRebootCheck {
+		klog.InfoS("Node reboot check is enabled")
+		if err = (&nodecontroller.NodeRebootReconciler{
+			Client: mgr.GetClient(),
+			Scheme: mgr.GetScheme(),
+		}).SetupWithManager(mgr); err != nil {
+			klog.ErrorS(err, "Unable to create controller", "controller", "NodeReboot")
+			klog.FlushAndExit(klog.ExitFlushTimeout, 1)
+		}
 	}
 
 	// Add health and readiness checks

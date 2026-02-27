@@ -5,6 +5,16 @@ metadata:
   name: checknodehealth-controller
 rules:
 - apiGroups:
+  - ""
+  resources:
+  - nodes
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
   - clusterhealthmonitor.azure.com
   resources:
   - checknodehealths
