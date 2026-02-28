@@ -126,7 +126,7 @@ func (r *CheckNodeHealthReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	// Check if the CR has expired
 	if isExpired(cnh) {
 		klog.InfoS("CheckNodeHealth has expired, deleting", "name", cnh.Name, "CreationTimestamp", cnh.CreationTimestamp)
-		if err := r.Delete(ctx, cnh); err != nil {
+		if err := client.IgnoreNotFound(r.Delete(ctx, cnh)); err != nil {
 			klog.ErrorS(err, "Failed to delete expired CheckNodeHealth")
 			return ctrl.Result{}, err
 		}
