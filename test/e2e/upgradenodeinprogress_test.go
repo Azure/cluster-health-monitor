@@ -8,7 +8,7 @@ import (
 
 	healthv1alpha1 "github.com/Azure/aks-health-signal/api/health/v1alpha1"
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
-	"github.com/Azure/cluster-health-monitor/pkg/controller/upgradenodeinprogress"
+	"github.com/Azure/cluster-health-monitor/pkg/controller/healthcheckrequest"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -144,7 +144,7 @@ var _ = Describe("HealthCheckRequest Controller", Ordered, ContinueOnFailure, fu
 			}, "60s", "1s").Should(BeTrue(), "HealthCheckRequest CR was not deleted within timeout")
 
 			// Also verify HealthSignal is deleted (garbage collected)
-			expectedHSName := strings.ToLower(fmt.Sprintf("%s-%s", unipName, upgradenodeinprogress.HealthSignalSource))
+			expectedHSName := strings.ToLower(fmt.Sprintf("%s-%s", unipName, healthcheckrequest.HealthSignalSource))
 			Eventually(func() bool {
 				return !healthSignalCRExists(ctx, k8sClient, expectedHSName)
 			}, "30s", "1s").Should(BeTrue(), "HealthSignal CR was not garbage collected within timeout")
@@ -160,7 +160,7 @@ var _ = Describe("HealthCheckRequest Controller", Ordered, ContinueOnFailure, fu
 		Expect(err).NotTo(HaveOccurred())
 		GinkgoWriter.Printf("Created HealthCheckRequest CR: %s for node: %s\n", unipName, testNodeName)
 
-		expectedHSName := strings.ToLower(fmt.Sprintf("%s-%s", unipName, upgradenodeinprogress.HealthSignalSource))
+		expectedHSName := strings.ToLower(fmt.Sprintf("%s-%s", unipName, healthcheckrequest.HealthSignalSource))
 
 		By("Verifying HealthSignal is created with correct owner reference")
 		var hs *healthv1alpha1.HealthSignal

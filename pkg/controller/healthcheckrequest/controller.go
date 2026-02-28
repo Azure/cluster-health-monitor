@@ -1,4 +1,4 @@
-package upgradenodeinprogress
+package healthcheckrequest
 
 import (
 	"context"

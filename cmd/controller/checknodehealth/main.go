@@ -23,8 +23,8 @@ import (
 	healthv1alpha1 "github.com/Azure/aks-health-signal/api/health/v1alpha1"
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
 	"github.com/Azure/cluster-health-monitor/pkg/controller/checknodehealth"
+	"github.com/Azure/cluster-health-monitor/pkg/controller/healthcheckrequest"
 	nodecontroller "github.com/Azure/cluster-health-monitor/pkg/controller/node"
-	"github.com/Azure/cluster-health-monitor/pkg/controller/upgradenodeinprogress"
 	"github.com/spf13/pflag"
 )
 
@@ -164,7 +164,7 @@ func main() {
 	}
 
 	// Setup HealthCheckRequest controller
-	if err = (&upgradenodeinprogress.HealthCheckRequestReconciler{
+	if err = (&healthcheckrequest.HealthCheckRequestReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
