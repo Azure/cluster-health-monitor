@@ -3,23 +3,29 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.17.0
-  name: healthsignals.health.aks.io
+    controller-gen.kubebuilder.io/version: v0.20.0
+  name: healthcheckrequests.health.aks.io
 spec:
   group: health.aks.io
   names:
-    kind: HealthSignal
-    listKind: HealthSignalList
-    plural: healthsignals
+    kind: HealthCheckRequest
+    listKind: HealthCheckRequestList
+    plural: healthcheckrequests
     shortNames:
-    - hs
-    singular: healthsignal
+    - hcr
+    singular: healthcheckrequest
   scope: Cluster
   versions:
   - name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: HealthSignal is the Schema for the healthsignals API
+        description: |-
+          HealthCheckRequest is the Schema for the healthcheckrequests API.
+
+          Created to request health monitoring for a specific target
+          (node, node pool, or cluster). Monitoring apps watch for these
+          and create corresponding HealthSignal resources with ownerReferences
+          pointing back to the request.
         properties:
           apiVersion:
             description: |-
@@ -39,54 +45,97 @@ spec:
           metadata:
             type: object
           spec:
-            description: HealthSignalSpec defines the desired state of HealthSignal
+            description: HealthCheckRequestSpec defines the desired state of a HealthCheckRequest.
             properties:
-              source:
-                description: Source is the controller/component that produced this
-                  health signal
+              scope:
+                description: 'Scope indicates the level of this health check: Node,
+                  NodePool, or Cluster.'
+                enum:
+                - Node
+                - NodePool
+                - Cluster
+                type: string
+              targetRef:
+                description: TargetRef references the target object (e.g., a Node
+                  or ).
                 properties:
-                  apiVersion:
-                    description: API version of the referent.
-                    type: string
-                  fieldPath:
-                    description: |-
-                      If referring to a piece of an object instead of an entire object, this string
-                      should contain a valid JSON/Go field access statement, such as desiredState.manifest.containers[2].
-                      For example, if the object reference is to a container within a pod, this would take on a value like:
-                      "spec.containers{name}" (where "name" refers to the name of the container that triggered
-                      the event) or if no container name is specified "spec.containers[2]" (container with
-                      index 2 in this pod). This syntax is chosen only to have some well-defined way of
-                      referencing a part of an object.
-                    type: string
-                  kind:
-                    description: |-
-                      Kind of the referent.
-                      More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
-                    type: string
                   name:
-                    description: |-
-                      Name of the referent.
-                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                    description: Name of the referenced object.
                     type: string
-                  namespace:
-                    description: |-
-                      Namespace of the referent.
-                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/namespaces/
-                    type: string
-                  resourceVersion:
-                    description: |-
-                      Specific resourceVersion to which this reference is made, if any.
-                      More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#concurrency-control-and-consistency
-                    type: string
-                  uid:
-                    description: |-
-                      UID of the referent.
-                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#uids
-                    type: string
+                required:
+                - name
                 type: object
-                x-kubernetes-map-type: atomic
-              target:
-                description: Target of the health signal. Required when type=NodeHealth
+            required:
+            - scope
+            - targetRef
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.0
+  name: healthsignals.health.aks.io
+spec:
+  group: health.aks.io
+  names:
+    kind: HealthSignal
+    listKind: HealthSignalList
+    plural: healthsignals
+    shortNames:
+    - hs
+    singular: healthsignal
+  scope: Cluster
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          HealthSignal is the Schema for the healthsignals API.
+
+          Created and updated by monitoring apps in response to a HealthCheckRequest.
+
+          Ownership: each HealthSignal MUST set an ownerReference pointing to its
+          corresponding HealthCheckRequest. This ensures:
+            - Automatic garbage collection when the request is deleted.
+            - Clear linkage between request and signal.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              HealthSignalSpec defines the desired state of a HealthSignal.
+
+              HealthSignal is written entirely by monitoring apps. The AKS RP reads it.
+              Decision logic:
+                - If any condition status becomes "False", the RP aborts the upgrade.
+                - If the timeout elapses with no "False" condition, the RP proceeds.
+            properties:
+              targetRef:
+                description: |-
+                  TargetRef identifies the Kubernetes object this health signal targets.
+                  Uses the standard corev1.ObjectReference type.
+                  Required when type is NodeHealth.
                 properties:
                   apiVersion:
                     description: API version of the referent.
@@ -129,21 +178,27 @@ spec:
                 type: object
                 x-kubernetes-map-type: atomic
               type:
-                description: Type is the health signal type
+                description: Type is the health signal type (e.g., NodeHealth).
                 enum:
                 - NodeHealth
                 - ClusterHealth
                 type: string
             required:
-            - source
             - type
             type: object
           status:
-            description: HealthSignalStatus defines the observed state of HealthSignal
+            description: HealthSignalStatus defines the observed state of a HealthSignal.
             properties:
               conditions:
-                description: Conditions represent the latest available observations
-                  of the HealthSignal's state.
+                description: |-
+                  Conditions represent health verdicts using standard Kubernetes metav1.Condition.
+
+                  Each condition has:
+                    type              – condition type (e.g., "Ready")
+                    status            – "True" (Healthy), "False" (Unhealthy), "Unknown" (No verdict)
+                    reason            – machine-readable CamelCase reason (e.g., "Baseline", "NotReady")
+                    message           – human-readable description
+                    lastTransitionTime – when the condition last changed
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -206,119 +261,7 @@ spec:
         required:
         - spec
         type: object
-        x-kubernetes-validations:
-        - message: spec.target.name is required when spec.type is NodeHealth.
-          rule: self.spec.type != 'NodeHealth' || has(self.spec.target) && has(self.spec.target.name)
-            && self.spec.target.name != ''
-        - message: spec.target must not be set when spec.type is ClusterHealth.
-          rule: self.spec.type != 'ClusterHealth' || !has(self.spec.target) || !has(self.spec.target.name)
     served: true
     storage: true
     subresources:
       status: {}
----
-apiVersion: apiextensions.k8s.io/v1
-kind: CustomResourceDefinition
-metadata:
-  annotations:
-    controller-gen.kubebuilder.io/version: v0.17.0
-  name: upgradenodeinprogresses.upgrade.aks.io
-spec:
-  group: upgrade.aks.io
-  names:
-    kind: UpgradeNodeInProgress
-    listKind: UpgradeNodeInProgressList
-    plural: upgradenodeinprogresses
-    shortNames:
-    - unip
-    singular: upgradenodeinprogress
-  scope: Cluster
-  versions:
-  - name: v1alpha1
-    schema:
-      openAPIV3Schema:
-        description: UpgradeNodeInProgress is the Schema for the upgradenodeinprogresses
-          API
-        properties:
-          apiVersion:
-            description: |-
-              APIVersion defines the versioned schema of this representation of an object.
-              Servers should convert recognized schemas to the latest internal value, and
-              may reject unrecognized values.
-              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
-            type: string
-          kind:
-            description: |-
-              Kind is a string value representing the REST resource this object represents.
-              Servers may infer this from the endpoint the client submits requests to.
-              Cannot be updated.
-              In CamelCase.
-              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
-            type: string
-          metadata:
-            type: object
-          spec:
-            description: UpgradeNodeInProgressSpec defines the desired state of UpgradeNodeInProgress
-            properties:
-              nodeRef:
-                description: NodeReference contains a reference to a Node
-                properties:
-                  name:
-                    description: Name is the name of the Node
-                    type: string
-                required:
-                - name
-                type: object
-            required:
-            - nodeRef
-            type: object
-        required:
-        - spec
-        type: object
-    served: true
-    storage: true
----
-apiVersion: apiextensions.k8s.io/v1
-kind: CustomResourceDefinition
-metadata:
-  annotations:
-    controller-gen.kubebuilder.io/version: v0.17.0
-  name: upgradeoperationinprogresses.upgrade.aks.io
-spec:
-  group: upgrade.aks.io
-  names:
-    kind: UpgradeOperationInProgress
-    listKind: UpgradeOperationInProgressList
-    plural: upgradeoperationinprogresses
-    shortNames:
-    - uoip
-    singular: upgradeoperationinprogress
-  scope: Cluster
-  versions:
-  - name: v1alpha1
-    schema:
-      openAPIV3Schema:
-        description: |-
-          UpgradeOperationInProgress is the Schema for the upgradeoperationinprogresses API
-          The existence of this CR indicates an upgrade operation is in progress.
-        properties:
-          apiVersion:
-            description: |-
-              APIVersion defines the versioned schema of this representation of an object.
-              Servers should convert recognized schemas to the latest internal value, and
-              may reject unrecognized values.
-              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
-            type: string
-          kind:
-            description: |-
-              Kind is a string value representing the REST resource this object represents.
-              Servers may infer this from the endpoint the client submits requests to.
-              Cannot be updated.
-              In CamelCase.
-              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
-            type: string
-          metadata:
-            type: object
-        type: object
-    served: true
-    storage: true

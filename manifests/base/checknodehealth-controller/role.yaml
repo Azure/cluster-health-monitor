@@ -37,6 +37,14 @@ rules:
 - apiGroups:
   - health.aks.io
   resources:
+  - healthcheckrequests
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - health.aks.io
+  resources:
   - healthsignals
   verbs:
   - create
@@ -54,14 +62,6 @@ rules:
   - get
   - patch
   - update
-- apiGroups:
-  - upgrade.aks.io
-  resources:
-  - upgradenodeinprogresses
-  verbs:
-  - get
-  - list
-  - watch
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role

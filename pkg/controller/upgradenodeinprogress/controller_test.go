@@ -14,16 +14,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	healthv1alpha1 "github.com/Azure/aks-health-signal/api/health/v1alpha1"
-	upgradev1alpha1 "github.com/Azure/aks-health-signal/api/upgrade/v1alpha1"
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
 )
 
 func newScheme() *runtime.Scheme {
 	scheme := runtime.NewScheme()
 	if err := chmv1alpha1.AddToScheme(scheme); err != nil {
-		panic(err)
-	}
-	if err := upgradev1alpha1.AddToScheme(scheme); err != nil {
 		panic(err)
 	}
 	if err := healthv1alpha1.AddToScheme(scheme); err != nil {
@@ -40,7 +36,7 @@ func newFakeClientBuilder(scheme *runtime.Scheme) *fake.ClientBuilder {
 			hs := obj.(*healthv1alpha1.HealthSignal)
 			var uids []string
 			for _, ref := range hs.OwnerReferences {
-				if ref.Kind == "UpgradeNodeInProgress" {
+				if ref.Kind == "HealthCheckRequest" {
 					uids = append(uids, string(ref.UID))
 				}
 			}
@@ -76,12 +72,12 @@ func TestReconcile(t *testing.T) {
 		{
 			name: "creates HealthSignal and CheckNodeHealth for new UpgradeNodeInProgress",
 			existingObjects: []client.Object{
-				&upgradev1alpha1.UpgradeNodeInProgress{
+				&healthv1alpha1.HealthCheckRequest{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "test-unip",
 						UID:  types.UID("test-unip-uid"),
 					},
-					Spec: upgradev1alpha1.UpgradeNodeInProgressSpec{NodeRef: upgradev1alpha1.NodeReference{Name: "test-node"}},
+					Spec: healthv1alpha1.HealthCheckRequestSpec{Scope: healthv1alpha1.HealthCheckRequestScopeNode, TargetRef: &healthv1alpha1.TargetRef{Name: "test-node"}},
 				},
 			},
 			reconcileName:           "test-unip",
@@ -101,18 +97,15 @@ func TestReconcile(t *testing.T) {
 				if hs.Name != "test-unip-clusterhealthmonitor" {
 					t.Errorf("Expected HealthSignal name 'test-unip-clusterhealthmonitor', got %s", hs.Name)
 				}
-				if hs.Spec.Source.Name != HealthSignalSource {
-					t.Errorf("Expected source name %s, got %s", HealthSignalSource, hs.Spec.Source.Name)
-				}
-				if hs.Spec.Target == nil || hs.Spec.Target.Name != "test-node" {
-					t.Errorf("Expected target node name 'test-node', got %v", hs.Spec.Target)
+				if hs.Spec.TargetRef == nil || hs.Spec.TargetRef.Name != "test-node" {
+					t.Errorf("Expected target node name 'test-node', got %v", hs.Spec.TargetRef)
 				}
 				// Verify HealthSignal owner reference
 				if len(hs.OwnerReferences) != 1 {
 					t.Errorf("Expected 1 owner reference on HealthSignal, got %d", len(hs.OwnerReferences))
 				} else {
-					if hs.OwnerReferences[0].Kind != "UpgradeNodeInProgress" {
-						t.Errorf("Expected owner kind 'UpgradeNodeInProgress', got %s", hs.OwnerReferences[0].Kind)
+					if hs.OwnerReferences[0].Kind != "HealthCheckRequest" {
+						t.Errorf("Expected owner kind 'HealthCheckRequest', got %s", hs.OwnerReferences[0].Kind)
 					}
 					if hs.OwnerReferences[0].UID != types.UID("test-unip-uid") {
 						t.Errorf("Expected owner UID 'test-unip-uid', got %s", hs.OwnerReferences[0].UID)
@@ -157,14 +150,14 @@ func TestReconcile(t *testing.T) {
 		{
 			name: "skips UpgradeNodeInProgress being deleted",
 			existingObjects: []client.Object{
-				&upgradev1alpha1.UpgradeNodeInProgress{
+				&healthv1alpha1.HealthCheckRequest{
 					ObjectMeta: metav1.ObjectMeta{
 						Name:              "test-unip",
 						UID:               types.UID("test-unip-uid"),
 						DeletionTimestamp: &now,
 						Finalizers:        []string{"test-finalizer"},
 					},
-					Spec: upgradev1alpha1.UpgradeNodeInProgressSpec{NodeRef: upgradev1alpha1.NodeReference{Name: "test-node"}},
+					Spec: healthv1alpha1.HealthCheckRequestSpec{Scope: healthv1alpha1.HealthCheckRequestScopeNode, TargetRef: &healthv1alpha1.TargetRef{Name: "test-node"}},
 				},
 			},
 			reconcileName:           "test-unip",
@@ -176,12 +169,12 @@ func TestReconcile(t *testing.T) {
 		{
 			name: "reuses existing HealthSignal and CheckNodeHealth on subsequent reconcile",
 			existingObjects: func() []client.Object {
-				unip := &upgradev1alpha1.UpgradeNodeInProgress{
+				unip := &healthv1alpha1.HealthCheckRequest{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "test-unip",
 						UID:  types.UID("test-unip-uid"),
 					},
-					Spec: upgradev1alpha1.UpgradeNodeInProgressSpec{NodeRef: upgradev1alpha1.NodeReference{Name: "test-node"}},
+					Spec: healthv1alpha1.HealthCheckRequestSpec{Scope: healthv1alpha1.HealthCheckRequestScopeNode, TargetRef: &healthv1alpha1.TargetRef{Name: "test-node"}},
 				}
 				hs := &healthv1alpha1.HealthSignal{
 					ObjectMeta: metav1.ObjectMeta{
@@ -189,20 +182,16 @@ func TestReconcile(t *testing.T) {
 						UID:  types.UID("existing-hs-uid"),
 						OwnerReferences: []metav1.OwnerReference{
 							{
-								APIVersion: upgradev1alpha1.GroupVersion.String(),
-								Kind:       "UpgradeNodeInProgress",
+								APIVersion: healthv1alpha1.GroupVersion.String(),
+								Kind:       "HealthCheckRequest",
 								Name:       unip.Name,
 								UID:        unip.UID,
 							},
 						},
 					},
 					Spec: healthv1alpha1.HealthSignalSpec{
-						Source: corev1.ObjectReference{
-							Kind: "DaemonSet",
-							Name: HealthSignalSource,
-						},
 						Type: healthv1alpha1.NodeHealth,
-						Target: &corev1.ObjectReference{
+						TargetRef: &corev1.ObjectReference{
 							Kind: "Node",
 							Name: "test-node",
 						},
@@ -260,12 +249,12 @@ func TestReconcile(t *testing.T) {
 		{
 			name: "syncs status when CheckNodeHealth is completed",
 			existingObjects: func() []client.Object {
-				unip := &upgradev1alpha1.UpgradeNodeInProgress{
+				unip := &healthv1alpha1.HealthCheckRequest{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "test-unip",
 						UID:  types.UID("test-unip-uid"),
 					},
-					Spec: upgradev1alpha1.UpgradeNodeInProgressSpec{NodeRef: upgradev1alpha1.NodeReference{Name: "test-node"}},
+					Spec: healthv1alpha1.HealthCheckRequestSpec{Scope: healthv1alpha1.HealthCheckRequestScopeNode, TargetRef: &healthv1alpha1.TargetRef{Name: "test-node"}},
 				}
 				hs := &healthv1alpha1.HealthSignal{
 					ObjectMeta: metav1.ObjectMeta{
@@ -273,20 +262,16 @@ func TestReconcile(t *testing.T) {
 						UID:  types.UID("test-hs-uid"),
 						OwnerReferences: []metav1.OwnerReference{
 							{
-								APIVersion: upgradev1alpha1.GroupVersion.String(),
-								Kind:       "UpgradeNodeInProgress",
+								APIVersion: healthv1alpha1.GroupVersion.String(),
+								Kind:       "HealthCheckRequest",
 								Name:       unip.Name,
 								UID:        unip.UID,
 							},
 						},
 					},
 					Spec: healthv1alpha1.HealthSignalSpec{
-						Source: corev1.ObjectReference{
-							Kind: "DaemonSet",
-							Name: HealthSignalSource,
-						},
 						Type: healthv1alpha1.NodeHealth,
-						Target: &corev1.ObjectReference{
+						TargetRef: &corev1.ObjectReference{
 							Kind: "Node",
 							Name: "test-node",
 						},
@@ -370,12 +355,12 @@ func TestReconcile(t *testing.T) {
 		{
 			name: "syncs unhealthy status when CheckNodeHealth fails",
 			existingObjects: func() []client.Object {
-				unip := &upgradev1alpha1.UpgradeNodeInProgress{
+				unip := &healthv1alpha1.HealthCheckRequest{
 					ObjectMeta: metav1.ObjectMeta{
 						Name: "test-unip",
 						UID:  types.UID("test-unip-uid"),
 					},
-					Spec: upgradev1alpha1.UpgradeNodeInProgressSpec{NodeRef: upgradev1alpha1.NodeReference{Name: "test-node"}},
+					Spec: healthv1alpha1.HealthCheckRequestSpec{Scope: healthv1alpha1.HealthCheckRequestScopeNode, TargetRef: &healthv1alpha1.TargetRef{Name: "test-node"}},
 				}
 				hs := &healthv1alpha1.HealthSignal{
 					ObjectMeta: metav1.ObjectMeta{
@@ -383,20 +368,16 @@ func TestReconcile(t *testing.T) {
 						UID:  types.UID("test-hs-uid"),
 						OwnerReferences: []metav1.OwnerReference{
 							{
-								APIVersion: upgradev1alpha1.GroupVersion.String(),
-								Kind:       "UpgradeNodeInProgress",
+								APIVersion: healthv1alpha1.GroupVersion.String(),
+								Kind:       "HealthCheckRequest",
 								Name:       unip.Name,
 								UID:        unip.UID,
 							},
 						},
 					},
 					Spec: healthv1alpha1.HealthSignalSpec{
-						Source: corev1.ObjectReference{
-							Kind: "DaemonSet",
-							Name: HealthSignalSource,
-						},
 						Type: healthv1alpha1.NodeHealth,
-						Target: &corev1.ObjectReference{
+						TargetRef: &corev1.ObjectReference{
 							Kind: "Node",
 							Name: "test-node",
 						},
@@ -464,7 +445,7 @@ func TestReconcile(t *testing.T) {
 				WithObjects(tt.existingObjects...).
 				Build()
 
-			reconciler := &UpgradeNodeInProgressReconciler{
+			reconciler := &HealthCheckRequestReconciler{
 				Client: fakeClient,
 				Scheme: scheme,
 			}

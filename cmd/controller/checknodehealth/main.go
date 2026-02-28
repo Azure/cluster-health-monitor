@@ -21,7 +21,6 @@ import (
 	ctrlmetricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	healthv1alpha1 "github.com/Azure/aks-health-signal/api/health/v1alpha1"
-	upgradev1alpha1 "github.com/Azure/aks-health-signal/api/upgrade/v1alpha1"
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
 	"github.com/Azure/cluster-health-monitor/pkg/controller/checknodehealth"
 	nodecontroller "github.com/Azure/cluster-health-monitor/pkg/controller/node"
@@ -36,7 +35,6 @@ var (
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(chmv1alpha1.AddToScheme(scheme))
-	utilruntime.Must(upgradev1alpha1.AddToScheme(scheme))
 	utilruntime.Must(healthv1alpha1.AddToScheme(scheme))
 }
 
@@ -165,12 +163,12 @@ func main() {
 		klog.FlushAndExit(klog.ExitFlushTimeout, 1)
 	}
 
-	// Setup UpgradeNodeInProgress controller
-	if err = (&upgradenodeinprogress.UpgradeNodeInProgressReconciler{
+	// Setup HealthCheckRequest controller
+	if err = (&upgradenodeinprogress.HealthCheckRequestReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
-		klog.ErrorS(err, "Unable to create controller", "controller", "UpgradeNodeInProgress")
+		klog.ErrorS(err, "Unable to create controller", "controller", "HealthCheckRequest")
 		klog.FlushAndExit(klog.ExitFlushTimeout, 1)
 	}
 
