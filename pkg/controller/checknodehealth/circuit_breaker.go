@@ -100,7 +100,7 @@ func (cb *NodeConditionCircuitBreaker) RecordUnhealthyNode() {
 	cb.consecutiveUnhealthy = append(cb.consecutiveUnhealthy, now)
 
 	// Prune events outside the window
-	cb.pruneExpiredEvents(now)
+	cb.consecutiveUnhealthy = pruneExpiredEvents(cb.consecutiveUnhealthy, cb.window, now)
 
 	klog.InfoS("Recorded unhealthy node event",
 		"consecutiveInWindow", len(cb.consecutiveUnhealthy),
@@ -139,15 +139,13 @@ func (cb *NodeConditionCircuitBreaker) reset() {
 	cb.consecutiveUnhealthy = nil
 }
 
-// pruneExpiredEvents removes events that are outside the monitoring window.
-// Must be called with the mutex held.
-func (cb *NodeConditionCircuitBreaker) pruneExpiredEvents(now time.Time) {
-	cutoff := now.Add(-cb.window)
+// pruneExpiredEvents returns events that are within the monitoring window,
+// removing any that have expired. It does not modify the input slice.
+func pruneExpiredEvents(events []time.Time, window time.Duration, now time.Time) []time.Time {
+	cutoff := now.Add(-window)
 	i := 0
-	for i < len(cb.consecutiveUnhealthy) && cb.consecutiveUnhealthy[i].Before(cutoff) {
+	for i < len(events) && events[i].Before(cutoff) {
 		i++
 	}
-	if i > 0 {
-		cb.consecutiveUnhealthy = cb.consecutiveUnhealthy[i:]
-	}
+	return events[i:]
 }
