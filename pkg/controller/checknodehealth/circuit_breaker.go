@@ -141,6 +141,7 @@ func (cb *NodeConditionCircuitBreaker) reset() {
 
 // pruneExpiredEvents returns events that are within the monitoring window,
 // removing any that have expired. It does not modify the input slice.
+// Events are assumed to be ordered chronologically (oldest first).
 func pruneExpiredEvents(events []time.Time, window time.Duration, now time.Time) []time.Time {
 	cutoff := now.Add(-window)
 	i := 0
