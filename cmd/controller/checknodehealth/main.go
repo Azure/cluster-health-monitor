@@ -156,9 +156,6 @@ func main() {
 		klog.FlushAndExit(klog.ExitFlushTimeout, 1)
 	}
 
-<<<<<<< HEAD
-	// Setup CheckNodeHealth controller
-=======
 	// Setup controller
 	var circuitBreaker *checknodehealth.NodeConditionCircuitBreaker
 	if enableNodeCondition {
@@ -174,7 +171,6 @@ func main() {
 		)
 	}
 
->>>>>>> d58aead (Add circuit breaker for node condition updates)
 	if err = (&checknodehealth.CheckNodeHealthReconciler{
 		Client:              mgr.GetClient(),
 		Scheme:              mgr.GetScheme(),
