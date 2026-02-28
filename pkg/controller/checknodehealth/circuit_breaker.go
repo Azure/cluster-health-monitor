@@ -78,7 +78,7 @@ func (cb *NodeConditionCircuitBreaker) Allow() bool {
 			cb.reset()
 			return true
 		}
-		klog.V(1).InfoS("Circuit breaker is open, blocking node condition update",
+		klog.InfoS("Circuit breaker is open, blocking node condition update",
 			"openedAt", cb.openedAt,
 			"cooldownRemaining", cb.cooldown-now.Sub(*cb.openedAt),
 		)
@@ -102,7 +102,7 @@ func (cb *NodeConditionCircuitBreaker) RecordUnhealthyNode() {
 	// Prune events outside the window
 	cb.pruneExpiredEvents(now)
 
-	klog.V(1).InfoS("Recorded unhealthy node event",
+	klog.InfoS("Recorded unhealthy node event",
 		"consecutiveInWindow", len(cb.consecutiveUnhealthy),
 		"threshold", cb.threshold,
 	)
@@ -125,7 +125,7 @@ func (cb *NodeConditionCircuitBreaker) RecordHealthyNode() {
 	defer cb.mu.Unlock()
 
 	if len(cb.consecutiveUnhealthy) > 0 {
-		klog.V(1).InfoS("Healthy node observed, resetting consecutive unhealthy counter",
+		klog.InfoS("Healthy node observed, resetting consecutive unhealthy counter",
 			"previousCount", len(cb.consecutiveUnhealthy),
 		)
 		cb.consecutiveUnhealthy = nil

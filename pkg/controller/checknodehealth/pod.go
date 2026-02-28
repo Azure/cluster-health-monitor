@@ -68,7 +68,7 @@ func (r *CheckNodeHealthReconciler) ensureHealthCheckPod(ctx context.Context, cn
 		if len(podList.Items) > 1 {
 			klog.InfoS("Multiple health check pods found, using first one", "count", len(podList.Items))
 		}
-		klog.V(1).InfoS("Health check pod already exists", "pod", pod.Name)
+		klog.InfoS("Health check pod already exists", "pod", pod.Name)
 		return pod, nil
 	}
 

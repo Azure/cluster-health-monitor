@@ -140,7 +140,7 @@ func (r *CheckNodeHealthReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			klog.ErrorS(err, "Failed to add finalizer")
 			return ctrl.Result{}, err
 		}
-		klog.V(1).InfoS("Added finalizer, continuing with reconcile")
+		klog.InfoS("Added finalizer, continuing with reconcile")
 	}
 
 	// Check if already completed - if so, cleanup pod and skip
@@ -215,7 +215,7 @@ func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cn
 	}
 
 	// Other pod phases (Unknown, etc.)
-	klog.V(1).InfoS("Health check pod in unexpected phase", "phase", pod.Status.Phase)
+	klog.InfoS("Health check pod in unexpected phase", "phase", pod.Status.Phase)
 	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 }
 
@@ -434,7 +434,7 @@ func (r *CheckNodeHealthReconciler) handleCompletion(ctx context.Context, cnh *c
 		return ctrl.Result{}, err
 	}
 
-	klog.V(1).InfoS("CheckNodeHealth completion cleanup finished")
+	klog.InfoS("CheckNodeHealth completion cleanup finished")
 	return ctrl.Result{}, nil
 }
 
