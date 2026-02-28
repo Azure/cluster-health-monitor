@@ -269,16 +269,16 @@ func (r *CheckNodeHealthReconciler) markCompleted(ctx context.Context, cnh *chmv
 // when the CheckNodeHealth's Healthy condition is False.
 func (r *CheckNodeHealthReconciler) updateNodeCondition(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth) error {
 	// Find the Healthy condition from the CheckNodeHealth status
-	var healthyCondition *metav1.Condition
+	var chhHealthyCondition *metav1.Condition
 	for i := range cnh.Status.Conditions {
 		if cnh.Status.Conditions[i].Type == ConditionTypeHealthy {
-			healthyCondition = &cnh.Status.Conditions[i]
+			chhHealthyCondition = &cnh.Status.Conditions[i]
 			break
 		}
 	}
 
 	// Only emit node condition when Healthy=False
-	if healthyCondition == nil || healthyCondition.Status != metav1.ConditionFalse {
+	if chhHealthyCondition == nil || chhHealthyCondition.Status != metav1.ConditionFalse {
 		return nil
 	}
 
@@ -308,8 +308,8 @@ func (r *CheckNodeHealthReconciler) updateNodeCondition(ctx context.Context, cnh
 			}
 			node.Status.Conditions[i].Status = corev1.ConditionFalse
 			node.Status.Conditions[i].LastHeartbeatTime = now
-			node.Status.Conditions[i].Message = healthyCondition.Message
-			node.Status.Conditions[i].Reason = healthyCondition.Reason
+			node.Status.Conditions[i].Message = chhHealthyCondition.Message
+			node.Status.Conditions[i].Reason = chhHealthyCondition.Reason
 			found = true
 			break
 		}
@@ -321,8 +321,8 @@ func (r *CheckNodeHealthReconciler) updateNodeCondition(ctx context.Context, cnh
 			Status:             corev1.ConditionFalse,
 			LastTransitionTime: now,
 			LastHeartbeatTime:  now,
-			Message:            healthyCondition.Message,
-			Reason:             healthyCondition.Reason,
+			Message:            chhHealthyCondition.Message,
+			Reason:             chhHealthyCondition.Reason,
 		})
 	}
 
