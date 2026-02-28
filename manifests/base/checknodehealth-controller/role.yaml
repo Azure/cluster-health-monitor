@@ -62,11 +62,6 @@ rules:
   - get
   - list
   - watch
-  - ""
-  resources:
-  - nodes
-  verbs:
-  - get
 - apiGroups:
   - ""
   resources:
