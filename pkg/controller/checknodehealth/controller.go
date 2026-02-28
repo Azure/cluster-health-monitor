@@ -174,10 +174,10 @@ func (r *CheckNodeHealthReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, pod *corev1.Pod) (ctrl.Result, error) {
 	// Check if pod succeeded or failed (completed), or if it's timed out
-	isCompleted := pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed
+	isPodCompleted := pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed
 
-	if isCompleted || r.isPodTimeout(pod) {
-		if isCompleted {
+	if isPodCompleted || r.isPodTimeout(pod) {
+		if isPodCompleted {
 			klog.InfoS("Health check pod completed, marking as completed", "phase", pod.Status.Phase)
 		} else {
 			klog.InfoS("Health check pod timeout, marking as completed", "timeout", PodTimeout, "phase", pod.Status.Phase)
