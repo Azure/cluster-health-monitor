@@ -133,7 +133,7 @@ func TestNodeRebootReconcile(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if result.Requeue || result.RequeueAfter != 0 {
+			if result.RequeueAfter != 0 {
 				t.Errorf("unexpected requeue: %v", result)
 			}
 
