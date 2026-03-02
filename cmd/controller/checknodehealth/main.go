@@ -47,6 +47,7 @@ func main() {
 	var enableLeaderElection bool
 	var probeAddr string
 	var enableNodeRebootCheck bool
+	var enableHealthCheckRequest bool
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to")
@@ -55,6 +56,9 @@ func main() {
 			"Enabling this will ensure there is only one active controller manager.")
 	flag.BoolVar(&enableNodeRebootCheck, "enable-node-reboot-check", false,
 		"Enable the node reboot controller that automatically triggers CheckNodeHealth when a node reboot is detected.")
+	flag.BoolVar(&enableHealthCheckRequest, "enable-health-check-request", false,
+		"Enable the HealthCheckRequest controller that bridges HealthCheckRequest CRD to CheckNodeHealth. "+
+			"The HealthCheckRequest CRD must be installed in the cluster by the AKS health signal component.")
 
 	// Set up logging configuration with JSON format
 	logConfig := logsapi.NewLoggingConfiguration()
@@ -163,13 +167,18 @@ func main() {
 		klog.FlushAndExit(klog.ExitFlushTimeout, 1)
 	}
 
-	// Setup HealthCheckRequest controller
-	if err = (&healthcheckrequest.HealthCheckRequestReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
-		klog.ErrorS(err, "Unable to create controller", "controller", "HealthCheckRequest")
-		klog.FlushAndExit(klog.ExitFlushTimeout, 1)
+	// Setup HealthCheckRequest controller (opt-in)
+	// The HealthCheckRequest CRD is installed by another AKS component and may not
+	// be present in all clusters.
+	if enableHealthCheckRequest {
+		klog.InfoS("HealthCheckRequest controller is enabled")
+		if err = (&healthcheckrequest.HealthCheckRequestReconciler{
+			Client: mgr.GetClient(),
+			Scheme: mgr.GetScheme(),
+		}).SetupWithManager(mgr); err != nil {
+			klog.ErrorS(err, "Unable to create controller", "controller", "HealthCheckRequest")
+			klog.FlushAndExit(klog.ExitFlushTimeout, 1)
+		}
 	}
 
 	// Setup NodeReboot controller (opt-in)
