@@ -139,7 +139,7 @@ func TestReconcile(t *testing.T) {
 			},
 		},
 		{
-			name:                    "handles non-existent UpgradeNodeInProgress",
+			name:                    "handles non-existent HealthCheckRequest",
 			existingObjects:         []client.Object{},
 			reconcileName:           "non-existent",
 			expectedResult:          ctrl.Result{},
