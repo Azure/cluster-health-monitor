@@ -75,7 +75,8 @@ func (cb *NodeConditionCircuitBreaker) Allow() bool {
 				"openedAt", cb.openedAt,
 				"cooldown", cb.cooldown,
 			)
-			cb.reset()
+			cb.openedAt = nil
+			cb.consecutiveUnhealthy = nil
 			return true
 		}
 		klog.InfoS("Circuit breaker is open, blocking node condition update",
@@ -130,13 +131,6 @@ func (cb *NodeConditionCircuitBreaker) RecordHealthyNode() {
 		)
 		cb.consecutiveUnhealthy = nil
 	}
-}
-
-// reset clears the circuit breaker state back to closed.
-// Must be called with the mutex held.
-func (cb *NodeConditionCircuitBreaker) reset() {
-	cb.openedAt = nil
-	cb.consecutiveUnhealthy = nil
 }
 
 // pruneExpiredEvents returns events that are within the monitoring window,
