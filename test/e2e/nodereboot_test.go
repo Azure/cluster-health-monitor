@@ -72,7 +72,38 @@ var _ = Describe("NodeReboot Controller", Ordered, ContinueOnFailure, Label("nod
 		Expect(err).NotTo(HaveOccurred())
 		Expect(nodeList.Items).NotTo(BeEmpty())
 
+		By("Deleting any pre-existing boot-* CheckNodeHealth CRs")
+		cnhList := &chmv1alpha1.CheckNodeHealthList{}
+		err = k8sClient.List(ctx, cnhList)
+		Expect(err).NotTo(HaveOccurred())
+		for i := range cnhList.Items {
+			cnh := &cnhList.Items[i]
+			if len(cnh.Name) >= len("boot-") && cnh.Name[:len("boot-")] == "boot-" {
+				GinkgoWriter.Printf("Cleaning up pre-existing boot CNH: %s\n", cnh.Name)
+				err = deleteCheckNodeHealthCR(ctx, k8sClient, cnh.Name)
+				Expect(err).NotTo(HaveOccurred())
+			}
+		}
+
+		By("Waiting for pre-existing boot-* CRs to be fully deleted")
+		Eventually(func() int {
+			list := &chmv1alpha1.CheckNodeHealthList{}
+			if err := k8sClient.List(ctx, list); err != nil {
+				return -1
+			}
+			count := 0
+			for _, cnh := range list.Items {
+				if len(cnh.Name) >= len("boot-") && cnh.Name[:len("boot-")] == "boot-" {
+					count++
+				}
+			}
+			return count
+		}, "30s", "2s").Should(Equal(0), "Pre-existing boot-* CRs should be deleted")
+
 		By("Counting how many nodes are newer than the threshold")
+		// Re-fetch nodes to get up-to-date creation timestamps
+		nodeList, err = clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+		Expect(err).NotTo(HaveOccurred())
 		expectedNewNodes := 0
 		for _, node := range nodeList.Items {
 			age := time.Since(node.CreationTimestamp.Time)
@@ -83,22 +114,23 @@ var _ = Describe("NodeReboot Controller", Ordered, ContinueOnFailure, Label("nod
 		}
 		GinkgoWriter.Printf("Expecting %d new-node CheckNodeHealth CRs\n", expectedNewNodes)
 
-		By("Waiting for the controller to process all nodes")
-		Eventually(func() int {
-			cnhList := &chmv1alpha1.CheckNodeHealthList{}
-			if err := k8sClient.List(ctx, cnhList); err != nil {
+		By("Waiting to confirm the controller only creates CRs for nodes still within the threshold")
+		// Give the controller time to react, then verify
+		Consistently(func() int {
+			list := &chmv1alpha1.CheckNodeHealthList{}
+			if err := k8sClient.List(ctx, list); err != nil {
 				return -1
 			}
 			count := 0
-			for _, cnh := range cnhList.Items {
+			for _, cnh := range list.Items {
 				if len(cnh.Name) >= len("boot-") && cnh.Name[:len("boot-")] == "boot-" {
 					count++
 					GinkgoWriter.Printf("Found new-node CNH: %s (node: %s)\n", cnh.Name, cnh.Spec.NodeRef.Name)
 				}
 			}
 			return count
-		}, "60s", "2s").Should(Equal(expectedNewNodes),
-			"Only nodes newer than the threshold should have reboot-prefixed CheckNodeHealth CRs")
+		}, "20s", "2s").Should(Equal(expectedNewNodes),
+			"Only nodes newer than the threshold should have boot-prefixed CheckNodeHealth CRs")
 	})
 
 	It("should create CheckNodeHealth CR when bootID annotation is stale", func() {
