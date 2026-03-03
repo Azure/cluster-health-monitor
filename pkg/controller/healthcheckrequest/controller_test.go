@@ -148,7 +148,7 @@ func TestReconcile(t *testing.T) {
 			expectedCheckNodeHealth: 0,
 		},
 		{
-			name: "skips UpgradeNodeInProgress being deleted",
+			name: "skips HealthCheckRequest being deleted",
 			existingObjects: []client.Object{
 				&healthv1alpha1.HealthCheckRequest{
 					ObjectMeta: metav1.ObjectMeta{
