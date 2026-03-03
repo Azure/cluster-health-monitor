@@ -59,6 +59,10 @@ const (
 	ReasonCheckFailed       = "CheckFailed"
 	ReasonCheckUnknown      = "CheckUnknown"
 	ReasonPodStartupTimeout = "PodStartupTimeout"
+
+	// NodeConditionNodeHealthy is the condition type set on Node objects
+	// to report health status from CheckNodeHealth checks.
+	NodeConditionNodeHealthy corev1.NodeConditionType = "clusterhealthmonitor.azure.com/NodeHealthy"
 )
 
 var (
@@ -75,14 +79,19 @@ var (
 type CheckNodeHealthReconciler struct {
 	client.Client
 	Scheme              *runtime.Scheme
-	CheckerPodLabel     string // Label to identify health check pods
-	CheckerPodImage     string // Image for the health check pod
-	CheckerPodNamespace string // Namespace to create pods in
+	APIReader           client.Reader                // Direct API server reader (bypasses cache) for node operations
+	CheckerPodLabel     string                       // Label to identify health check pods
+	CheckerPodImage     string                       // Image for the health check pod
+	CheckerPodNamespace string                       // Namespace to create pods in
+	EnableNodeCondition bool                         // Whether to set NodeHealthy condition on the Node
+	CircuitBreaker      *NodeConditionCircuitBreaker // Circuit breaker for node condition updates
 }
 
 // +kubebuilder:rbac:groups=clusterhealthmonitor.azure.com,resources=checknodehealths,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=clusterhealthmonitor.azure.com,resources=checknodehealths/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;create;delete,namespace=kube-system
+// +kubebuilder:rbac:groups="",resources=nodes,verbs=get
+// +kubebuilder:rbac:groups="",resources=nodes/status,verbs=patch
 
 // SetupWithManager sets up the controller with the Manager
 func (r *CheckNodeHealthReconciler) SetupWithManager(mgr ctrl.Manager) error {
@@ -117,7 +126,7 @@ func (r *CheckNodeHealthReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	// Check if the CR has expired
 	if isExpired(cnh) {
 		klog.InfoS("CheckNodeHealth has expired, deleting", "name", cnh.Name, "CreationTimestamp", cnh.CreationTimestamp)
-		if err := r.Delete(ctx, cnh); err != nil {
+		if err := client.IgnoreNotFound(r.Delete(ctx, cnh)); err != nil {
 			klog.ErrorS(err, "Failed to delete expired CheckNodeHealth")
 			return ctrl.Result{}, err
 		}
@@ -131,7 +140,7 @@ func (r *CheckNodeHealthReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			klog.ErrorS(err, "Failed to add finalizer")
 			return ctrl.Result{}, err
 		}
-		klog.V(1).InfoS("Added finalizer, continuing with reconcile")
+		klog.InfoS("Added finalizer, continuing with reconcile")
 	}
 
 	// Check if already completed - if so, cleanup pod and skip
@@ -165,22 +174,37 @@ func (r *CheckNodeHealthReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, pod *corev1.Pod) (ctrl.Result, error) {
 	// Check if pod succeeded or failed (completed), or if it's timed out
-	isCompleted := pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed
+	isPodCompleted := pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed
 
-	if isCompleted || r.isPodTimeout(pod) {
-		if isCompleted {
+	if isPodCompleted || r.isPodTimeout(pod) {
+		if isPodCompleted {
 			klog.InfoS("Health check pod completed, marking as completed", "phase", pod.Status.Phase)
 		} else {
 			klog.InfoS("Health check pod timeout, marking as completed", "timeout", PodTimeout, "phase", pod.Status.Phase)
 		}
 
 		// Step 1: Mark as completed (determines health based on Results)
-		if err := r.markCompleted(ctx, cnh); err != nil {
+		healthyStatus, err := r.markCompleted(ctx, cnh)
+		if err != nil {
 			klog.ErrorS(err, "Failed to mark as completed")
 			return ctrl.Result{}, err
 		}
 
-		// Step 2: Delete the pod
+		// Step 2: Update node condition based on health status
+		if r.EnableNodeCondition {
+			if err := r.updateNodeCondition(ctx, cnh); err != nil {
+				klog.ErrorS(err, "Failed to update node condition, continuing with cleanup", "node", cnh.Spec.NodeRef.Name)
+			}
+
+			// Track consecutive unhealthy/healthy results for circuit breaker
+			if healthyStatus == metav1.ConditionFalse {
+				r.CircuitBreaker.RecordUnhealthyNode()
+			} else {
+				r.CircuitBreaker.RecordHealthyNode()
+			}
+		}
+
+		// Step 3: Delete the pod
 		if err := r.cleanupPod(ctx, cnh); err != nil {
 			klog.ErrorS(err, "Failed to cleanup pod, will retry")
 			return ctrl.Result{}, nil
@@ -191,7 +215,7 @@ func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cn
 	}
 
 	// Other pod phases (Unknown, etc.)
-	klog.V(1).InfoS("Health check pod in unexpected phase", "phase", pod.Status.Phase)
+	klog.InfoS("Health check pod in unexpected phase", "phase", pod.Status.Phase)
 	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 }
 
@@ -219,7 +243,7 @@ func (r *CheckNodeHealthReconciler) markStarted(ctx context.Context, cnh *chmv1a
 	return nil
 }
 
-func (r *CheckNodeHealthReconciler) markCompleted(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth) error {
+func (r *CheckNodeHealthReconciler) markCompleted(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth) (metav1.ConditionStatus, error) {
 	now := metav1.Now()
 	cnh.Status.FinishedAt = &now
 	healthyStatus, reason, message := r.determineHealthyCondition(cnh)
@@ -235,9 +259,78 @@ func (r *CheckNodeHealthReconciler) markCompleted(ctx context.Context, cnh *chmv
 
 	klog.InfoS("CheckNodeHealth Result", "name", cnh.Name, "nodeName", cnh.Spec.NodeRef.Name, "status", healthyStatus, "reason", reason, "message", message)
 	if err := r.Status().Update(ctx, cnh); err != nil {
-		return fmt.Errorf("failed to update status: %w", err)
+		return healthyStatus, fmt.Errorf("failed to update status: %w", err)
 	}
 
+	return healthyStatus, nil
+}
+
+// updateNodeCondition sets the clusterhealthmonitor.azure.com/NodeHealthy condition on the Node
+// when the CheckNodeHealth's Healthy condition is False.
+func (r *CheckNodeHealthReconciler) updateNodeCondition(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth) error {
+	// Find the Healthy condition from the CheckNodeHealth status
+	var chhHealthyCondition *metav1.Condition
+	for i := range cnh.Status.Conditions {
+		if cnh.Status.Conditions[i].Type == ConditionTypeHealthy {
+			chhHealthyCondition = &cnh.Status.Conditions[i]
+			break
+		}
+	}
+
+	// Only emit node condition when Healthy=False
+	if chhHealthyCondition == nil || chhHealthyCondition.Status != metav1.ConditionFalse {
+		return nil
+	}
+
+	// Check circuit breaker before setting the node condition
+	if !r.CircuitBreaker.Allow() {
+		klog.InfoS("Circuit breaker is open, skipping node condition update",
+			"node", cnh.Spec.NodeRef.Name,
+			"checkNodeHealth", cnh.Name,
+		)
+		return nil
+	}
+
+	nodeName := cnh.Spec.NodeRef.Name
+	node := &corev1.Node{}
+	if err := r.APIReader.Get(ctx, client.ObjectKey{Name: nodeName}, node); err != nil {
+		return fmt.Errorf("failed to get node %s: %w", nodeName, err)
+	}
+
+	patch := client.MergeFrom(node.DeepCopy())
+
+	now := metav1.Now()
+	found := false
+	for i, c := range node.Status.Conditions {
+		if c.Type == NodeConditionNodeHealthy {
+			if node.Status.Conditions[i].Status != corev1.ConditionFalse {
+				node.Status.Conditions[i].LastTransitionTime = now
+			}
+			node.Status.Conditions[i].Status = corev1.ConditionFalse
+			node.Status.Conditions[i].LastHeartbeatTime = now
+			node.Status.Conditions[i].Message = chhHealthyCondition.Message
+			node.Status.Conditions[i].Reason = chhHealthyCondition.Reason
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		node.Status.Conditions = append(node.Status.Conditions, corev1.NodeCondition{
+			Type:               NodeConditionNodeHealthy,
+			Status:             corev1.ConditionFalse,
+			LastTransitionTime: now,
+			LastHeartbeatTime:  now,
+			Message:            chhHealthyCondition.Message,
+			Reason:             chhHealthyCondition.Reason,
+		})
+	}
+
+	if err := r.Status().Patch(ctx, node, patch); err != nil {
+		return fmt.Errorf("failed to update node %s condition: %w", nodeName, err)
+	}
+
+	klog.InfoS("Updated node condition", "node", nodeName, "type", NodeConditionNodeHealthy, "status", corev1.ConditionFalse)
 	return nil
 }
 
@@ -341,7 +434,7 @@ func (r *CheckNodeHealthReconciler) handleCompletion(ctx context.Context, cnh *c
 		return ctrl.Result{}, err
 	}
 
-	klog.V(1).InfoS("CheckNodeHealth completion cleanup finished")
+	klog.InfoS("CheckNodeHealth completion cleanup finished")
 	return ctrl.Result{}, nil
 }
 
