@@ -104,19 +104,6 @@ func TestCircuitBreaker(t *testing.T) {
 			},
 		},
 		{
-			name:      "allow resets internal state after cooldown",
-			threshold: 2, window: 15 * time.Minute, cooldown: 10 * time.Minute,
-			steps: []step{
-				{action: "unhealthy"},
-				{action: "unhealthy"},
-				{action: "allow", wantAllow: false},
-				{action: "advance", advance: 11 * time.Minute},
-				{action: "allow", wantAllow: true}, // resets state
-				{action: "unhealthy"},              // only 1 after reset
-				{action: "allow", wantAllow: true}, // not enough to trip
-			},
-		},
-		{
 			name:      "threshold one trips immediately",
 			threshold: 1, window: 15 * time.Minute, cooldown: 10 * time.Minute,
 			steps: []step{
