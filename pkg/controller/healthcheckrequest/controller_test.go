@@ -70,7 +70,7 @@ func TestReconcile(t *testing.T) {
 		validateFunc            func(t *testing.T, c client.Client)
 	}{
 		{
-			name: "creates HealthSignal and CheckNodeHealth for new UpgradeNodeInProgress",
+			name: "creates HealthSignal and CheckNodeHealth for new HealthCheckRequest",
 			existingObjects: []client.Object{
 				&healthv1alpha1.HealthCheckRequest{
 					ObjectMeta: metav1.ObjectMeta{
