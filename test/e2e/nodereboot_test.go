@@ -66,15 +66,26 @@ var _ = Describe("NodeReboot Controller", Ordered, ContinueOnFailure, Label("nod
 		}
 	})
 
-	It("should create CheckNodeHealth CRs only for nodes newer than the threshold", func() {
-		By("Getting the list of nodes")
-		nodeList, err := clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
-		Expect(err).NotTo(HaveOccurred())
-		Expect(nodeList.Items).NotTo(BeEmpty())
+	It("should not create CheckNodeHealth CRs for nodes older than the threshold", func() {
+		By("Waiting until all nodes are older than the NewNodeThreshold")
+		Eventually(func() bool {
+			nodeList, err := clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+			if err != nil {
+				return false
+			}
+			for _, node := range nodeList.Items {
+				if time.Since(node.CreationTimestamp.Time) < nodecontroller.NewNodeThreshold {
+					GinkgoWriter.Printf("Node %s is still young (age: %s), waiting...\n",
+						node.Name, time.Since(node.CreationTimestamp.Time))
+					return false
+				}
+			}
+			return true
+		}, "10m", "30s").Should(BeTrue(), "Timed out waiting for all nodes to age past the threshold")
 
 		By("Deleting any pre-existing boot-* CheckNodeHealth CRs")
 		cnhList := &chmv1alpha1.CheckNodeHealthList{}
-		err = k8sClient.List(ctx, cnhList)
+		err := k8sClient.List(ctx, cnhList)
 		Expect(err).NotTo(HaveOccurred())
 		for i := range cnhList.Items {
 			cnh := &cnhList.Items[i]
@@ -100,37 +111,66 @@ var _ = Describe("NodeReboot Controller", Ordered, ContinueOnFailure, Label("nod
 			return count
 		}, "30s", "2s").Should(Equal(0), "Pre-existing boot-* CRs should be deleted")
 
-		By("Counting how many nodes are newer than the threshold")
-		// Re-fetch nodes to get up-to-date creation timestamps
-		nodeList, err = clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+		By("Removing bootID annotations from all nodes so the controller treats them as first-seen")
+		nodeList, err := clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 		Expect(err).NotTo(HaveOccurred())
-		expectedNewNodes := 0
 		for _, node := range nodeList.Items {
-			age := time.Since(node.CreationTimestamp.Time)
-			GinkgoWriter.Printf("Node %s age: %s\n", node.Name, age)
-			if age < nodecontroller.NewNodeThreshold {
-				expectedNewNodes++
+			if _, ok := node.Annotations[nodecontroller.AnnotationLastBootID]; ok {
+				delete(node.Annotations, nodecontroller.AnnotationLastBootID)
+				_, err = clientset.CoreV1().Nodes().Update(ctx, &node, metav1.UpdateOptions{})
+				Expect(err).NotTo(HaveOccurred())
+				GinkgoWriter.Printf("Removed bootID annotation from node %s\n", node.Name)
 			}
 		}
-		GinkgoWriter.Printf("Expecting %d new-node CheckNodeHealth CRs\n", expectedNewNodes)
 
-		By("Waiting to confirm the controller only creates CRs for nodes still within the threshold")
-		// Give the controller time to react, then verify
-		Consistently(func() int {
-			list := &chmv1alpha1.CheckNodeHealthList{}
-			if err := k8sClient.List(ctx, list); err != nil {
-				return -1
+		By("Restarting the checknodehealth-controller to trigger re-sync")
+		err = clientset.CoreV1().Pods(checkerNamespace).DeleteCollection(ctx,
+			metav1.DeleteOptions{},
+			metav1.ListOptions{LabelSelector: "app=checknodehealth-controller"},
+		)
+		Expect(err).NotTo(HaveOccurred())
+		GinkgoWriter.Println("Deleted checknodehealth-controller pod to trigger re-sync")
+
+		By("Waiting for the controller pod to come back")
+		Eventually(func() bool {
+			pods, err := clientset.CoreV1().Pods(checkerNamespace).List(ctx, metav1.ListOptions{
+				LabelSelector: "app=checknodehealth-controller",
+			})
+			if err != nil || len(pods.Items) == 0 {
+				return false
 			}
-			count := 0
-			for _, cnh := range list.Items {
-				if len(cnh.Name) >= len("boot-") && cnh.Name[:len("boot-")] == "boot-" {
-					count++
-					GinkgoWriter.Printf("Found new-node CNH: %s (node: %s)\n", cnh.Name, cnh.Spec.NodeRef.Name)
+			for _, pod := range pods.Items {
+				if pod.Status.Phase == "Running" && pod.DeletionTimestamp == nil {
+					return true
 				}
 			}
-			return count
-		}, "20s", "2s").Should(Equal(expectedNewNodes),
-			"Only nodes newer than the threshold should have boot-prefixed CheckNodeHealth CRs")
+			return false
+		}, "60s", "2s").Should(BeTrue(), "Controller pod did not restart within timeout")
+
+		By("Waiting for the controller to process all nodes (annotations set)")
+		Eventually(func() bool {
+			nodes, err := clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+			if err != nil {
+				return false
+			}
+			for _, node := range nodes.Items {
+				if _, ok := node.Annotations[nodecontroller.AnnotationLastBootID]; !ok {
+					return false
+				}
+			}
+			return true
+		}, "60s", "2s").Should(BeTrue(), "Controller should set bootID annotations on all nodes")
+
+		By("Verifying no boot-* CheckNodeHealth CRs were created for old nodes")
+		cnhList = &chmv1alpha1.CheckNodeHealthList{}
+		err = k8sClient.List(ctx, cnhList)
+		Expect(err).NotTo(HaveOccurred())
+		for _, cnh := range cnhList.Items {
+			if len(cnh.Name) >= len("boot-") && cnh.Name[:len("boot-")] == "boot-" {
+				Fail(fmt.Sprintf("Unexpected boot CR %s created for node %s which is older than the threshold",
+					cnh.Name, cnh.Spec.NodeRef.Name))
+			}
+		}
 	})
 
 	It("should create CheckNodeHealth CR when bootID annotation is stale", func() {
