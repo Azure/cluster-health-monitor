@@ -198,6 +198,14 @@ func (c *PodStartupChecker) check(ctx context.Context) (*checker.Result, error) 
 	// Calculate the pod startup duration. Round to the seconds place because that is the unit of the least precise measurement.
 	podStartupDuration := (podCreationToContainerRunningDuration - imagePullDuration).Round(time.Second)
 	if podStartupDuration >= c.config.SyntheticPodStartupTimeout {
+		klog.V(3).InfoS("Pod startup duration exceeded healthy threshold",
+			"checker", c.name,
+			"pod", synthPod.Name,
+			"podStartupDuration", podStartupDuration.String(),
+			"podCreationToContainerRunningDuration", podCreationToContainerRunningDuration.String(),
+			"imagePullDuration", imagePullDuration.String(),
+			"syntheticPodStartupTimeout", c.config.SyntheticPodStartupTimeout.String(),
+		)
 		return checker.Unhealthy(ErrCodePodStartupDurationExceeded, "pod exceeded the maximum healthy startup duration"), nil
 	}
 
