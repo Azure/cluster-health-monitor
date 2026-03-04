@@ -10,6 +10,7 @@ import (
 
 	"github.com/Azure/cluster-health-monitor/pkg/checker"
 	"github.com/Azure/cluster-health-monitor/pkg/config"
+	retry "github.com/avast/retry-go/v4"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -188,6 +189,68 @@ func TestPodStartupChecker_check(t *testing.T) {
 				g.Expect(result.Detail.Code).To(Equal(ErrCodeRequestFailed))
 				g.Expect(result.Detail.Message).To(ContainSubstring("TCP request to synthetic pod failed"))
 				g.Expect(fakeDynamicClient.Actions()).To(HaveLen(0)) // No dynamic client actions should be taken
+			},
+		},
+		{
+			name: "healthy result - transient TCP failures recovered by retry",
+			mutators: []scenarioMutator{
+				func(s *testScenario) {
+					calls := 0
+					s.dialer = &mockDialer{dialFunc: func(ctx context.Context, network, address string) (net.Conn, error) {
+						calls++
+						if calls < 2 {
+							return nil, errors.New("temporary TCP error")
+						}
+						conn, _ := net.Pipe()
+						return conn, nil
+					}}
+				},
+			},
+			validateResult: func(g *WithT, result *checker.Result, err error, fakeDynamicClient *dynamicfake.FakeDynamicClient) {
+				g.Expect(err).ToNot(HaveOccurred())
+				g.Expect(result).ToNot(BeNil())
+				g.Expect(result.Status).To(Equal(checker.StatusHealthy))
+				g.Expect(fakeDynamicClient.Actions()).To(HaveLen(0))
+			},
+		},
+		{
+			name: "unhealthy result - TCP timeout only when all attempts timed out",
+			mutators: []scenarioMutator{
+				func(s *testScenario) {
+					s.dialer = &mockDialer{dialFunc: func(ctx context.Context, network, address string) (net.Conn, error) {
+						return nil, context.DeadlineExceeded
+					}}
+				},
+			},
+			validateResult: func(g *WithT, result *checker.Result, err error, fakeDynamicClient *dynamicfake.FakeDynamicClient) {
+				g.Expect(err).ToNot(HaveOccurred())
+				g.Expect(result).ToNot(BeNil())
+				g.Expect(result.Status).To(Equal(checker.StatusUnhealthy))
+				g.Expect(result.Detail.Code).To(Equal(ErrCodeRequestTimeout))
+				g.Expect(fakeDynamicClient.Actions()).To(HaveLen(0))
+			},
+		},
+		{
+			name: "unhealthy result - mixed TCP errors reported as request failed",
+			mutators: []scenarioMutator{
+				func(s *testScenario) {
+					calls := 0
+					s.dialer = &mockDialer{dialFunc: func(ctx context.Context, network, address string) (net.Conn, error) {
+						calls++
+						if calls == 1 {
+							return nil, context.DeadlineExceeded
+						}
+						return nil, errors.New("connection refused")
+					}}
+				},
+			},
+			validateResult: func(g *WithT, result *checker.Result, err error, fakeDynamicClient *dynamicfake.FakeDynamicClient) {
+				g.Expect(err).ToNot(HaveOccurred())
+				g.Expect(result).ToNot(BeNil())
+				g.Expect(result.Status).To(Equal(checker.StatusUnhealthy))
+				g.Expect(result.Detail.Code).To(Equal(ErrCodeRequestFailed))
+				g.Expect(result.Detail.Message).To(ContainSubstring("TCP request to synthetic pod failed"))
+				g.Expect(fakeDynamicClient.Actions()).To(HaveLen(0))
 			},
 		},
 		{
@@ -484,6 +547,9 @@ func TestPodStartupChecker_check(t *testing.T) {
 					SyntheticPodLabelKey:       syntheticPodLabelKey,
 					SyntheticPodStartupTimeout: 5 * time.Second,
 					MaxSyntheticPods:           maxSyntheticPods,
+					TCPTimeout:                 1 * time.Second,
+					TCPMaxRetries:              3,
+					TCPRetryInterval:           1 * time.Millisecond,
 					EnableNodeProvisioningTest: scenario.enableNodeProvisioning,
 					EnabledCSIs:                scenario.enabledCSITests,
 				},
@@ -859,6 +925,163 @@ func TestPodStartupChecker_makeTCPRequest(t *testing.T) {
 
 			err := checker.createTCPConnection(ctx, tt.podIP)
 			tt.validateRes(g, err)
+		})
+	}
+}
+
+func TestPodStartupChecker_createTCPConnectionWithRetry(t *testing.T) {
+	tests := []struct {
+		name        string
+		dialer      func(*int) Dialer
+		ctx         func() (context.Context, context.CancelFunc)
+		validateRes func(g *WithT, err error, calls int)
+	}{
+		{
+			name: "successful first try",
+			dialer: func(calls *int) Dialer {
+				return &mockDialer{dialFunc: func(ctx context.Context, network, address string) (net.Conn, error) {
+					(*calls)++
+					conn, _ := net.Pipe()
+					return conn, nil
+				}}
+			},
+			ctx: func() (context.Context, context.CancelFunc) {
+				return context.WithTimeout(context.Background(), 1*time.Second)
+			},
+			validateRes: func(g *WithT, err error, calls int) {
+				g.Expect(err).ToNot(HaveOccurred())
+				g.Expect(calls).To(Equal(1))
+			},
+		},
+		{
+			name: "successful after retries",
+			dialer: func(calls *int) Dialer {
+				return &mockDialer{dialFunc: func(ctx context.Context, network, address string) (net.Conn, error) {
+					(*calls)++
+					if *calls < 2 {
+						return nil, errors.New("temporary TCP error")
+					}
+					conn, _ := net.Pipe()
+					return conn, nil
+				}}
+			},
+			ctx: func() (context.Context, context.CancelFunc) {
+				return context.WithTimeout(context.Background(), 1*time.Second)
+			},
+			validateRes: func(g *WithT, err error, calls int) {
+				g.Expect(err).ToNot(HaveOccurred())
+				g.Expect(calls).To(Equal(2))
+			},
+		},
+		{
+			name: "fails after max retries",
+			dialer: func(calls *int) Dialer {
+				return &mockDialer{dialFunc: func(ctx context.Context, network, address string) (net.Conn, error) {
+					(*calls)++
+					return nil, errors.New("temporary TCP error")
+				}}
+			},
+			ctx: func() (context.Context, context.CancelFunc) {
+				return context.WithTimeout(context.Background(), 1*time.Second)
+			},
+			validateRes: func(g *WithT, err error, calls int) {
+				g.Expect(err).To(HaveOccurred())
+				var retryErr retry.Error
+				g.Expect(errors.As(err, &retryErr)).To(BeTrue())
+				g.Expect(retryErr).To(HaveLen(4))
+				g.Expect(retryErr[0].Error()).To(ContainSubstring("attempt 1:"))
+				g.Expect(retryErr[1].Error()).To(ContainSubstring("attempt 2:"))
+				g.Expect(retryErr[2].Error()).To(ContainSubstring("attempt 3:"))
+				g.Expect(retryErr[3].Error()).To(ContainSubstring("attempt 4:"))
+				// Although calls seems redundant given we check the length of the retry error, this is used in other test cases that don't
+				// return an error to make sure that there actually were retries attempted.
+				g.Expect(calls).To(Equal(4))
+			},
+		},
+		{
+			name: "stops on context timeout",
+			dialer: func(calls *int) Dialer {
+				return &mockDialer{dialFunc: func(ctx context.Context, network, address string) (net.Conn, error) {
+					(*calls)++
+					return nil, errors.New("temporary TCP error")
+				}}
+			},
+			ctx: func() (context.Context, context.CancelFunc) {
+				return context.WithTimeout(context.Background(), 1*time.Millisecond)
+			},
+			validateRes: func(g *WithT, err error, calls int) {
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(errors.Is(err, context.DeadlineExceeded)).To(BeTrue())
+				g.Expect(calls).To(BeNumerically(">=", 1))
+				g.Expect(calls).To(BeNumerically("<=", 4))
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+			calls := 0
+			ctx, cancel := tt.ctx()
+			defer cancel()
+
+			checker := &PodStartupChecker{
+				dialer: tt.dialer(&calls),
+				config: &config.PodStartupConfig{
+					TCPMaxRetries:    3,
+					TCPRetryInterval: 1 * time.Millisecond,
+				},
+			}
+
+			err := checker.createTCPConnectionWithRetry(ctx, "10.0.0.0")
+			tt.validateRes(g, err, calls)
+		})
+	}
+}
+
+func TestAllErrorsAreDeadlineExceeded(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			name: "nil error",
+			err:  nil,
+			want: false,
+		},
+		{
+			name: "all deadline exceeded errors",
+			err: retry.Error{
+				fmt.Errorf("attempt 1: %w", context.DeadlineExceeded),
+				fmt.Errorf("attempt 2: %w", context.DeadlineExceeded),
+			},
+			want: true,
+		},
+		{
+			name: "mixed errors",
+			err: retry.Error{
+				fmt.Errorf("attempt 1: %w", context.DeadlineExceeded),
+				errors.New("connection refused"),
+			},
+			want: false,
+		},
+		{
+			name: "single deadline exceeded error",
+			err:  context.DeadlineExceeded,
+			want: true,
+		},
+		{
+			name: "single non-timeout error",
+			err:  errors.New("connection refused"),
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			g := NewWithT(t)
+			g.Expect(allErrorsAreDeadlineExceeded(tt.err)).To(Equal(tt.want))
 		})
 	}
 }

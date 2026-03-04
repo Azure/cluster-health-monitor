@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	retry "github.com/avast/retry-go/v4"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -215,9 +216,11 @@ func (c *PodStartupChecker) check(ctx context.Context) (*checker.Result, error) 
 		return nil, fmt.Errorf("failed to get synthetic pod IP: %w", err)
 	}
 
-	err = c.createTCPConnection(ctx, podIP)
+	err = c.createTCPConnectionWithRetry(ctx, podIP)
 	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
+		// Return ErrCodeRequestTimeout only if every attempt times out. This is to avoid hiding potential underlying issues that may be
+		// contributing to the timeout.
+		if allErrorsAreDeadlineExceeded(err) {
 			return checker.Unhealthy(ErrCodeRequestTimeout, "TCP request to synthetic pod timed out"), nil
 		}
 		return checker.Unhealthy(ErrCodeRequestFailed, fmt.Sprintf("TCP request to synthetic pod failed: %s", err)), nil
@@ -325,4 +328,49 @@ func (c *PodStartupChecker) createTCPConnection(ctx context.Context, podIP strin
 	}()
 
 	return nil
+}
+
+func (c *PodStartupChecker) createTCPConnectionWithRetry(ctx context.Context, podIP string) error {
+	maxAttempts := c.config.TCPMaxRetries + 1
+	// start attempt at 1 to make the error messages clearer
+	attempt := 1
+	return retry.Do(
+		func() error {
+			if err := c.createTCPConnection(ctx, podIP); err == nil {
+				return nil
+			} else {
+				wrappedErr := fmt.Errorf("attempt %d: %w", attempt, err)
+				attempt++
+				return wrappedErr
+			}
+		},
+		retry.Attempts(uint(maxAttempts)),
+		retry.Delay(c.config.TCPRetryInterval),
+		retry.DelayType(retry.FixedDelay),
+		retry.Context(ctx),
+		retry.LastErrorOnly(false),
+	)
+}
+
+func allErrorsAreDeadlineExceeded(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	var retryErr retry.Error
+	if !errors.As(err, &retryErr) {
+		return errors.Is(err, context.DeadlineExceeded)
+	}
+
+	if len(retryErr) == 0 {
+		return false
+	}
+
+	for _, retryAttemptErr := range retryErr {
+		if !errors.Is(retryAttemptErr, context.DeadlineExceeded) {
+			return false
+		}
+	}
+
+	return true
 }
