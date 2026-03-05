@@ -7,9 +7,8 @@ import (
 	"time"
 
 	healthv1alpha1 "github.com/Azure/aks-health-signal/api/health/v1alpha1"
-	upgradev1alpha1 "github.com/Azure/aks-health-signal/api/upgrade/v1alpha1"
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
-	"github.com/Azure/cluster-health-monitor/pkg/controller/upgradenodeinprogress"
+	"github.com/Azure/cluster-health-monitor/pkg/controller/healthcheckrequest"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -18,37 +17,36 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// Helper functions for UpgradeNodeInProgress CR operations
-func createUpgradeNodeInProgressCR(ctx context.Context, k8sClient client.Client, name, nodeName string) error {
-	unip := &upgradev1alpha1.UpgradeNodeInProgress{
+// Helper functions for HealthCheckRequest CR operations
+func createHealthCheckRequestCR(ctx context.Context, k8sClient client.Client, name, nodeName string) error {
+	hcr := &healthv1alpha1.HealthCheckRequest{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name,
 		},
-		Spec: upgradev1alpha1.UpgradeNodeInProgressSpec{
-			NodeRef: upgradev1alpha1.NodeReference{
-				Name: nodeName,
-			},
+		Spec: healthv1alpha1.HealthCheckRequestSpec{
+			Scope:     healthv1alpha1.HealthCheckRequestScopeNode,
+			TargetRef: &healthv1alpha1.TargetRef{Name: nodeName},
 		},
 	}
-	return k8sClient.Create(ctx, unip)
+	return k8sClient.Create(ctx, hcr)
 }
 
-func deleteUpgradeNodeInProgressCR(ctx context.Context, k8sClient client.Client, name string) error {
-	unip := &upgradev1alpha1.UpgradeNodeInProgress{
+func deleteHealthCheckRequestCR(ctx context.Context, k8sClient client.Client, name string) error {
+	hcr := &healthv1alpha1.HealthCheckRequest{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name,
 		},
 	}
-	err := k8sClient.Delete(ctx, unip)
+	err := k8sClient.Delete(ctx, hcr)
 	if apierrors.IsNotFound(err) {
 		return nil
 	}
 	return err
 }
 
-func upgradeNodeInProgressCRExists(ctx context.Context, k8sClient client.Client, name string) bool {
-	unip := &upgradev1alpha1.UpgradeNodeInProgress{}
-	err := k8sClient.Get(ctx, client.ObjectKey{Name: name}, unip)
+func healthCheckRequestCRExists(ctx context.Context, k8sClient client.Client, name string) bool {
+	hcr := &healthv1alpha1.HealthCheckRequest{}
+	err := k8sClient.Get(ctx, client.ObjectKey{Name: name}, hcr)
 	return err == nil
 }
 
@@ -68,7 +66,7 @@ func healthSignalCRExists(ctx context.Context, k8sClient client.Client, name str
 	return err == nil
 }
 
-var _ = Describe("UpgradeNodeInProgress Controller", Ordered, ContinueOnFailure, func() {
+var _ = Describe("HealthCheckRequest Controller", Ordered, ContinueOnFailure, func() {
 	var (
 		ctx          context.Context
 		k8sClient    client.Client
@@ -80,8 +78,6 @@ var _ = Describe("UpgradeNodeInProgress Controller", Ordered, ContinueOnFailure,
 
 		// Register CRD schemes
 		err := chmv1alpha1.AddToScheme(scheme.Scheme)
-		Expect(err).NotTo(HaveOccurred())
-		err = upgradev1alpha1.AddToScheme(scheme.Scheme)
 		Expect(err).NotTo(HaveOccurred())
 		err = healthv1alpha1.AddToScheme(scheme.Scheme)
 		Expect(err).NotTo(HaveOccurred())
@@ -127,7 +123,7 @@ var _ = Describe("UpgradeNodeInProgress Controller", Ordered, ContinueOnFailure,
 			}
 		}
 		Expect(testNodeName).NotTo(BeEmpty(), "No node found that does not run CoreDNS")
-		GinkgoWriter.Printf("Using node %s for UpgradeNodeInProgress tests\n", testNodeName)
+		GinkgoWriter.Printf("Using node %s for HealthCheckRequest tests\n", testNodeName)
 	})
 
 	var (
@@ -136,19 +132,19 @@ var _ = Describe("UpgradeNodeInProgress Controller", Ordered, ContinueOnFailure,
 
 	AfterEach(func() {
 		if unipName != "" {
-			By("Cleaning up UpgradeNodeInProgress CR")
-			err := deleteUpgradeNodeInProgressCR(ctx, k8sClient, unipName)
+			By("Cleaning up HealthCheckRequest CR")
+			err := deleteHealthCheckRequestCR(ctx, k8sClient, unipName)
 			if err != nil {
-				GinkgoWriter.Printf("Warning: Failed to delete UpgradeNodeInProgress %s: %v\n", unipName, err)
+				GinkgoWriter.Printf("Warning: Failed to delete HealthCheckRequest %s: %v\n", unipName, err)
 			}
 
 			// Wait for CR to be deleted (and cascading deletion of HealthSignal and CheckNodeHealth)
 			Eventually(func() bool {
-				return !upgradeNodeInProgressCRExists(ctx, k8sClient, unipName)
-			}, "60s", "1s").Should(BeTrue(), "UpgradeNodeInProgress CR was not deleted within timeout")
+				return !healthCheckRequestCRExists(ctx, k8sClient, unipName)
+			}, "60s", "1s").Should(BeTrue(), "HealthCheckRequest CR was not deleted within timeout")
 
 			// Also verify HealthSignal is deleted (garbage collected)
-			expectedHSName := strings.ToLower(fmt.Sprintf("%s-%s", unipName, upgradenodeinprogress.HealthSignalSource))
+			expectedHSName := strings.ToLower(fmt.Sprintf("%s-%s", unipName, healthcheckrequest.HealthSignalSource))
 			Eventually(func() bool {
 				return !healthSignalCRExists(ctx, k8sClient, expectedHSName)
 			}, "30s", "1s").Should(BeTrue(), "HealthSignal CR was not garbage collected within timeout")
@@ -158,13 +154,13 @@ var _ = Describe("UpgradeNodeInProgress Controller", Ordered, ContinueOnFailure,
 	})
 
 	It("should create HealthSignal and CheckNodeHealth, then sync status when completed", func() {
-		By("Creating an UpgradeNodeInProgress CR")
+		By("Creating a HealthCheckRequest CR")
 		unipName = fmt.Sprintf("test-unip-%d", time.Now().Unix())
-		err := createUpgradeNodeInProgressCR(ctx, k8sClient, unipName, testNodeName)
+		err := createHealthCheckRequestCR(ctx, k8sClient, unipName, testNodeName)
 		Expect(err).NotTo(HaveOccurred())
-		GinkgoWriter.Printf("Created UpgradeNodeInProgress CR: %s for node: %s\n", unipName, testNodeName)
+		GinkgoWriter.Printf("Created HealthCheckRequest CR: %s for node: %s\n", unipName, testNodeName)
 
-		expectedHSName := strings.ToLower(fmt.Sprintf("%s-%s", unipName, upgradenodeinprogress.HealthSignalSource))
+		expectedHSName := strings.ToLower(fmt.Sprintf("%s-%s", unipName, healthcheckrequest.HealthSignalSource))
 
 		By("Verifying HealthSignal is created with correct owner reference")
 		var hs *healthv1alpha1.HealthSignal
@@ -174,13 +170,12 @@ var _ = Describe("UpgradeNodeInProgress Controller", Ordered, ContinueOnFailure,
 		}, "30s", "2s").Should(BeTrue(), "HealthSignal was not created within timeout")
 
 		// Verify HealthSignal spec
-		Expect(hs.Spec.Source.Name).To(Equal(upgradenodeinprogress.HealthSignalSource))
 		Expect(hs.Spec.Type).To(Equal(healthv1alpha1.NodeHealth))
-		Expect(hs.Spec.Target.Name).To(Equal(testNodeName))
+		Expect(hs.Spec.TargetRef.Name).To(Equal(testNodeName))
 
 		// Verify owner reference
 		Expect(hs.OwnerReferences).To(HaveLen(1))
-		Expect(hs.OwnerReferences[0].Kind).To(Equal("UpgradeNodeInProgress"))
+		Expect(hs.OwnerReferences[0].Kind).To(Equal("HealthCheckRequest"))
 		Expect(hs.OwnerReferences[0].Name).To(Equal(unipName))
 
 		By("Verifying CheckNodeHealth is created with correct owner reference to HealthSignal")
@@ -232,15 +227,15 @@ var _ = Describe("UpgradeNodeInProgress Controller", Ordered, ContinueOnFailure,
 
 		GinkgoWriter.Printf("HealthSignal %s completed with Healthy=%s\n", expectedHSName, healthyCondition.Status)
 
-		By("Deleting the UpgradeNodeInProgress CR")
-		err = deleteUpgradeNodeInProgressCR(ctx, k8sClient, unipName)
+		By("Deleting the HealthCheckRequest CR")
+		err = deleteHealthCheckRequestCR(ctx, k8sClient, unipName)
 		Expect(err).NotTo(HaveOccurred())
-		GinkgoWriter.Printf("Deleted UpgradeNodeInProgress CR: %s\n", unipName)
+		GinkgoWriter.Printf("Deleted HealthCheckRequest CR: %s\n", unipName)
 
-		By("Verifying UpgradeNodeInProgress is deleted")
+		By("Verifying HealthCheckRequest is deleted")
 		Eventually(func() bool {
-			return !upgradeNodeInProgressCRExists(ctx, k8sClient, unipName)
-		}, "30s", "1s").Should(BeTrue(), "UpgradeNodeInProgress CR was not deleted within timeout")
+			return !healthCheckRequestCRExists(ctx, k8sClient, unipName)
+		}, "30s", "1s").Should(BeTrue(), "HealthCheckRequest CR was not deleted within timeout")
 
 		By("Verifying HealthSignal is garbage collected")
 		Eventually(func() bool {

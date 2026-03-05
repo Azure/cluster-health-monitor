@@ -21,11 +21,10 @@ import (
 	ctrlmetricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	healthv1alpha1 "github.com/Azure/aks-health-signal/api/health/v1alpha1"
-	upgradev1alpha1 "github.com/Azure/aks-health-signal/api/upgrade/v1alpha1"
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
 	"github.com/Azure/cluster-health-monitor/pkg/controller/checknodehealth"
+	"github.com/Azure/cluster-health-monitor/pkg/controller/healthcheckrequest"
 	nodecontroller "github.com/Azure/cluster-health-monitor/pkg/controller/node"
-	"github.com/Azure/cluster-health-monitor/pkg/controller/upgradenodeinprogress"
 	"github.com/spf13/pflag"
 )
 
@@ -36,7 +35,6 @@ var (
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(chmv1alpha1.AddToScheme(scheme))
-	utilruntime.Must(upgradev1alpha1.AddToScheme(scheme))
 	utilruntime.Must(healthv1alpha1.AddToScheme(scheme))
 }
 
@@ -49,6 +47,7 @@ func main() {
 	var enableLeaderElection bool
 	var probeAddr string
 	var enableNodeRebootCheck bool
+	var enableHealthCheckRequest bool
 	var enableNodeCondition bool
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to")
@@ -58,6 +57,9 @@ func main() {
 			"Enabling this will ensure there is only one active controller manager.")
 	flag.BoolVar(&enableNodeRebootCheck, "enable-node-reboot-check", false,
 		"Enable the node reboot controller that automatically triggers CheckNodeHealth when a node reboot is detected.")
+	flag.BoolVar(&enableHealthCheckRequest, "enable-health-check-request", false,
+		"Enable the HealthCheckRequest controller that bridges HealthCheckRequest CRD to CheckNodeHealth. "+
+			"The HealthCheckRequest CRD must be installed in the cluster by the AKS health signal component.")
 	flag.BoolVar(&enableNodeCondition, "enable-node-condition", false,
 		"Enable setting the NodeHealthy condition on Node objects when health checks fail.")
 
@@ -185,13 +187,18 @@ func main() {
 		klog.FlushAndExit(klog.ExitFlushTimeout, 1)
 	}
 
-	// Setup UpgradeNodeInProgress controller
-	if err = (&upgradenodeinprogress.UpgradeNodeInProgressReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
-	}).SetupWithManager(mgr); err != nil {
-		klog.ErrorS(err, "Unable to create controller", "controller", "UpgradeNodeInProgress")
-		klog.FlushAndExit(klog.ExitFlushTimeout, 1)
+	// Setup HealthCheckRequest controller (opt-in)
+	// The HealthCheckRequest CRD is installed by another AKS component and may not
+	// be present in all clusters.
+	if enableHealthCheckRequest {
+		klog.InfoS("HealthCheckRequest controller is enabled")
+		if err = (&healthcheckrequest.HealthCheckRequestReconciler{
+			Client: mgr.GetClient(),
+			Scheme: mgr.GetScheme(),
+		}).SetupWithManager(mgr); err != nil {
+			klog.ErrorS(err, "Unable to create controller", "controller", "HealthCheckRequest")
+			klog.FlushAndExit(klog.ExitFlushTimeout, 1)
+		}
 	}
 
 	// Setup NodeReboot controller (opt-in)

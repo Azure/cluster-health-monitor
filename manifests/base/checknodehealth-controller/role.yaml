@@ -15,6 +15,12 @@ rules:
   - update
   - watch
 - apiGroups:
+  - ""
+  resources:
+  - nodes/status
+  verbs:
+  - patch
+- apiGroups:
   - clusterhealthmonitor.azure.com
   resources:
   - checknodehealths
@@ -37,6 +43,14 @@ rules:
 - apiGroups:
   - health.aks.io
   resources:
+  - healthcheckrequests
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - health.aks.io
+  resources:
   - healthsignals
   verbs:
   - create
@@ -54,20 +68,6 @@ rules:
   - get
   - patch
   - update
-- apiGroups:
-  - upgrade.aks.io
-  resources:
-  - upgradenodeinprogresses
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - ""
-  resources:
-  - nodes/status
-  verbs:
-  - patch
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
