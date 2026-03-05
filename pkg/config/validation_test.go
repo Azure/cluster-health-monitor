@@ -29,6 +29,8 @@ func TestConfigValidate_Valid(t *testing.T) {
 					SyntheticPodStartupTimeout: 5 * time.Second,
 					MaxSyntheticPods:           10,
 					TCPTimeout:                 2 * time.Second,
+					TCPMaxRetries:              3,
+					TCPRetryInterval:           500 * time.Millisecond,
 				},
 			},
 		},
@@ -123,16 +125,35 @@ func TestPodStartupConfig_Validate(t *testing.T) {
 			},
 		},
 		{
-			name: "timeout less than or equal to combined pod startup timeout and tcp timeout",
+			name: "timeout less than or equal to combined pod startup timeout and tcp connectivity budget",
 			mutateConfig: func(cfg *CheckerConfig) *CheckerConfig {
 				cfg.Timeout = 3 * time.Second
 				cfg.PodStartupConfig.SyntheticPodStartupTimeout = 2 * time.Second
 				cfg.PodStartupConfig.TCPTimeout = 2 * time.Second
+				cfg.PodStartupConfig.TCPMaxRetries = 1
+				cfg.PodStartupConfig.TCPRetryInterval = 1 * time.Second
+				// tcpConnectivityBudget = (2 * 2s) + (1 * 1s) = 5s
 				return cfg
 			},
 			validateRes: func(g *WithT, err error) {
 				g.Expect(err).To(HaveOccurred())
-				g.Expect(err.Error()).To(ContainSubstring("checker timeout must be greater than the combined synthetic pod startup timeout and TCP timeout"))
+				g.Expect(err.Error()).To(ContainSubstring("checker timeout must be greater than the combined synthetic pod startup timeout and TCP connectivity budget"))
+			},
+		},
+		{
+			name: "timeout less than or equal to combined pod startup timeout and tcp connectivity budget",
+			mutateConfig: func(cfg *CheckerConfig) *CheckerConfig {
+				cfg.Timeout = 8 * time.Second
+				cfg.PodStartupConfig.SyntheticPodStartupTimeout = 3 * time.Second
+				cfg.PodStartupConfig.TCPTimeout = 2 * time.Second
+				cfg.PodStartupConfig.TCPMaxRetries = 2
+				cfg.PodStartupConfig.TCPRetryInterval = 1 * time.Second
+				// tcpConnectivityBudget = (2 * 2s) + (1 * 1s) = 5s, podStartup + tcpConnectivityBudget = 8s, so timeout must fail when equal.
+				return cfg
+			},
+			validateRes: func(g *WithT, err error) {
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(err.Error()).To(ContainSubstring("checker timeout must be greater than the combined synthetic pod startup timeout and TCP connectivity budget"))
 			},
 		},
 		{
@@ -155,6 +176,74 @@ func TestPodStartupConfig_Validate(t *testing.T) {
 			validateRes: func(g *WithT, err error) {
 				g.Expect(err).To(HaveOccurred())
 				g.Expect(err.Error()).To(ContainSubstring("TCP timeout must be greater than 0"))
+			},
+		},
+		{
+			name: "tcp timeout is negative",
+			mutateConfig: func(cfg *CheckerConfig) *CheckerConfig {
+				cfg.PodStartupConfig.TCPTimeout = -1 * time.Second
+				return cfg
+			},
+			validateRes: func(g *WithT, err error) {
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(err.Error()).To(ContainSubstring("TCP timeout must be greater than 0"))
+			},
+		},
+		{
+			name: "tcp retry attempts is zero and retry interval is zero",
+			mutateConfig: func(cfg *CheckerConfig) *CheckerConfig {
+				cfg.PodStartupConfig.TCPMaxRetries = 0
+				cfg.PodStartupConfig.TCPRetryInterval = 0
+				return cfg
+			},
+			validateRes: func(g *WithT, err error) {
+				g.Expect(err).ToNot(HaveOccurred())
+			},
+		},
+		{
+			name: "tcp retry attempts is negative",
+			mutateConfig: func(cfg *CheckerConfig) *CheckerConfig {
+				cfg.PodStartupConfig.TCPMaxRetries = -1
+				return cfg
+			},
+			validateRes: func(g *WithT, err error) {
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(err.Error()).To(ContainSubstring("TCP retry attempts must be 0 or greater"))
+			},
+		},
+		{
+			name: "tcp retry attempts is zero and retry interval is non-zero",
+			mutateConfig: func(cfg *CheckerConfig) *CheckerConfig {
+				cfg.PodStartupConfig.TCPMaxRetries = 0
+				cfg.PodStartupConfig.TCPRetryInterval = 1 * time.Millisecond
+				return cfg
+			},
+			validateRes: func(g *WithT, err error) {
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(err.Error()).To(ContainSubstring("TCP retry interval must be 0 when TCP max retries is 0"))
+			},
+		},
+		{
+			name: "tcp retry attempts is greater than 0 and retry interval is zero",
+			mutateConfig: func(cfg *CheckerConfig) *CheckerConfig {
+				cfg.PodStartupConfig.TCPMaxRetries = 1
+				cfg.PodStartupConfig.TCPRetryInterval = 0
+				return cfg
+			},
+			validateRes: func(g *WithT, err error) {
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(err.Error()).To(ContainSubstring("TCP retry interval must be greater than 0 when TCP max retries is greater than 0"))
+			},
+		},
+		{
+			name: "tcp retry interval is negative",
+			mutateConfig: func(cfg *CheckerConfig) *CheckerConfig {
+				cfg.PodStartupConfig.TCPRetryInterval = -1 * time.Millisecond
+				return cfg
+			},
+			validateRes: func(g *WithT, err error) {
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(err.Error()).To(ContainSubstring("TCP retry interval must be 0 or greater"))
 			},
 		},
 		{
@@ -184,7 +273,9 @@ func TestPodStartupConfig_Validate(t *testing.T) {
 					SyntheticPodLabelKey:       "cluster-health-monitor/checker-name",
 					SyntheticPodStartupTimeout: 5 * time.Second,
 					MaxSyntheticPods:           3,
-					TCPTimeout:                 2 * time.Second,
+					TCPTimeout:                 1 * time.Second,
+					TCPMaxRetries:              1,
+					TCPRetryInterval:           1 * time.Second,
 				},
 			}
 

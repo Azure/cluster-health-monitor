@@ -115,19 +115,39 @@ func (c *PodStartupConfig) validate(checkerConfigTimeout time.Duration) error {
 		errs = append(errs, fmt.Errorf("invalid synthetic pod label key: value='%s', error='%s'", c.SyntheticPodLabelKey, labelErr))
 	}
 
-	if checkerConfigTimeout <= c.SyntheticPodStartupTimeout+c.TCPTimeout {
-		errs = append(errs, fmt.Errorf(
-			"checker timeout must be greater than the combined synthetic pod startup timeout and TCP timeout: checker timeout='%s', synthetic pod startup timeout='%s', TCP timeout='%s'",
-			checkerConfigTimeout, c.SyntheticPodStartupTimeout, c.TCPTimeout,
-		))
-	}
-
 	if c.SyntheticPodStartupTimeout <= 0 {
 		errs = append(errs, fmt.Errorf("synthetic pod startup timeout must be greater than 0: value='%s'", c.SyntheticPodStartupTimeout))
 	}
 
 	if c.TCPTimeout <= 0 {
 		errs = append(errs, fmt.Errorf("TCP timeout must be greater than 0: value='%s'", c.TCPTimeout))
+	}
+
+	if c.TCPMaxRetries < 0 {
+		errs = append(errs, fmt.Errorf("TCP retry attempts must be 0 or greater: value='%d'", c.TCPMaxRetries))
+	}
+
+	if c.TCPRetryInterval < 0 {
+		errs = append(errs, fmt.Errorf("TCP retry interval must be 0 or greater: value='%s'", c.TCPRetryInterval))
+	}
+
+	if c.TCPMaxRetries == 0 && c.TCPRetryInterval != 0 {
+		errs = append(errs, fmt.Errorf("TCP retry interval must be 0 when TCP max retries is 0: value='%s'", c.TCPRetryInterval))
+	}
+
+	if c.TCPMaxRetries > 0 && c.TCPRetryInterval <= 0 {
+		errs = append(errs, fmt.Errorf("TCP retry interval must be greater than 0 when TCP max retries is greater than 0: value='%s'", c.TCPRetryInterval))
+	}
+
+	// tcpConnectivityBudget is the maximum possible time spent on TCP connection attempts including retries. This is calculated as
+	// (TCP timeout * max number of attempts) + (TCP retry interval * max number of retries). Number of attempts is max retries + 1
+	// because the first attempt is not a retry.
+	tcpConnectivityBudget := time.Duration(c.TCPMaxRetries+1)*c.TCPTimeout + time.Duration(c.TCPMaxRetries)*c.TCPRetryInterval
+	if checkerConfigTimeout <= c.SyntheticPodStartupTimeout+tcpConnectivityBudget {
+		errs = append(errs, fmt.Errorf(
+			"checker timeout must be greater than the combined synthetic pod startup timeout and TCP connectivity budget (max time spent on TCP connection attempts and retries): checker timeout='%s', synthetic pod startup timeout='%s', tcp connectivity budget='%s'",
+			checkerConfigTimeout, c.SyntheticPodStartupTimeout, tcpConnectivityBudget,
+		))
 	}
 
 	if c.MaxSyntheticPods <= 0 {
