@@ -25,7 +25,6 @@ import (
 	"github.com/Azure/cluster-health-monitor/pkg/controller/checknodehealth"
 	"github.com/Azure/cluster-health-monitor/pkg/controller/healthcheckrequest"
 	nodecontroller "github.com/Azure/cluster-health-monitor/pkg/controller/node"
-	"github.com/spf13/pflag"
 )
 
 var (
@@ -33,6 +32,7 @@ var (
 )
 
 func init() {
+	klog.InitFlags(nil)
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(chmv1alpha1.AddToScheme(scheme))
 	utilruntime.Must(healthv1alpha1.AddToScheme(scheme))
@@ -63,13 +63,11 @@ func main() {
 	flag.BoolVar(&enableNodeCondition, "enable-node-condition", false,
 		"Enable setting the NodeHealthy condition on Node objects when health checks fail.")
 
-	// Set up logging configuration with JSON format
+	// Set up logging configuration with JSON format (no CLI override needed)
 	logConfig := logsapi.NewLoggingConfiguration()
 	logConfig.Format = logsapi.JSONLogFormat
-	logsapi.AddFlags(logConfig, pflag.CommandLine)
 
-	pflag.CommandLine.AddGoFlagSet(flag.CommandLine)
-	pflag.Parse()
+	flag.Parse()
 
 	// Apply logging configuration
 	logs.InitLogs()

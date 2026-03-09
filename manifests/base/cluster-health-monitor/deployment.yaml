@@ -22,7 +22,7 @@ spec:
           # TODO: Update the image to the latest version.
           image: mcr.microsoft.com/aks/cluster-health-monitor/cluster-health-monitor:v0.0.17
           args:
-            - "--v=3"
+            - "-v=3"
           imagePullPolicy: Always
           ports:
             - containerPort: 9800

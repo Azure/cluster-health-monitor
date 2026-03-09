@@ -12,7 +12,7 @@
   value: cluster-health-monitor:test-latest
 - op: add
   path: /spec/template/spec/containers/0/args/-
-  value: "--enable-node-reboot-check"
+  value: "-enable-node-reboot-check"
 - op: add
   path: /spec/template/spec/containers/0/args/-
-  value: "--enable-health-check-request"
+  value: "-enable-health-check-request"
