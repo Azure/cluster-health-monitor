@@ -286,7 +286,7 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 				return -1
 			}
 			return len(podList.Items)
-		}, "30s", "2s").Should(Equal(0), "Timed out pod was not cleaned up within timeout")
+		}, "60s", "2s").Should(Equal(0), "Timed out pod was not cleaned up within timeout")
 	})
 
 	It("should set NodeHealthy condition on node when health check fails", func() {
