@@ -62,7 +62,7 @@ const (
 
 	// NodeConditionNodeHealthy is the condition type set on Node objects
 	// to report health status from CheckNodeHealth checks.
-	NodeConditionNodeHealthy corev1.NodeConditionType = "clusterhealthmonitor.azure.com/NodeHealthy"
+	NodeConditionNodeHealthy corev1.NodeConditionType = "aks.azure.com/NodeHealthy"
 )
 
 var (
@@ -265,7 +265,7 @@ func (r *CheckNodeHealthReconciler) markCompleted(ctx context.Context, cnh *chmv
 	return healthyStatus, nil
 }
 
-// updateNodeCondition sets the clusterhealthmonitor.azure.com/NodeHealthy condition on the Node
+// updateNodeCondition sets the aks.azure.com/NodeHealthy condition on the Node
 // when the CheckNodeHealth's Healthy condition is False.
 func (r *CheckNodeHealthReconciler) updateNodeCondition(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth) error {
 	// Find the Healthy condition from the CheckNodeHealth status
