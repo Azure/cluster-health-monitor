@@ -1,6 +1,6 @@
 module github.com/Azure/cluster-health-monitor
 
-go 1.24.13
+go 1.25.8
 
 require (
 	github.com/Azure/aks-health-signal v0.0.0-20260228004220-16040615394b
@@ -12,7 +12,6 @@ require (
 	github.com/prometheus/client_model v0.6.2
 	github.com/prometheus/common v0.62.0
 	github.com/samber/lo v1.51.0
-	github.com/spf13/pflag v1.0.6
 	golang.org/x/sync v0.15.0
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/api v0.33.3
@@ -63,6 +62,7 @@ require (
 	github.com/prometheus/procfs v0.15.1 // indirect
 	github.com/robfig/cron/v3 v3.0.1 // indirect
 	github.com/spf13/cobra v1.8.1 // indirect
+	github.com/spf13/pflag v1.0.6 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
 	go.opentelemetry.io/otel v1.33.0 // indirect
 	go.opentelemetry.io/otel/trace v1.33.0 // indirect
