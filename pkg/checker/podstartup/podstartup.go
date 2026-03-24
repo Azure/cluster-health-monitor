@@ -247,10 +247,6 @@ func (c *PodStartupChecker) garbageCollect(ctx context.Context) error {
 		errs = append(errs, fmt.Errorf("failed to garbage collect outdated persistent volume claims: %w", err))
 	}
 
-	if err := c.storageClassGarbageCollection(ctx); err != nil {
-		errs = append(errs, fmt.Errorf("failed to garbage collect outdated storage classes: %w", err))
-	}
-
 	return errors.Join(errs...)
 }
 
