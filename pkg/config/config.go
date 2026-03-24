@@ -113,12 +113,24 @@ type PodStartupConfig struct {
 	TCPRetryInterval time.Duration `yaml:"tcpRetryInterval,omitempty"`
 
 	// Optional.
-	// This field is meant to be enabled only on AKS Automatic clusters. If set to true, the PodStartupChecker will trigger node provisioning and deploy synthetic pods to the new node.
+	// This field is meant to be enabled only on AKS Automatic clusters. If set to true, the PodStartupChecker will trigger node provisioning
+	// and deploy synthetic pods to the new node.
 	EnableNodeProvisioningTest bool `yaml:"enableNodeProvisioningTest,omitempty"`
 
 	// Optional.
-	// The PodStartupChecker will attach specified CSI storages to the synthetic pods.
-	EnabledCSIs []CSIType `yaml:"enabledCSIs,omitempty"`
+	// CSI configurations for the PodStartupChecker. Presence of an item implies the CSI type is enabled. The checker will create synthetic
+	// pods with PVCs of the specified CSI types, and fail if the pods cannot start successfully with the attached CSI volumes.
+	CSI []CSIConfig `yaml:"csi,omitempty"`
+}
+
+type CSIConfig struct {
+	// Required when an item is present.
+	// Type of CSI storage to attach.
+	Type CSIType `yaml:"type"`
+
+	// Required when an item is present.
+	// Name of the StorageClass to use for this CSI type.
+	StorageClass string `yaml:"storageClass"`
 }
 
 type CSIType string

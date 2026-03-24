@@ -34,14 +34,14 @@ func (c *PodStartupChecker) generateSyntheticPod(timestampStr string) *corev1.Po
 	volumes := []corev1.Volume{}
 	volumeMounts := []corev1.VolumeMount{}
 
-	for _, csiType := range c.config.EnabledCSIs {
-		switch csiType {
+	for _, csi := range c.config.CSI {
+		switch csi.Type {
 		case config.CSITypeAzureFile:
 			volumes = append(volumes, corev1.Volume{
 				Name: "azurefile-volume",
 				VolumeSource: corev1.VolumeSource{
 					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-						ClaimName: c.azureFilePVC(timestampStr).Name,
+						ClaimName: c.azureFilePVC(timestampStr, csi.StorageClass).Name,
 					},
 				},
 			})
@@ -54,7 +54,7 @@ func (c *PodStartupChecker) generateSyntheticPod(timestampStr string) *corev1.Po
 				Name: "azuredisk-volume",
 				VolumeSource: corev1.VolumeSource{
 					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-						ClaimName: c.azureDiskPVC(timestampStr).Name,
+						ClaimName: c.azureDiskPVC(timestampStr, csi.StorageClass).Name,
 					},
 				},
 			})
@@ -67,7 +67,7 @@ func (c *PodStartupChecker) generateSyntheticPod(timestampStr string) *corev1.Po
 				Name: "azureblob-volume",
 				VolumeSource: corev1.VolumeSource{
 					PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-						ClaimName: c.azureBlobPVC(timestampStr).Name,
+						ClaimName: c.azureBlobPVC(timestampStr, csi.StorageClass).Name,
 					},
 				},
 			})

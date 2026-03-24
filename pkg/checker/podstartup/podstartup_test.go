@@ -458,7 +458,7 @@ func TestPodStartupChecker_check(t *testing.T) {
 			name: "error - failed to create CSI resources",
 			mutators: []scenarioMutator{
 				func(s *testScenario) {
-					s.enabledCSITests = []config.CSIType{config.CSITypeAzureFile}
+					s.enabledCSITests = []config.CSIType{config.CSITypeAzureBlob}
 					s.hasCSICreateError = true
 				},
 			},
@@ -535,8 +535,8 @@ func TestPodStartupChecker_check(t *testing.T) {
 
 			if scenario.hasCSICreateError {
 				// Simulate error when creating any CSI resources
-				client.PrependReactor("create", "storageclasses", func(action k8stesting.Action) (bool, runtime.Object, error) {
-					return true, nil, errors.New("error creating storageclasses")
+				client.PrependReactor("create", "persistentvolumeclaims", func(action k8stesting.Action) (bool, runtime.Object, error) {
+					return true, nil, errors.New("error creating persistentvolumeclaims")
 				})
 			}
 
@@ -551,7 +551,7 @@ func TestPodStartupChecker_check(t *testing.T) {
 					TCPMaxRetries:              3,
 					TCPRetryInterval:           1 * time.Millisecond,
 					EnableNodeProvisioningTest: scenario.enableNodeProvisioning,
-					EnabledCSIs:                scenario.enabledCSITests,
+					CSI:                        csiConfigsFromTypes(scenario.enabledCSITests),
 				},
 				timeout:       5 * time.Second,
 				k8sClientset:  client,
@@ -629,20 +629,6 @@ func TestPodStartupChecker_garbageCollect(t *testing.T) {
 			validateRes: func(g *WithT, err error) {
 				g.Expect(err).To(HaveOccurred())
 				g.Expect(err.Error()).To(ContainSubstring("error listing node pools"))
-			},
-		},
-		{
-			name: "error storage class garbage collection",
-			client: func() *k8sfake.Clientset {
-				client := k8sfake.NewClientset()
-				client.PrependReactor("list", "storageclasses", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
-					return true, nil, errors.New("error bad things")
-				})
-				return client
-			}(),
-			validateRes: func(g *WithT, err error) {
-				g.Expect(err).To(HaveOccurred())
-				g.Expect(err.Error()).To(ContainSubstring("failed to garbage collect outdated storage classes"))
 			},
 		},
 		{

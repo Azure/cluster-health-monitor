@@ -57,7 +57,7 @@ func TestGenerateSyntheticPod(t *testing.T) {
 				config: &config.PodStartupConfig{
 					SyntheticPodLabelKey:       _testSyntheticLabelKey,
 					EnableNodeProvisioningTest: tt.enableNodeProvisioningTest,
-					EnabledCSIs:                tt.csiTests,
+					CSI:                        csiConfigsFromTypes(tt.csiTests),
 				},
 			}
 
@@ -93,7 +93,7 @@ func TestGenerateSyntheticPod(t *testing.T) {
 						Name: "azurefile-volume",
 						VolumeSource: corev1.VolumeSource{
 							PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-								ClaimName: checker.azureFilePVC(timestampStr).Name,
+								ClaimName: checker.azureFilePVC(timestampStr, testAzureFileStorageClass).Name,
 							},
 						},
 					}))
@@ -106,7 +106,7 @@ func TestGenerateSyntheticPod(t *testing.T) {
 						Name: "azuredisk-volume",
 						VolumeSource: corev1.VolumeSource{
 							PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-								ClaimName: checker.azureDiskPVC(timestampStr).Name,
+								ClaimName: checker.azureDiskPVC(timestampStr, testAzureDiskStorageClass).Name,
 							},
 						},
 					}))
@@ -119,7 +119,7 @@ func TestGenerateSyntheticPod(t *testing.T) {
 						Name: "azureblob-volume",
 						VolumeSource: corev1.VolumeSource{
 							PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-								ClaimName: checker.azureBlobPVC(timestampStr).Name,
+								ClaimName: checker.azureBlobPVC(timestampStr, testAzureBlobStorageClass).Name,
 							},
 						},
 					}))

@@ -257,6 +257,71 @@ func TestPodStartupConfig_Validate(t *testing.T) {
 				g.Expect(err.Error()).To(ContainSubstring("invalid max synthetic pods"))
 			},
 		},
+		{
+			name: "valid CSI config",
+			mutateConfig: func(cfg *CheckerConfig) *CheckerConfig {
+				cfg.PodStartupConfig.CSI = []CSIConfig{
+					{Type: CSITypeAzureDisk, StorageClass: "managed-csi"},
+					{Type: CSITypeAzureFile, StorageClass: "azurefile-csi"},
+					{Type: CSITypeAzureBlob, StorageClass: "clusterhealthmonitor-azureblob-sc"},
+				}
+				return cfg
+			},
+			validateRes: func(g *WithT, err error) {
+				g.Expect(err).ToNot(HaveOccurred())
+			},
+		},
+		{
+			name: "csi present but empty",
+			mutateConfig: func(cfg *CheckerConfig) *CheckerConfig {
+				cfg.PodStartupConfig.CSI = []CSIConfig{}
+				return cfg
+			},
+			validateRes: func(g *WithT, err error) {
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(err.Error()).To(ContainSubstring("csi must not be empty when present"))
+			},
+		},
+		{
+			name: "duplicate csi type",
+			mutateConfig: func(cfg *CheckerConfig) *CheckerConfig {
+				cfg.PodStartupConfig.CSI = []CSIConfig{
+					{Type: CSITypeAzureFile, StorageClass: "azurefile-csi"},
+					{Type: CSITypeAzureFile, StorageClass: "azurefile-csi"},
+				}
+				return cfg
+			},
+			validateRes: func(g *WithT, err error) {
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(err.Error()).To(ContainSubstring("duplicate csi type"))
+			},
+		},
+		{
+			name: "unknown csi type",
+			mutateConfig: func(cfg *CheckerConfig) *CheckerConfig {
+				cfg.PodStartupConfig.CSI = []CSIConfig{
+					{Type: CSIType("unknown"), StorageClass: "some-class"},
+				}
+				return cfg
+			},
+			validateRes: func(g *WithT, err error) {
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(err.Error()).To(ContainSubstring("invalid csi type"))
+			},
+		},
+		{
+			name: "invalid csi storage class name",
+			mutateConfig: func(cfg *CheckerConfig) *CheckerConfig {
+				cfg.PodStartupConfig.CSI = []CSIConfig{
+					{Type: CSITypeAzureBlob, StorageClass: "Invalid_Class_Name"},
+				}
+				return cfg
+			},
+			validateRes: func(g *WithT, err error) {
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(err.Error()).To(ContainSubstring("invalid csi storage class"))
+			},
+		},
 	}
 
 	for _, tt := range tests {
