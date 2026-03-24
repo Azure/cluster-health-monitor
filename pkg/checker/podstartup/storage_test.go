@@ -70,7 +70,7 @@ func TestCreateCSIResources(t *testing.T) {
 			},
 		},
 		{
-			name:        "CSI tests enabled - error on creating StorageClass",
+			name:        "CSI tests enabled - error on creating Azure Blob StorageClass",
 			enabledCSIs: []config.CSIType{config.CSITypeAzureDisk, config.CSITypeAzureBlob, config.CSITypeAzureFile},
 			k8sClient: func() *k8sfake.Clientset {
 				client := k8sfake.NewClientset()
@@ -82,7 +82,7 @@ func TestCreateCSIResources(t *testing.T) {
 			validateFunc: func(g *WithT, err error, k8sClient *k8sfake.Clientset) {
 				g.Expect(err).To(HaveOccurred())
 				g.Expect(err.Error()).To(ContainSubstring("internal error"))
-				g.Expect(k8sClient.Actions()).To(HaveLen(3)) // Expect 3 create actions for 2 PVCs and 1 StorageClass
+				g.Expect(k8sClient.Actions()).To(HaveLen(2)) // Expect 2 create actions for 1 PVC and 1 StorageClass
 			},
 		},
 		{
@@ -114,7 +114,7 @@ func TestCreateCSIResources(t *testing.T) {
 			validateFunc: func(g *WithT, err error, k8sClient *k8sfake.Clientset) {
 				g.Expect(err).To(HaveOccurred())
 				g.Expect(err.Error()).To(ContainSubstring("internal error"))
-				g.Expect(k8sClient.Actions()).To(HaveLen(1)) // Expect 1 create action for 1 PVC
+				g.Expect(k8sClient.Actions()).To(HaveLen(2)) // Expect 2 create actions for 1 StorageClass and 1 PVC
 			},
 		},
 		{
@@ -130,7 +130,7 @@ func TestCreateCSIResources(t *testing.T) {
 			validateFunc: func(g *WithT, err error, k8sClient *k8sfake.Clientset) {
 				g.Expect(err).To(HaveOccurred())
 				g.Expect(err.Error()).To(ContainSubstring("internal error"))
-				g.Expect(k8sClient.Actions()).To(HaveLen(2)) // Expect 2 create actions for 1 PVC and 1 StorageClass
+				g.Expect(k8sClient.Actions()).To(HaveLen(1)) // Expect 1 create action for 1 PVC
 			},
 		},
 	}
@@ -165,11 +165,11 @@ func TestDeleteCSIResources(t *testing.T) {
 		},
 		{
 			name:        "resources successfully deleted with some resources not found",
-			enabledCSIs: []config.CSIType{config.CSITypeAzureFile},
+			enabledCSIs: []config.CSIType{config.CSITypeAzureBlob},
 			k8sClient: func() *k8sfake.Clientset {
 				client := k8sfake.NewClientset()
 				client.PrependReactor("delete", "storageclasses", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
-					return true, nil, apierrors.NewNotFound(schema.GroupResource{Group: "storage.k8s.io", Resource: "storageclasses"}, "azurefile-csi")
+					return true, nil, apierrors.NewNotFound(schema.GroupResource{Group: "storage.k8s.io", Resource: "storageclasses"}, "clusterhealthmonitor-azureblob-sc-timestampstr")
 				})
 				return client
 			}(),
@@ -180,7 +180,7 @@ func TestDeleteCSIResources(t *testing.T) {
 		},
 		{
 			name:        "deletion error",
-			enabledCSIs: []config.CSIType{config.CSITypeAzureFile},
+			enabledCSIs: []config.CSIType{config.CSITypeAzureBlob},
 			k8sClient: func() *k8sfake.Clientset {
 				client := k8sfake.NewClientset()
 				client.PrependReactor("delete", "storageclasses", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
@@ -499,7 +499,7 @@ func TestCheckPVCQuota(t *testing.T) {
 		},
 		{
 			name:        "quota check failed to list storage classes",
-			EnabledCSIs: []config.CSIType{config.CSITypeAzureFile},
+			EnabledCSIs: []config.CSIType{config.CSITypeAzureBlob},
 			k8sClient: func() *k8sfake.Clientset {
 				client := k8sfake.NewClientset()
 				client.PrependReactor("list", "storageclasses", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
@@ -511,7 +511,7 @@ func TestCheckPVCQuota(t *testing.T) {
 		},
 		{
 			name:        "storage class quota exceeded",
-			EnabledCSIs: []config.CSIType{config.CSITypeAzureFile},
+			EnabledCSIs: []config.CSIType{config.CSITypeAzureBlob},
 			k8sClient: k8sfake.NewClientset(
 				scWithLabels("sc1", map[string]string{"test-label": "testChecker"}, time.Now().Add(-10*time.Minute)),
 			),
