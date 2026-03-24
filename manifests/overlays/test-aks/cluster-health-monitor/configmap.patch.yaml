@@ -100,10 +100,13 @@
           syntheticPodStartupTimeout: "5s"
           maxSyntheticPods: 10
           tcpTimeout: "2s"
-          enableCSIs:
-            - "azureDisk"
-            - "azureFile"
-            - "azureBlob"
+          csi:
+            - type: "azureDisk"
+              storageClass: "managed-csi"
+            - type: "azureFile"
+              storageClass: "azurefile-csi"
+            - type: "azureBlob"
+              storageClass: "clusterhealthmonitor-azureblob-sc"
       - name: "TestAPIServer"
         type: "APIServer"
         interval: "5s"
