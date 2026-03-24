@@ -41,7 +41,7 @@ jobs:
           PLATFORM: linux/amd64
       
       - name: Run Trivy scan
-        uses: aquasecurity/trivy-action@0.32.0
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
         with:
           scan-type: image
           image-ref: ${{ steps.vars.outputs.image }}
