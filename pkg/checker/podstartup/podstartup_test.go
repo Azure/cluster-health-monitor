@@ -458,7 +458,7 @@ func TestPodStartupChecker_check(t *testing.T) {
 			name: "error - failed to create CSI resources",
 			mutators: []scenarioMutator{
 				func(s *testScenario) {
-					s.enabledCSITests = []config.CSIType{config.CSITypeAzureFile}
+					s.enabledCSITests = []config.CSIType{config.CSITypeAzureBlob}
 					s.hasCSICreateError = true
 				},
 			},
