@@ -95,25 +95,11 @@ func (c *PodStartupChecker) azureBlobPVC(timestampStr string, storageClassName s
 	}
 }
 
-func storageClassForCSIType(csiType config.CSIType) string {
-	switch csiType {
-	case config.CSITypeAzureDisk:
-		return azureDiskStorageClassName
-	case config.CSITypeAzureFile:
-		return azureFileStorageClassName
-	case config.CSITypeAzureBlob:
-		return azureBlobStorageClassName
-	default:
-		return ""
-	}
-}
-
 func (c *PodStartupChecker) validateStorageClasses(ctx context.Context) error {
-	for _, csiType := range c.config.EnabledCSIs {
-		scName := storageClassForCSIType(csiType)
-		_, err := c.k8sClientset.StorageV1().StorageClasses().Get(ctx, scName, metav1.GetOptions{})
+	for _, csi := range c.config.EnabledCSIs {
+		_, err := c.k8sClientset.StorageV1().StorageClasses().Get(ctx, csi.StorageClass, metav1.GetOptions{})
 		if err != nil {
-			return fmt.Errorf("failed to get StorageClass %q for CSI type %q: %w", scName, csiType, err)
+			return fmt.Errorf("failed to get StorageClass %q for CSI type %q: %w", csi.StorageClass, csi.Type, err)
 		}
 	}
 	return nil

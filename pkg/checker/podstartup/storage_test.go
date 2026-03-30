@@ -389,13 +389,13 @@ func TestCheckPVCQuota(t *testing.T) {
 func TestValidateStorageClasses(t *testing.T) {
 	testCases := []struct {
 		name        string
-		enabledCSIs []config.CSIType
+		enabledCSIs []config.CSIConfig
 		k8sClient   *k8sfake.Clientset
 		validateRes func(g *WithT, err error)
 	}{
 		{
 			name:        "passes - no CSI enabled",
-			enabledCSIs: []config.CSIType{},
+			enabledCSIs: []config.CSIConfig{},
 			k8sClient:   k8sfake.NewClientset(),
 			validateRes: func(g *WithT, err error) {
 				g.Expect(err).NotTo(HaveOccurred())
@@ -403,11 +403,11 @@ func TestValidateStorageClasses(t *testing.T) {
 		},
 		{
 			name:        "passes - all storage classes exist",
-			enabledCSIs: []config.CSIType{config.CSITypeAzureDisk, config.CSITypeAzureFile, config.CSITypeAzureBlob},
+			enabledCSIs: csiConfigsFromTypes([]config.CSIType{config.CSITypeAzureDisk, config.CSITypeAzureFile, config.CSITypeAzureBlob}),
 			k8sClient: k8sfake.NewClientset(
-				&storagev1.StorageClass{ObjectMeta: metav1.ObjectMeta{Name: azureDiskStorageClassName}},
-				&storagev1.StorageClass{ObjectMeta: metav1.ObjectMeta{Name: azureFileStorageClassName}},
-				&storagev1.StorageClass{ObjectMeta: metav1.ObjectMeta{Name: azureBlobStorageClassName}},
+				&storagev1.StorageClass{ObjectMeta: metav1.ObjectMeta{Name: testAzureDiskStorageClass}},
+				&storagev1.StorageClass{ObjectMeta: metav1.ObjectMeta{Name: testAzureFileStorageClass}},
+				&storagev1.StorageClass{ObjectMeta: metav1.ObjectMeta{Name: testAzureBlobStorageClass}},
 			),
 			validateRes: func(g *WithT, err error) {
 				g.Expect(err).NotTo(HaveOccurred())
@@ -415,9 +415,9 @@ func TestValidateStorageClasses(t *testing.T) {
 		},
 		{
 			name:        "error - storage class not found",
-			enabledCSIs: []config.CSIType{config.CSITypeAzureDisk, config.CSITypeAzureFile},
+			enabledCSIs: csiConfigsFromTypes([]config.CSIType{config.CSITypeAzureDisk, config.CSITypeAzureFile}),
 			k8sClient: k8sfake.NewClientset(
-				&storagev1.StorageClass{ObjectMeta: metav1.ObjectMeta{Name: azureDiskStorageClassName}},
+				&storagev1.StorageClass{ObjectMeta: metav1.ObjectMeta{Name: testAzureDiskStorageClass}},
 				// Azure File storage class is missing to trigger not found error
 			),
 			validateRes: func(g *WithT, err error) {
@@ -428,7 +428,7 @@ func TestValidateStorageClasses(t *testing.T) {
 		},
 		{
 			name:        "error - non 404 error getting storage class",
-			enabledCSIs: []config.CSIType{config.CSITypeAzureBlob},
+			enabledCSIs: csiConfigsFromTypes([]config.CSIType{config.CSITypeAzureBlob}),
 			k8sClient: func() *k8sfake.Clientset {
 				client := k8sfake.NewClientset()
 				client.PrependReactor("get", "storageclasses", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
