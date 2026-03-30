@@ -7,4 +7,5 @@ const (
 	ErrCodePodStartupDurationExceeded = "PodStartupDurationExceeded"
 	ErrCodeRequestFailed              = "RequestFailed"
 	ErrCodeRequestTimeout             = "RequestTimeout"
+	ErrCodeStorageClassNotFound       = "StorageClassNotFound"
 )
