@@ -498,6 +498,8 @@ func TestPodStartupChecker_check(t *testing.T) {
 			validateResult: func(g *WithT, result *checker.Result, err error, fakeDynamicClient *dynamicfake.FakeDynamicClient) {
 				g.Expect(err).To(HaveOccurred())
 				g.Expect(err.Error()).To(ContainSubstring("failed to get StorageClass"))
+				g.Expect(err.Error()).To(ContainSubstring("internal server error"))
+				g.Expect(apierrors.IsNotFound(err)).To(BeFalse())
 			},
 		},
 	}
