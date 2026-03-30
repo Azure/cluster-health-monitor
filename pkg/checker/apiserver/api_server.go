@@ -60,9 +60,9 @@ func (c APIServerChecker) Run(ctx context.Context) {
 	checker.RecordResult(c, result, err)
 }
 
-// check executes the API server check.
-// It creates an empty ConfigMap, gets it, and then deletes it.
-// If all operations succeed, the check is considered healthy.
+// Executes the api server check. It creates an empty ConfigMap, gets it, and then deletes it. If all operations succeed, the check is
+// considered healthy. This flow validates the reachability of the api server and that the api server can read/write to/from storage. For
+// this reason, the configmap create request is intentionally not dry-run.
 func (c APIServerChecker) check(ctx context.Context) (*checker.Result, error) {
 	// Garbage collect any leftover ConfigMaps previously created by this checker.
 	if err := c.garbageCollect(ctx); err != nil {
@@ -84,6 +84,7 @@ func (c APIServerChecker) check(ctx context.Context) (*checker.Result, error) {
 	}
 
 	// Create ConfigMap.
+	// Intentionally not dry-run so create persists to backing storage and validates the API server storage path.
 	createCtx, createCancel := context.WithTimeout(ctx, c.config.MutateTimeout)
 	defer createCancel()
 	createdConfigMap, err := c.kubeClient.CoreV1().ConfigMaps(c.config.Namespace).Create(createCtx, c.generateConfigMap(), metav1.CreateOptions{})

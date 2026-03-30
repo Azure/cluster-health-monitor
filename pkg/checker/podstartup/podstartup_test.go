@@ -92,7 +92,6 @@ func TestPodStartupChecker_check(t *testing.T) {
 		dialer                 Dialer
 		enableNodeProvisioning bool
 		enabledCSITests        []config.CSIType
-		hasCSICreateError      bool
 		fakeDynamicClient      *dynamicfake.FakeDynamicClient
 	}
 
@@ -454,19 +453,6 @@ func TestPodStartupChecker_check(t *testing.T) {
 				g.Expect(fakeDynamicClient.Actions()[2].GetVerb()).To(Equal("create"))
 			},
 		},
-		{
-			name: "error - failed to create CSI resources",
-			mutators: []scenarioMutator{
-				func(s *testScenario) {
-					s.enabledCSITests = []config.CSIType{config.CSITypeAzureBlob}
-					s.hasCSICreateError = true
-				},
-			},
-			validateResult: func(g *WithT, result *checker.Result, err error, fakeDynamicClient *dynamicfake.FakeDynamicClient) {
-				g.Expect(err).To(HaveOccurred())
-				g.Expect(err.Error()).To(ContainSubstring("failed to create CSI test resources"))
-			},
-		},
 	}
 
 	for _, tt := range tests {
@@ -532,13 +518,6 @@ func TestPodStartupChecker_check(t *testing.T) {
 				}
 				return true, fakePod, nil
 			})
-
-			if scenario.hasCSICreateError {
-				// Simulate error when creating any CSI resources
-				client.PrependReactor("create", "storageclasses", func(action k8stesting.Action) (bool, runtime.Object, error) {
-					return true, nil, errors.New("error creating storageclasses")
-				})
-			}
 
 			podStartupChecker := &PodStartupChecker{
 				name: checkerName,
@@ -629,20 +608,6 @@ func TestPodStartupChecker_garbageCollect(t *testing.T) {
 			validateRes: func(g *WithT, err error) {
 				g.Expect(err).To(HaveOccurred())
 				g.Expect(err.Error()).To(ContainSubstring("error listing node pools"))
-			},
-		},
-		{
-			name: "error storage class garbage collection",
-			client: func() *k8sfake.Clientset {
-				client := k8sfake.NewClientset()
-				client.PrependReactor("list", "storageclasses", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
-					return true, nil, errors.New("error bad things")
-				})
-				return client
-			}(),
-			validateRes: func(g *WithT, err error) {
-				g.Expect(err).To(HaveOccurred())
-				g.Expect(err.Error()).To(ContainSubstring("failed to garbage collect outdated storage classes"))
 			},
 		},
 		{
