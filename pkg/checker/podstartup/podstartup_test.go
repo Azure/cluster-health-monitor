@@ -597,7 +597,7 @@ func TestPodStartupChecker_check(t *testing.T) {
 					TCPMaxRetries:              3,
 					TCPRetryInterval:           1 * time.Millisecond,
 					EnableNodeProvisioningTest: scenario.enableNodeProvisioning,
-					EnabledCSIs:                scenario.enabledCSITests,
+					EnabledCSIs:                csiConfigsFromTypes(scenario.enabledCSITests),
 				},
 				timeout:       5 * time.Second,
 				k8sClientset:  client,

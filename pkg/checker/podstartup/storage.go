@@ -20,14 +20,7 @@ const (
 	azureBlobPVCNamePrefix = "clusterhealthmonitor-azureblob-pvc"
 )
 
-var (
-	// Storage class names must be variables to get their pointers.
-	azureDiskStorageClassName = "managed-csi"                       // builtin storage class for AKS
-	azureFileStorageClassName = "azurefile-csi"                     // builtin storage class for AKS
-	azureBlobStorageClassName = "clusterhealthmonitor-azureblob-sc" // custom storage class
-)
-
-func (c *PodStartupChecker) azureDiskPVC(timestampStr string) *corev1.PersistentVolumeClaim {
+func (c *PodStartupChecker) azureDiskPVC(timestampStr string, storageClassName string) *corev1.PersistentVolumeClaim {
 	return &corev1.PersistentVolumeClaim{
 		TypeMeta: metav1.TypeMeta{
 			Kind:       "PersistentVolumeClaim",
@@ -42,7 +35,7 @@ func (c *PodStartupChecker) azureDiskPVC(timestampStr string) *corev1.Persistent
 			AccessModes: []corev1.PersistentVolumeAccessMode{
 				corev1.ReadWriteOnce,
 			},
-			StorageClassName: &azureDiskStorageClassName,
+			StorageClassName: &storageClassName,
 			Resources: corev1.VolumeResourceRequirements{
 				Requests: corev1.ResourceList{
 					corev1.ResourceStorage: resource.MustParse("5Gi"),
@@ -52,7 +45,7 @@ func (c *PodStartupChecker) azureDiskPVC(timestampStr string) *corev1.Persistent
 	}
 }
 
-func (c *PodStartupChecker) azureFilePVC(timestampStr string) *corev1.PersistentVolumeClaim {
+func (c *PodStartupChecker) azureFilePVC(timestampStr string, storageClassName string) *corev1.PersistentVolumeClaim {
 	return &corev1.PersistentVolumeClaim{
 		TypeMeta: metav1.TypeMeta{
 			Kind:       "PersistentVolumeClaim",
@@ -67,7 +60,7 @@ func (c *PodStartupChecker) azureFilePVC(timestampStr string) *corev1.Persistent
 			AccessModes: []corev1.PersistentVolumeAccessMode{
 				corev1.ReadWriteMany,
 			},
-			StorageClassName: &azureFileStorageClassName,
+			StorageClassName: &storageClassName,
 			Resources: corev1.VolumeResourceRequirements{
 				Requests: corev1.ResourceList{
 					corev1.ResourceStorage: resource.MustParse("5Gi"),
@@ -77,7 +70,7 @@ func (c *PodStartupChecker) azureFilePVC(timestampStr string) *corev1.Persistent
 	}
 }
 
-func (c *PodStartupChecker) azureBlobPVC(timestampStr string) *corev1.PersistentVolumeClaim {
+func (c *PodStartupChecker) azureBlobPVC(timestampStr string, storageClassName string) *corev1.PersistentVolumeClaim {
 	return &corev1.PersistentVolumeClaim{
 		TypeMeta: metav1.TypeMeta{
 			Kind:       "PersistentVolumeClaim",
@@ -92,7 +85,7 @@ func (c *PodStartupChecker) azureBlobPVC(timestampStr string) *corev1.Persistent
 			AccessModes: []corev1.PersistentVolumeAccessMode{
 				corev1.ReadWriteMany,
 			},
-			StorageClassName: &azureBlobStorageClassName,
+			StorageClassName: &storageClassName,
 			Resources: corev1.VolumeResourceRequirements{
 				Requests: corev1.ResourceList{
 					corev1.ResourceStorage: resource.MustParse("5Gi"),
@@ -127,50 +120,50 @@ func (c *PodStartupChecker) validateStorageClasses(ctx context.Context) error {
 }
 
 func (c *PodStartupChecker) createCSIResources(ctx context.Context, timestampStr string) error {
-	for _, csiType := range c.config.EnabledCSIs {
-		switch csiType {
+	for _, csi := range c.config.EnabledCSIs {
+		switch csi.Type {
 		case config.CSITypeAzureDisk:
-			_, err := c.k8sClientset.CoreV1().PersistentVolumeClaims(c.config.SyntheticPodNamespace).Create(ctx, c.azureDiskPVC(timestampStr), metav1.CreateOptions{})
+			_, err := c.k8sClientset.CoreV1().PersistentVolumeClaims(c.config.SyntheticPodNamespace).Create(ctx, c.azureDiskPVC(timestampStr, csi.StorageClass), metav1.CreateOptions{})
 			if err != nil {
 				return fmt.Errorf("failed to create Azure Disk PVC: %w", err)
 			}
 		case config.CSITypeAzureFile:
-			_, err := c.k8sClientset.CoreV1().PersistentVolumeClaims(c.config.SyntheticPodNamespace).Create(ctx, c.azureFilePVC(timestampStr), metav1.CreateOptions{})
+			_, err := c.k8sClientset.CoreV1().PersistentVolumeClaims(c.config.SyntheticPodNamespace).Create(ctx, c.azureFilePVC(timestampStr, csi.StorageClass), metav1.CreateOptions{})
 			if err != nil {
 				return fmt.Errorf("failed to create Azure File PVC: %w", err)
 			}
 		case config.CSITypeAzureBlob:
-			_, err := c.k8sClientset.CoreV1().PersistentVolumeClaims(c.config.SyntheticPodNamespace).Create(ctx, c.azureBlobPVC(timestampStr), metav1.CreateOptions{})
+			_, err := c.k8sClientset.CoreV1().PersistentVolumeClaims(c.config.SyntheticPodNamespace).Create(ctx, c.azureBlobPVC(timestampStr, csi.StorageClass), metav1.CreateOptions{})
 			if err != nil {
 				return fmt.Errorf("failed to create Azure Blob PVC: %w", err)
 			}
 		default:
-			return fmt.Errorf("failed to create resources for unsupported CSI type: %s", csiType)
+			return fmt.Errorf("failed to create resources for unsupported CSI type: %s", csi.Type)
 		}
 	}
 	return nil
 }
 
 func (c *PodStartupChecker) deleteCSIResources(ctx context.Context, timestampStr string) error {
-	for _, csiType := range c.config.EnabledCSIs {
-		switch csiType {
+	for _, csi := range c.config.EnabledCSIs {
+		switch csi.Type {
 		case config.CSITypeAzureDisk:
-			err := c.k8sClientset.CoreV1().PersistentVolumeClaims(c.config.SyntheticPodNamespace).Delete(ctx, c.azureDiskPVC(timestampStr).Name, metav1.DeleteOptions{})
+			err := c.k8sClientset.CoreV1().PersistentVolumeClaims(c.config.SyntheticPodNamespace).Delete(ctx, c.azureDiskPVC(timestampStr, csi.StorageClass).Name, metav1.DeleteOptions{})
 			if err != nil && !apierrors.IsNotFound(err) {
 				return fmt.Errorf("failed to delete Azure Disk PVC: %w", err)
 			}
 		case config.CSITypeAzureFile:
-			err := c.k8sClientset.CoreV1().PersistentVolumeClaims(c.config.SyntheticPodNamespace).Delete(ctx, c.azureFilePVC(timestampStr).Name, metav1.DeleteOptions{})
+			err := c.k8sClientset.CoreV1().PersistentVolumeClaims(c.config.SyntheticPodNamespace).Delete(ctx, c.azureFilePVC(timestampStr, csi.StorageClass).Name, metav1.DeleteOptions{})
 			if err != nil && !apierrors.IsNotFound(err) {
 				return fmt.Errorf("failed to delete Azure File PVC: %w", err)
 			}
 		case config.CSITypeAzureBlob:
-			err := c.k8sClientset.CoreV1().PersistentVolumeClaims(c.config.SyntheticPodNamespace).Delete(ctx, c.azureBlobPVC(timestampStr).Name, metav1.DeleteOptions{})
+			err := c.k8sClientset.CoreV1().PersistentVolumeClaims(c.config.SyntheticPodNamespace).Delete(ctx, c.azureBlobPVC(timestampStr, csi.StorageClass).Name, metav1.DeleteOptions{})
 			if err != nil && !apierrors.IsNotFound(err) {
 				return fmt.Errorf("failed to delete Azure Blob PVC: %w", err)
 			}
 		default:
-			return fmt.Errorf("failed to delete resources for unsupported CSI type: %s", csiType)
+			return fmt.Errorf("failed to delete resources for unsupported CSI type: %s", csi.Type)
 		}
 	}
 	return nil
