@@ -121,6 +121,13 @@ func (c *PodStartupChecker) check(ctx context.Context) (*checker.Result, error) 
 
 	timeStampStr := fmt.Sprintf("%d", time.Now().UnixNano())
 
+	if err := c.validateStorageClasses(ctx); err != nil {
+		if apierrors.IsNotFound(err) {
+			return checker.Unhealthy(ErrCodeStorageClassNotFound, err.Error()), nil
+		}
+		return nil, err
+	}
+
 	if err := c.checkCSIResourceLimit(ctx); err != nil {
 		return nil, fmt.Errorf("CSI resource limit check failed: %w", err)
 	}

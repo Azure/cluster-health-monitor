@@ -9,6 +9,7 @@ import (
 	"github.com/Azure/cluster-health-monitor/pkg/config"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -389,6 +390,82 @@ func TestCheckPVCQuota(t *testing.T) {
 			} else {
 				g.Expect(err).NotTo(HaveOccurred())
 			}
+		})
+	}
+}
+
+func TestValidateStorageClasses(t *testing.T) {
+	testCases := []struct {
+		name        string
+		enabledCSIs []config.CSIType
+		k8sClient   *k8sfake.Clientset
+		validateRes func(g *WithT, err error)
+	}{
+		{
+			name:        "passes - no CSI enabled",
+			enabledCSIs: []config.CSIType{},
+			k8sClient:   k8sfake.NewClientset(),
+			validateRes: func(g *WithT, err error) {
+				g.Expect(err).NotTo(HaveOccurred())
+			},
+		},
+		{
+			name:        "passes - all storage classes exist",
+			enabledCSIs: []config.CSIType{config.CSITypeAzureDisk, config.CSITypeAzureFile, config.CSITypeAzureBlob},
+			k8sClient: k8sfake.NewClientset(
+				&storagev1.StorageClass{ObjectMeta: metav1.ObjectMeta{Name: azureDiskStorageClassName}},
+				&storagev1.StorageClass{ObjectMeta: metav1.ObjectMeta{Name: azureFileStorageClassName}},
+				&storagev1.StorageClass{ObjectMeta: metav1.ObjectMeta{Name: azureBlobStorageClassName}},
+			),
+			validateRes: func(g *WithT, err error) {
+				g.Expect(err).NotTo(HaveOccurred())
+			},
+		},
+		{
+			name:        "error - storage class not found",
+			enabledCSIs: []config.CSIType{config.CSITypeAzureDisk, config.CSITypeAzureFile},
+			k8sClient: k8sfake.NewClientset(
+				&storagev1.StorageClass{ObjectMeta: metav1.ObjectMeta{Name: azureDiskStorageClassName}},
+				// Azure File storage class is missing to trigger not found error
+			),
+			validateRes: func(g *WithT, err error) {
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(err.Error()).To(ContainSubstring("failed to get StorageClass"))
+				g.Expect(apierrors.IsNotFound(err)).To(BeTrue())
+			},
+		},
+		{
+			name:        "error - non 404 error getting storage class",
+			enabledCSIs: []config.CSIType{config.CSITypeAzureBlob},
+			k8sClient: func() *k8sfake.Clientset {
+				client := k8sfake.NewClientset()
+				client.PrependReactor("get", "storageclasses", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
+					return true, nil, errors.New("connection refused")
+				})
+				return client
+			}(),
+			validateRes: func(g *WithT, err error) {
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(err.Error()).To(ContainSubstring("failed to get StorageClass"))
+				g.Expect(apierrors.IsNotFound(err)).To(BeFalse())
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			g := NewWithT(t)
+
+			chk := &PodStartupChecker{
+				config: &config.PodStartupConfig{
+					EnabledCSIs: tc.enabledCSIs,
+				},
+				k8sClientset: tc.k8sClient,
+			}
+
+			err := chk.validateStorageClasses(context.Background())
+			tc.validateRes(g, err)
 		})
 	}
 }

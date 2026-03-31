@@ -13,6 +13,7 @@ import (
 	retry "github.com/avast/retry-go/v4"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -81,18 +82,21 @@ func failingDialer(errMsg string) Dialer {
 func TestPodStartupChecker_check(t *testing.T) {
 	// Defines adjustable parameters for the test scenarios
 	type testScenario struct {
-		podName                string
-		namespace              string
-		labels                 map[string]string
-		podIP                  string
-		startupDelay           time.Duration
-		preExistingPods        []string
-		preExistingPVCs        []string
-		hasDeleteError         bool
-		dialer                 Dialer
-		enableNodeProvisioning bool
-		enabledCSITests        []config.CSIType
-		fakeDynamicClient      *dynamicfake.FakeDynamicClient
+		podName                   string
+		namespace                 string
+		labels                    map[string]string
+		podIP                     string
+		startupDelay              time.Duration
+		preExistingPods           []string
+		preExistingPVCs           []string
+		preExistingStorageClasses []string
+		hasDeleteError            bool
+		dialer                    Dialer
+		enableNodeProvisioning    bool
+		enabledCSITests           []config.CSIType
+		hasCSICreateError         bool
+		hasStorageClassGetError   bool
+		fakeDynamicClient         *dynamicfake.FakeDynamicClient
 	}
 
 	// Mutator function type
@@ -154,6 +158,7 @@ func TestPodStartupChecker_check(t *testing.T) {
 			mutators: []scenarioMutator{
 				func(s *testScenario) {
 					s.enabledCSITests = []config.CSIType{config.CSITypeAzureFile}
+					s.preExistingStorageClasses = []string{azureFileStorageClassName}
 					for i := 0; i < maxSyntheticPods; i++ {
 						s.preExistingPVCs = append(s.preExistingPVCs, fmt.Sprintf("pvc%d", i))
 					}
@@ -453,6 +458,50 @@ func TestPodStartupChecker_check(t *testing.T) {
 				g.Expect(fakeDynamicClient.Actions()[2].GetVerb()).To(Equal("create"))
 			},
 		},
+		{
+			name: "error - failed to create CSI resources",
+			mutators: []scenarioMutator{
+				func(s *testScenario) {
+					s.enabledCSITests = []config.CSIType{config.CSITypeAzureBlob}
+					s.preExistingStorageClasses = []string{azureBlobStorageClassName}
+					s.hasCSICreateError = true
+				},
+			},
+			validateResult: func(g *WithT, result *checker.Result, err error, fakeDynamicClient *dynamicfake.FakeDynamicClient) {
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(err.Error()).To(ContainSubstring("failed to create CSI test resources"))
+			},
+		},
+		{
+			name: "unhealthy result - storage class not found",
+			mutators: []scenarioMutator{
+				func(s *testScenario) {
+					s.enabledCSITests = []config.CSIType{config.CSITypeAzureDisk}
+					// No preExistingStorageClasses set, so the storage class won't exist
+				},
+			},
+			validateResult: func(g *WithT, result *checker.Result, err error, fakeDynamicClient *dynamicfake.FakeDynamicClient) {
+				g.Expect(err).ToNot(HaveOccurred())
+				g.Expect(result).ToNot(BeNil())
+				g.Expect(result.Status).To(Equal(checker.StatusUnhealthy))
+				g.Expect(result.Detail.Code).To(Equal(ErrCodeStorageClassNotFound))
+			},
+		},
+		{
+			name: "error - non 404 error getting storage class",
+			mutators: []scenarioMutator{
+				func(s *testScenario) {
+					s.enabledCSITests = []config.CSIType{config.CSITypeAzureDisk}
+					s.hasStorageClassGetError = true
+				},
+			},
+			validateResult: func(g *WithT, result *checker.Result, err error, fakeDynamicClient *dynamicfake.FakeDynamicClient) {
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(err.Error()).To(ContainSubstring("failed to get StorageClass"))
+				g.Expect(err.Error()).To(ContainSubstring("internal server error"))
+				g.Expect(apierrors.IsNotFound(err)).To(BeFalse())
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -518,6 +567,24 @@ func TestPodStartupChecker_check(t *testing.T) {
 				}
 				return true, fakePod, nil
 			})
+
+			if scenario.hasCSICreateError {
+				// Simulate error when creating any CSI resources
+				client.PrependReactor("create", "persistentvolumeclaims", func(action k8stesting.Action) (bool, runtime.Object, error) {
+					return true, nil, errors.New("error creating persistentvolumeclaims")
+				})
+			}
+
+			for _, scName := range scenario.preExistingStorageClasses {
+				sc := &storagev1.StorageClass{ObjectMeta: metav1.ObjectMeta{Name: scName}}
+				client.StorageV1().StorageClasses().Create(context.Background(), sc, metav1.CreateOptions{}) //nolint:errcheck
+			}
+
+			if scenario.hasStorageClassGetError {
+				client.PrependReactor("get", "storageclasses", func(action k8stesting.Action) (bool, runtime.Object, error) {
+					return true, nil, errors.New("internal server error")
+				})
+			}
 
 			podStartupChecker := &PodStartupChecker{
 				name: checkerName,
