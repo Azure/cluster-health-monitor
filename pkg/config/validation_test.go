@@ -258,7 +258,7 @@ func TestPodStartupConfig_Validate(t *testing.T) {
 			},
 		},
 		{
-			name: "valid CSI config",
+			name: "valid CSI config with multiple CSI types and storage classes",
 			mutateConfig: func(cfg *CheckerConfig) *CheckerConfig {
 				cfg.PodStartupConfig.EnabledCSIs = []CSIConfig{
 					{Type: CSITypeAzureDisk, StorageClass: "managed-csi"},
@@ -272,7 +272,7 @@ func TestPodStartupConfig_Validate(t *testing.T) {
 			},
 		},
 		{
-			name: "csi present but empty",
+			name: "csi field present but empty is not allowed",
 			mutateConfig: func(cfg *CheckerConfig) *CheckerConfig {
 				cfg.PodStartupConfig.EnabledCSIs = []CSIConfig{}
 				return cfg
@@ -283,7 +283,20 @@ func TestPodStartupConfig_Validate(t *testing.T) {
 			},
 		},
 		{
-			name: "duplicate csi type",
+			name: "duplicate csi types are allowed with unique storage classes",
+			mutateConfig: func(cfg *CheckerConfig) *CheckerConfig {
+				cfg.PodStartupConfig.EnabledCSIs = []CSIConfig{
+					{Type: CSITypeAzureFile, StorageClass: "azurefile-csi"},
+					{Type: CSITypeAzureFile, StorageClass: "azurefile-csi-premium"},
+				}
+				return cfg
+			},
+			validateRes: func(g *WithT, err error) {
+				g.Expect(err).NotTo(HaveOccurred())
+			},
+		},
+		{
+			name: "duplicate csi storage class names are not allowed for the same csi type",
 			mutateConfig: func(cfg *CheckerConfig) *CheckerConfig {
 				cfg.PodStartupConfig.EnabledCSIs = []CSIConfig{
 					{Type: CSITypeAzureFile, StorageClass: "azurefile-csi"},
@@ -293,7 +306,21 @@ func TestPodStartupConfig_Validate(t *testing.T) {
 			},
 			validateRes: func(g *WithT, err error) {
 				g.Expect(err).To(HaveOccurred())
-				g.Expect(err.Error()).To(ContainSubstring("duplicate csi type"))
+				g.Expect(err.Error()).To(ContainSubstring("duplicate csi storage class"))
+			},
+		},
+		{
+			name: "duplicate csi storage class are not allowed across different csi types",
+			mutateConfig: func(cfg *CheckerConfig) *CheckerConfig {
+				cfg.PodStartupConfig.EnabledCSIs = []CSIConfig{
+					{Type: CSITypeAzureFile, StorageClass: "shared-class"},
+					{Type: CSITypeAzureDisk, StorageClass: "shared-class"},
+				}
+				return cfg
+			},
+			validateRes: func(g *WithT, err error) {
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(err.Error()).To(ContainSubstring("duplicate csi storage class"))
 			},
 		},
 		{
@@ -328,7 +355,7 @@ func TestPodStartupConfig_Validate(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			g := NewWithT(t)
 
-			// Valida chkCfg
+			// Valid chkCfg
 			chkCfg := &CheckerConfig{
 				Name:    "test",
 				Type:    CheckTypePodStartup,

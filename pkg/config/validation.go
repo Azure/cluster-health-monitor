@@ -158,7 +158,7 @@ func (c *PodStartupConfig) validate(checkerConfigTimeout time.Duration) error {
 		errs = append(errs, fmt.Errorf("enabled csi must not be empty when present"))
 	}
 
-	seenCSITypes := make(map[CSIType]struct{})
+	seenStorageClasses := make(map[string]struct{})
 	for i, csi := range c.EnabledCSIs {
 		switch csi.Type {
 		case CSITypeAzureFile, CSITypeAzureDisk, CSITypeAzureBlob:
@@ -167,14 +167,14 @@ func (c *PodStartupConfig) validate(checkerConfigTimeout time.Duration) error {
 			errs = append(errs, fmt.Errorf("invalid csi type at index %d: value='%s'", i, csi.Type))
 		}
 
-		if _, exists := seenCSITypes[csi.Type]; exists {
-			errs = append(errs, fmt.Errorf("duplicate csi type: %s", csi.Type))
-		} else {
-			seenCSITypes[csi.Type] = struct{}{}
-		}
-
 		for _, scErr := range utilvalidation.IsDNS1123Subdomain(csi.StorageClass) {
 			errs = append(errs, fmt.Errorf("invalid csi storage class name at index %d: value='%s', error='%s'", i, csi.StorageClass, scErr))
+		}
+
+		if _, exists := seenStorageClasses[csi.StorageClass]; exists {
+			errs = append(errs, fmt.Errorf("duplicate csi storage class at index %d: value='%s'", i, csi.StorageClass))
+		} else {
+			seenStorageClasses[csi.StorageClass] = struct{}{}
 		}
 	}
 
