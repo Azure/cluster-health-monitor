@@ -60,9 +60,13 @@ const (
 	ReasonCheckUnknown      = "CheckUnknown"
 	ReasonPodStartupTimeout = "PodStartupTimeout"
 
+	// LegacyNodeConditionNodeHealthy is the previous condition type set on Node objects.
+	// Keep this for backward compatibility when clusters still have the legacy condition key.
+	LegacyNodeConditionNodeHealthy corev1.NodeConditionType = "aks.azure.com/NodeHealthy"
+
 	// NodeConditionNodeHealthy is the condition type set on Node objects
 	// to report health status from CheckNodeHealth checks.
-	NodeConditionNodeHealthy corev1.NodeConditionType = "aks.azure.com/NodeHealthy"
+	NodeConditionNodeHealthy corev1.NodeConditionType = "kubernetes.azure.com/NodeHealthy"
 )
 
 var (
@@ -265,7 +269,7 @@ func (r *CheckNodeHealthReconciler) markCompleted(ctx context.Context, cnh *chmv
 	return healthyStatus, nil
 }
 
-// updateNodeCondition sets the aks.azure.com/NodeHealthy condition on the Node
+// updateNodeCondition sets the kubernetes.azure.com/NodeHealthy condition on the Node
 // when the CheckNodeHealth's Healthy condition is False.
 func (r *CheckNodeHealthReconciler) updateNodeCondition(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth) error {
 	// Find the Healthy condition from the CheckNodeHealth status
@@ -302,7 +306,9 @@ func (r *CheckNodeHealthReconciler) updateNodeCondition(ctx context.Context, cnh
 	now := metav1.Now()
 	found := false
 	for i, c := range node.Status.Conditions {
-		if c.Type == NodeConditionNodeHealthy {
+		if isNodeHealthyConditionType(c.Type) {
+			// Migrate legacy condition key to the current one when we touch it.
+			node.Status.Conditions[i].Type = NodeConditionNodeHealthy
 			if node.Status.Conditions[i].Status != corev1.ConditionFalse {
 				node.Status.Conditions[i].LastTransitionTime = now
 			}
@@ -332,6 +338,10 @@ func (r *CheckNodeHealthReconciler) updateNodeCondition(ctx context.Context, cnh
 
 	klog.InfoS("Updated node condition", "node", nodeName, "type", NodeConditionNodeHealthy, "status", corev1.ConditionFalse)
 	return nil
+}
+
+func isNodeHealthyConditionType(conditionType corev1.NodeConditionType) bool {
+	return conditionType == NodeConditionNodeHealthy || conditionType == LegacyNodeConditionNodeHealthy
 }
 
 // determineHealthyCondition determines the Healthy condition status based on check results
