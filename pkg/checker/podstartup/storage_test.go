@@ -13,7 +13,6 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 )
@@ -132,6 +131,11 @@ func TestCreateCSIResources(t *testing.T) {
 }
 
 func TestDeleteCSIResources(t *testing.T) {
+	syntheticPodNamespace := "kube-system"
+	checkerName := "csi-checker"
+	syntheticPodLabelKey := "cluster-health-monitor/csi-checker"
+	pvcLabels := map[string]string{syntheticPodLabelKey: checkerName}
+
 	testCases := []struct {
 		name         string
 		k8sClient    *k8sfake.Clientset
@@ -139,34 +143,43 @@ func TestDeleteCSIResources(t *testing.T) {
 		validateFunc func(g *WithT, err error, k8sClient *k8sfake.Clientset)
 	}{
 		{
-			name:        "all resources successfully deleted",
-			k8sClient:   k8sfake.NewClientset(),
+			name: "all resources successfully deleted",
+			k8sClient: k8sfake.NewClientset(
+				pvcWithLabels("clusterhealthmonitor-azuredisk-pvc-timestampstr", syntheticPodNamespace, pvcLabels, time.Now()),
+				pvcWithLabels("clusterhealthmonitor-azurefile-pvc-timestampstr", syntheticPodNamespace, pvcLabels, time.Now()),
+				pvcWithLabels("clusterhealthmonitor-azureblob-pvc-timestampstr", syntheticPodNamespace, pvcLabels, time.Now()),
+			),
 			enabledCSIs: []config.CSIType{config.CSITypeAzureDisk, config.CSITypeAzureFile, config.CSITypeAzureBlob},
 			validateFunc: func(g *WithT, err error, k8sClient *k8sfake.Clientset) {
 				g.Expect(err).ToNot(HaveOccurred())
-				g.Expect(k8sClient.Actions()).To(HaveLen(3)) // Expect 3 delete actions for 3 PVCs
+				pvcs, listErr := k8sClient.CoreV1().PersistentVolumeClaims(syntheticPodNamespace).List(context.Background(), metav1.ListOptions{})
+				g.Expect(listErr).ToNot(HaveOccurred())
+				g.Expect(pvcs.Items).To(BeEmpty())
 			},
 		},
 		{
 			name:        "resources successfully deleted with some resources not found",
-			enabledCSIs: []config.CSIType{config.CSITypeAzureFile},
-			k8sClient: func() *k8sfake.Clientset {
-				client := k8sfake.NewClientset()
-				client.PrependReactor("delete", "persistentvolumeclaims", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
-					return true, nil, apierrors.NewNotFound(schema.GroupResource{Group: "", Resource: "persistentvolumeclaims"}, "azurefile-pvc")
-				})
-				return client
-			}(),
+			enabledCSIs: []config.CSIType{config.CSITypeAzureDisk, config.CSITypeAzureFile, config.CSITypeAzureBlob},
+			k8sClient: k8sfake.NewClientset(
+				pvcWithLabels("clusterhealthmonitor-azuredisk-pvc-timestampstr", syntheticPodNamespace, pvcLabels, time.Now()),
+				pvcWithLabels("clusterhealthmonitor-azurefile-pvc-timestampstr", syntheticPodNamespace, pvcLabels, time.Now()),
+				// AzureBlob PVC intentionally missing to trigger not found
+			),
 			validateFunc: func(g *WithT, err error, k8sClient *k8sfake.Clientset) {
 				g.Expect(err).ToNot(HaveOccurred())
-				g.Expect(k8sClient.Actions()).To(HaveLen(1)) // Expect 1 PVC deletion
+				pvcs, listErr := k8sClient.CoreV1().PersistentVolumeClaims(syntheticPodNamespace).List(context.Background(), metav1.ListOptions{})
+				g.Expect(listErr).ToNot(HaveOccurred())
+				g.Expect(pvcs.Items).To(BeEmpty())
 			},
 		},
 		{
 			name:        "deletion error",
-			enabledCSIs: []config.CSIType{config.CSITypeAzureFile},
+			enabledCSIs: []config.CSIType{config.CSITypeAzureFile, config.CSITypeAzureBlob},
 			k8sClient: func() *k8sfake.Clientset {
-				client := k8sfake.NewClientset()
+				client := k8sfake.NewClientset(
+					pvcWithLabels("clusterhealthmonitor-azurefile-pvc-timestampstr", syntheticPodNamespace, pvcLabels, time.Now()),
+					pvcWithLabels("clusterhealthmonitor-azureblob-pvc-timestampstr", syntheticPodNamespace, pvcLabels, time.Now()),
+				)
 				client.PrependReactor("delete", "persistentvolumeclaims", func(action k8stesting.Action) (handled bool, ret runtime.Object, err error) {
 					return true, nil, errors.New("unexpected error occurred while deleting persistent volume claim")
 				})
@@ -174,15 +187,17 @@ func TestDeleteCSIResources(t *testing.T) {
 			}(),
 			validateFunc: func(g *WithT, err error, k8sClient *k8sfake.Clientset) {
 				g.Expect(err).To(HaveOccurred())
+				g.Expect(err.Error()).To(ContainSubstring("failed to delete Azure File PVC"))
 				g.Expect(err.Error()).To(ContainSubstring("unexpected error occurred while deleting persistent volume claim"))
-				g.Expect(k8sClient.Actions()).To(HaveLen(1)) // Expect 1 delete action for 1 PVC
 			},
 		},
 	}
 	for _, tc := range testCases {
 		checker := &PodStartupChecker{
+			name: checkerName,
 			config: &config.PodStartupConfig{
-				SyntheticPodNamespace: "test-namespace",
+				SyntheticPodNamespace: syntheticPodNamespace,
+				SyntheticPodLabelKey:  syntheticPodLabelKey,
 				EnabledCSIs:           csiConfigsFromTypes(tc.enabledCSIs),
 			},
 			k8sClientset: tc.k8sClient,
