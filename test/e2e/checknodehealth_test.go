@@ -292,9 +292,14 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 	It("should set NodeHealthy condition on node when health check fails", func() {
 		By("Creating a fake Node object for the test")
 		fakeNodeName := fmt.Sprintf("fake-node-condition-test-%d", time.Now().Unix())
+		// Use a finalizer to prevent the cloud-node-lifecycle-controller from deleting this fake node before the checknodehealth controller
+		// can set the NodeHealthy condition on it. Otherwise the following may occur:
+		// 15m Normal DeletingNode Node/fake-node-condition-test-1775085210 Deleting node fake-node-condition-test-1775085210 because it does not exist in the cloud provider
+		fakeNodeFinalizer := "e2e-test/fake-node-protection"
 		fakeNode := &corev1.Node{
 			ObjectMeta: metav1.ObjectMeta{
-				Name: fakeNodeName,
+				Name:       fakeNodeName,
+				Finalizers: []string{fakeNodeFinalizer},
 			},
 		}
 		err := k8sClient.Create(ctx, fakeNode)
@@ -303,7 +308,17 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 
 		defer func() {
 			By("Cleaning up fake Node")
-			if err := k8sClient.Delete(ctx, fakeNode); err != nil {
+			node := &corev1.Node{}
+			if err := k8sClient.Get(ctx, client.ObjectKey{Name: fakeNodeName}, node); err != nil {
+				GinkgoWriter.Printf("Warning: Failed to get fake Node %s for cleanup: %v\n", fakeNodeName, err)
+				return
+			}
+			// Remove finalizer so the node can be deleted
+			node.Finalizers = nil
+			if err := k8sClient.Update(ctx, node); err != nil {
+				GinkgoWriter.Printf("Warning: Failed to remove finalizer from %s: %v\n", fakeNodeName, err)
+			}
+			if err := k8sClient.Delete(ctx, node); client.IgnoreNotFound(err) != nil {
 				GinkgoWriter.Printf("Warning: Failed to delete fake Node %s: %v\n", fakeNodeName, err)
 			}
 		}()
