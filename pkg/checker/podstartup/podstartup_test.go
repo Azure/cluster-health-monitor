@@ -158,7 +158,7 @@ func TestPodStartupChecker_check(t *testing.T) {
 			mutators: []scenarioMutator{
 				func(s *testScenario) {
 					s.enabledCSITests = []config.CSIType{config.CSITypeAzureFile}
-					s.preExistingStorageClasses = []string{azureFileStorageClassName}
+					s.preExistingStorageClasses = []string{testAzureFileStorageClass}
 					for i := 0; i < maxSyntheticPods; i++ {
 						s.preExistingPVCs = append(s.preExistingPVCs, fmt.Sprintf("pvc%d", i))
 					}
@@ -463,7 +463,7 @@ func TestPodStartupChecker_check(t *testing.T) {
 			mutators: []scenarioMutator{
 				func(s *testScenario) {
 					s.enabledCSITests = []config.CSIType{config.CSITypeAzureBlob}
-					s.preExistingStorageClasses = []string{azureBlobStorageClassName}
+					s.preExistingStorageClasses = []string{testAzureBlobStorageClass}
 					s.hasCSICreateError = true
 				},
 			},
@@ -597,7 +597,7 @@ func TestPodStartupChecker_check(t *testing.T) {
 					TCPMaxRetries:              3,
 					TCPRetryInterval:           1 * time.Millisecond,
 					EnableNodeProvisioningTest: scenario.enableNodeProvisioning,
-					EnabledCSIs:                scenario.enabledCSITests,
+					EnabledCSIs:                csiConfigsFromTypes(scenario.enabledCSITests),
 				},
 				timeout:       5 * time.Second,
 				k8sClientset:  client,

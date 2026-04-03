@@ -257,13 +257,105 @@ func TestPodStartupConfig_Validate(t *testing.T) {
 				g.Expect(err.Error()).To(ContainSubstring("invalid max synthetic pods"))
 			},
 		},
+		{
+			name: "valid CSI config with multiple CSI types and storage classes",
+			mutateConfig: func(cfg *CheckerConfig) *CheckerConfig {
+				cfg.PodStartupConfig.EnabledCSIs = []CSIConfig{
+					{Type: CSITypeAzureDisk, StorageClass: "managed-csi"},
+					{Type: CSITypeAzureFile, StorageClass: "azurefile-csi"},
+					{Type: CSITypeAzureBlob, StorageClass: "clusterhealthmonitor-azureblob-sc"},
+				}
+				return cfg
+			},
+			validateRes: func(g *WithT, err error) {
+				g.Expect(err).ToNot(HaveOccurred())
+			},
+		},
+		{
+			name: "csi field present but empty is not allowed",
+			mutateConfig: func(cfg *CheckerConfig) *CheckerConfig {
+				cfg.PodStartupConfig.EnabledCSIs = []CSIConfig{}
+				return cfg
+			},
+			validateRes: func(g *WithT, err error) {
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(err.Error()).To(ContainSubstring("csi must not be empty when present"))
+			},
+		},
+		{
+			name: "duplicate csi types are allowed with unique storage classes",
+			mutateConfig: func(cfg *CheckerConfig) *CheckerConfig {
+				cfg.PodStartupConfig.EnabledCSIs = []CSIConfig{
+					{Type: CSITypeAzureFile, StorageClass: "azurefile-csi"},
+					{Type: CSITypeAzureFile, StorageClass: "azurefile-csi-premium"},
+				}
+				return cfg
+			},
+			validateRes: func(g *WithT, err error) {
+				g.Expect(err).NotTo(HaveOccurred())
+			},
+		},
+		{
+			name: "duplicate csi storage class names are not allowed for the same csi type",
+			mutateConfig: func(cfg *CheckerConfig) *CheckerConfig {
+				cfg.PodStartupConfig.EnabledCSIs = []CSIConfig{
+					{Type: CSITypeAzureFile, StorageClass: "azurefile-csi"},
+					{Type: CSITypeAzureFile, StorageClass: "azurefile-csi"},
+				}
+				return cfg
+			},
+			validateRes: func(g *WithT, err error) {
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(err.Error()).To(ContainSubstring("duplicate csi storage class"))
+			},
+		},
+		{
+			name: "duplicate csi storage class are not allowed across different csi types",
+			mutateConfig: func(cfg *CheckerConfig) *CheckerConfig {
+				cfg.PodStartupConfig.EnabledCSIs = []CSIConfig{
+					{Type: CSITypeAzureFile, StorageClass: "shared-class"},
+					{Type: CSITypeAzureDisk, StorageClass: "shared-class"},
+				}
+				return cfg
+			},
+			validateRes: func(g *WithT, err error) {
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(err.Error()).To(ContainSubstring("duplicate csi storage class"))
+			},
+		},
+		{
+			name: "unknown csi type",
+			mutateConfig: func(cfg *CheckerConfig) *CheckerConfig {
+				cfg.PodStartupConfig.EnabledCSIs = []CSIConfig{
+					{Type: CSIType("unknown"), StorageClass: "some-class"},
+				}
+				return cfg
+			},
+			validateRes: func(g *WithT, err error) {
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(err.Error()).To(ContainSubstring("invalid csi type"))
+			},
+		},
+		{
+			name: "invalid csi storage class name",
+			mutateConfig: func(cfg *CheckerConfig) *CheckerConfig {
+				cfg.PodStartupConfig.EnabledCSIs = []CSIConfig{
+					{Type: CSITypeAzureBlob, StorageClass: "Invalid_Class_Name"},
+				}
+				return cfg
+			},
+			validateRes: func(g *WithT, err error) {
+				g.Expect(err).To(HaveOccurred())
+				g.Expect(err.Error()).To(ContainSubstring("invalid csi storage class name"))
+			},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			g := NewWithT(t)
 
-			// Valida chkCfg
+			// Valid chkCfg
 			chkCfg := &CheckerConfig{
 				Name:    "test",
 				Type:    CheckTypePodStartup,
