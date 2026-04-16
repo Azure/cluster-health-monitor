@@ -1,5 +1,5 @@
 # Build the clusterhealthmonitor binary
-FROM mcr.microsoft.com/oss/go/microsoft/golang:1.25.8 AS builder
+FROM mcr.microsoft.com/oss/go/microsoft/golang:1.26.2 AS builder
 
 WORKDIR /workspace
 # Copy the Go Modules manifests
