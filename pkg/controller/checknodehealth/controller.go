@@ -277,6 +277,10 @@ func (r *CheckNodeHealthReconciler) updateNodeCondition(ctx context.Context, cnh
 		}
 	}
 
+	if chhHealthyCondition == nil {
+		return nil
+	}
+
 	// Check circuit breaker before setting the node condition
 	if !r.CircuitBreaker.Allow() {
 		klog.InfoS("Circuit breaker is open, skipping node condition update",
