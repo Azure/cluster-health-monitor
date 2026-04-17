@@ -277,8 +277,7 @@ func (r *CheckNodeHealthReconciler) updateNodeCondition(ctx context.Context, cnh
 		}
 	}
 
-	// Only emit node condition when Healthy=False
-	if chhHealthyCondition == nil || chhHealthyCondition.Status != metav1.ConditionFalse {
+	if chhHealthyCondition == nil {
 		return nil
 	}
 
@@ -303,10 +302,10 @@ func (r *CheckNodeHealthReconciler) updateNodeCondition(ctx context.Context, cnh
 	found := false
 	for i, c := range node.Status.Conditions {
 		if c.Type == NodeConditionNodeHealthy {
-			if node.Status.Conditions[i].Status != corev1.ConditionFalse {
+			if node.Status.Conditions[i].Status != corev1.ConditionStatus(chhHealthyCondition.Status) {
 				node.Status.Conditions[i].LastTransitionTime = now
 			}
-			node.Status.Conditions[i].Status = corev1.ConditionFalse
+			node.Status.Conditions[i].Status = corev1.ConditionStatus(chhHealthyCondition.Status)
 			node.Status.Conditions[i].LastHeartbeatTime = now
 			node.Status.Conditions[i].Message = chhHealthyCondition.Message
 			node.Status.Conditions[i].Reason = chhHealthyCondition.Reason
@@ -318,7 +317,7 @@ func (r *CheckNodeHealthReconciler) updateNodeCondition(ctx context.Context, cnh
 	if !found {
 		node.Status.Conditions = append(node.Status.Conditions, corev1.NodeCondition{
 			Type:               NodeConditionNodeHealthy,
-			Status:             corev1.ConditionFalse,
+			Status:             corev1.ConditionStatus(chhHealthyCondition.Status),
 			LastTransitionTime: now,
 			LastHeartbeatTime:  now,
 			Message:            chhHealthyCondition.Message,
@@ -330,7 +329,7 @@ func (r *CheckNodeHealthReconciler) updateNodeCondition(ctx context.Context, cnh
 		return fmt.Errorf("failed to update node %s condition: %w", nodeName, err)
 	}
 
-	klog.InfoS("Updated node condition", "node", nodeName, "type", NodeConditionNodeHealthy, "status", corev1.ConditionFalse)
+	klog.InfoS("Updated node condition", "node", nodeName, "type", NodeConditionNodeHealthy, "status", corev1.ConditionStatus(chhHealthyCondition.Status))
 	return nil
 }
 

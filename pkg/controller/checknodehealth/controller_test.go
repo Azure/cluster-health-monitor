@@ -516,14 +516,17 @@ func TestReconcile(t *testing.T) {
 					t.Errorf("Expected reason %q, got %q", ReasonCheckPassed, healthyCondition.Reason)
 				}
 
-				// Verify node condition is NOT set (Healthy=True should not emit node condition)
+				// Verify node condition is set to True
 				node := &corev1.Node{}
 				if err := fakeClient.Get(context.Background(), client.ObjectKey{Name: "test-node"}, node); err != nil {
 					t.Fatalf("Failed to get node: %v", err)
 				}
 				nodeCondition := getNodeHealthyCondition(node.Status.Conditions)
-				if nodeCondition != nil {
-					t.Error("Expected no NodeHealthy condition on node when Healthy=True")
+				if nodeCondition == nil {
+					t.Fatal("Expected NodeHealthy condition on node, but not found")
+				}
+				if nodeCondition.Status != corev1.ConditionTrue {
+					t.Errorf("Expected node condition status True, got %v", nodeCondition.Status)
 				}
 			},
 		},
@@ -855,5 +858,46 @@ func TestReconcile(t *testing.T) {
 				tt.validateFunc(t, fakeClient, tt.existingCR)
 			}
 		})
+	}
+}
+
+func TestUpdateNodeCondition_NilHealthyCondition(t *testing.T) {
+	reconciler, fakeClient, _ := setupTest()
+	reconciler.EnableNodeCondition = true
+	reconciler.CircuitBreaker = NewNodeConditionCircuitBreaker(DefaultCircuitBreakerThreshold, DefaultCircuitBreakerWindow, DefaultCircuitBreakerCooldown)
+
+	ctx := context.Background()
+
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-node"},
+	}
+	if err := fakeClient.Create(ctx, node); err != nil {
+		t.Fatalf("Failed to create node: %v", err)
+	}
+
+	cnh := &chmv1alpha1.CheckNodeHealth{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-nil-cond"},
+		Spec: chmv1alpha1.CheckNodeHealthSpec{
+			NodeRef: chmv1alpha1.NodeReference{Name: "test-node"},
+		},
+		Status: chmv1alpha1.CheckNodeHealthStatus{
+			Conditions: nil, // No Healthy condition
+		},
+	}
+
+	// updateNodeCondition should return nil without updating the node
+	err := reconciler.updateNodeCondition(ctx, cnh)
+	if err != nil {
+		t.Fatalf("Expected no error, got: %v", err)
+	}
+
+	// Verify node was NOT updated (no NodeHealthy condition added)
+	updatedNode := &corev1.Node{}
+	if err := fakeClient.Get(ctx, client.ObjectKey{Name: "test-node"}, updatedNode); err != nil {
+		t.Fatalf("Failed to get node: %v", err)
+	}
+	nodeCondition := getNodeHealthyCondition(updatedNode.Status.Conditions)
+	if nodeCondition != nil {
+		t.Error("Expected no NodeHealthy condition when Healthy condition is nil")
 	}
 }

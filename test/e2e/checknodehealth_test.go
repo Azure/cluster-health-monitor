@@ -212,6 +212,36 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 			}
 			return len(podList.Items)
 		}, "60s", "2s").Should(Equal(0), "Health check pod was not cleaned up within timeout")
+
+		By("Verifying NodeHealthy condition is set to True on the node")
+		Eventually(func() *corev1.NodeCondition {
+			node := &corev1.Node{}
+			if err := k8sClient.Get(ctx, client.ObjectKey{Name: testNodeName}, node); err != nil {
+				return nil
+			}
+			for i, c := range node.Status.Conditions {
+				if c.Type == checknodehealth.NodeConditionNodeHealthy {
+					return &node.Status.Conditions[i]
+				}
+			}
+			return nil
+		}, "30s", "2s").ShouldNot(BeNil(), "Expected NodeHealthy condition on node, but not found")
+
+		node := &corev1.Node{}
+		err = k8sClient.Get(ctx, client.ObjectKey{Name: testNodeName}, node)
+		Expect(err).NotTo(HaveOccurred())
+		var nodeCondition *corev1.NodeCondition
+		for i, c := range node.Status.Conditions {
+			if c.Type == checknodehealth.NodeConditionNodeHealthy {
+				nodeCondition = &node.Status.Conditions[i]
+				break
+			}
+		}
+		Expect(nodeCondition).NotTo(BeNil())
+		Expect(nodeCondition.Status).To(Equal(corev1.ConditionTrue),
+			"NodeHealthy condition should be True when health check passes")
+		GinkgoWriter.Printf("NodeHealthy condition on %s: status=%s, reason=%s, message=%s\n",
+			testNodeName, nodeCondition.Status, nodeCondition.Reason, nodeCondition.Message)
 	})
 
 	It("should handle pod timeout correctly", func() {
