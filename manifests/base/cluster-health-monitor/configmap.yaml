@@ -61,7 +61,7 @@ data:
         timeout: "30s"
         podStartupConfig:
           syntheticPodNamespace: "kube-system"
-          syntheticPodLabelKey: "kubernetes.azure.com/cluster-health-monitor-checker-synthetic"
+          syntheticPodLabelKey: "cluster-health-monitor.azure.com/checker-synthetic"
           syntheticPodStartupTimeout: "5s"
           maxSyntheticPods: 10
           tcpTimeout: "2s"
@@ -71,7 +71,7 @@ data:
         timeout: "5s"
         apiServerConfig:
           namespace: "kube-system"
-          labelKey: "kubernetes.azure.com/cluster-health-monitor-checker-apiserver"
+          labelKey: "cluster-health-monitor.azure.com/checker-apiserver"
           mutateTimeout: "1s"
           readTimeout: "1s"
           maxObjects: 10
