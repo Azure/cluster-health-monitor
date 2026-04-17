@@ -18,6 +18,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
+	"github.com/Azure/cluster-health-monitor/pkg/controller/checknodehealth"
 )
 
 const (
@@ -35,6 +36,11 @@ const (
 	// first observation (no prior bootID annotation), while older nodes will
 	// only have their annotation initialized without a health check.
 	NewNodeThreshold = 5 * time.Minute
+
+	// NodeConditionTTL is the maximum age of the NodeHealthy condition before
+	// it is garbage collected. Stale conditions are removed to avoid leaving
+	// outdated health signals on nodes after the check results expire.
+	NodeConditionTTL = 30 * time.Minute
 )
 
 // NodeRebootReconciler watches Node objects and creates CheckNodeHealth CRs
@@ -52,6 +58,7 @@ func (r *NodeRebootReconciler) SetupWithManager(mgr ctrl.Manager) error {
 }
 
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups="",resources=nodes/status,verbs=patch
 
 // Reconcile detects node reboots by comparing the node's current bootID
 // against the last-seen bootID stored in an annotation. When a reboot is
@@ -61,6 +68,12 @@ func (r *NodeRebootReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	node := &corev1.Node{}
 	if err := r.Get(ctx, req.NamespacedName, node); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	// Garbage collect stale NodeHealthy condition
+	if err := r.removeStaleNodeCondition(ctx, node); err != nil {
+		klog.ErrorS(err, "Failed to remove stale node condition", "node", node.Name)
+		return ctrl.Result{}, err
 	}
 
 	currentBootID := node.Status.NodeInfo.BootID
@@ -85,7 +98,7 @@ func (r *NodeRebootReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		} else {
 			klog.InfoS("Initializing bootID annotation for existing node", "node", node.Name, "bootID", currentBootID)
 		}
-		return ctrl.Result{}, r.updateBootIDAnnotation(ctx, node, currentBootID)
+		return ctrl.Result{RequeueAfter: NodeConditionTTL}, r.updateBootIDAnnotation(ctx, node, currentBootID)
 	}
 
 	// No reboot detected.
@@ -99,7 +112,7 @@ func (r *NodeRebootReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, err
 	}
 
-	return ctrl.Result{}, r.updateBootIDAnnotation(ctx, node, currentBootID)
+	return ctrl.Result{RequeueAfter: NodeConditionTTL}, r.updateBootIDAnnotation(ctx, node, currentBootID)
 }
 
 // createCheckNodeHealth creates a CheckNodeHealth CR with a deterministic name.
@@ -126,6 +139,33 @@ func (r *NodeRebootReconciler) createCheckNodeHealth(ctx context.Context, node *
 		return fmt.Errorf("failed to create CheckNodeHealth for node %s: %w", node.Name, err)
 	}
 	klog.InfoS("Created CheckNodeHealth for rebooted node", "name", crName, "node", node.Name, "bootID", bootID)
+	return nil
+}
+
+// removeStaleNodeCondition removes the NodeHealthy condition from the node
+// if its LastTransitionTime is older than NodeConditionTTL.
+func (r *NodeRebootReconciler) removeStaleNodeCondition(ctx context.Context, node *corev1.Node) error {
+	for i, c := range node.Status.Conditions {
+		if c.Type != checknodehealth.NodeConditionNodeHealthy {
+			continue
+		}
+
+		if time.Since(c.LastTransitionTime.Time) <= NodeConditionTTL {
+			return nil
+		}
+
+		klog.InfoS("Removing stale NodeHealthy condition", "node", node.Name,
+			"lastTransitionTime", c.LastTransitionTime)
+
+		patch := client.MergeFrom(node.DeepCopy())
+		node.Status.Conditions = append(node.Status.Conditions[:i], node.Status.Conditions[i+1:]...)
+		if err := r.Status().Patch(ctx, node, patch); err != nil {
+			return fmt.Errorf("failed to remove stale NodeHealthy condition from node %s: %w", node.Name, err)
+		}
+
+		return nil
+	}
+
 	return nil
 }
 
@@ -165,13 +205,7 @@ func (r *NodeRebootReconciler) nodeRebootPredicate() predicate.Predicate {
 			return true
 		},
 		UpdateFunc: func(e event.UpdateEvent) bool {
-			oldNode, okOld := e.ObjectOld.(*corev1.Node)
-			newNode, okNew := e.ObjectNew.(*corev1.Node)
-			if !okOld || !okNew {
-				return false
-			}
-			// Only reconcile if bootID actually changed.
-			return oldNode.Status.NodeInfo.BootID != newNode.Status.NodeInfo.BootID
+			return true
 		},
 		DeleteFunc: func(e event.DeleteEvent) bool {
 			return false
