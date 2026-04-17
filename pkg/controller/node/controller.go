@@ -98,7 +98,7 @@ func (r *NodeRebootReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		} else {
 			klog.InfoS("Initializing bootID annotation for existing node", "node", node.Name, "bootID", currentBootID)
 		}
-		return ctrl.Result{RequeueAfter: 30 * time.Minute}, r.updateBootIDAnnotation(ctx, node, currentBootID)
+		return ctrl.Result{RequeueAfter: NodeConditionTTL}, r.updateBootIDAnnotation(ctx, node, currentBootID)
 	}
 
 	// No reboot detected.
@@ -112,7 +112,7 @@ func (r *NodeRebootReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, err
 	}
 
-	return ctrl.Result{RequeueAfter: 30 * time.Minute}, r.updateBootIDAnnotation(ctx, node, currentBootID)
+	return ctrl.Result{RequeueAfter: NodeConditionTTL}, r.updateBootIDAnnotation(ctx, node, currentBootID)
 }
 
 // createCheckNodeHealth creates a CheckNodeHealth CR with a deterministic name.

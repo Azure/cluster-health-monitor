@@ -74,14 +74,14 @@ func TestNodeRebootReconcile(t *testing.T) {
 			node:           newNode("node-1", "boot-aaa", nil),
 			expectCNH:      false,
 			expectBootAnno: "boot-aaa",
-			expectRequeue:  30 * time.Minute,
+			expectRequeue:  NodeConditionTTL,
 		},
 		{
 			name:           "new node (recently created) — creates CheckNodeHealth CR",
 			node:           newNodeWithCreationTime("node-1", "boot-aaa", nil, time.Now()),
 			expectCNH:      true,
 			expectBootAnno: "boot-aaa",
-			expectRequeue:  30 * time.Minute,
+			expectRequeue:  NodeConditionTTL,
 		},
 		{
 			name: "same bootID — no-op",
@@ -99,7 +99,7 @@ func TestNodeRebootReconcile(t *testing.T) {
 			}),
 			expectCNH:      true,
 			expectBootAnno: "boot-bbb",
-			expectRequeue:  30 * time.Minute,
+			expectRequeue:  NodeConditionTTL,
 		},
 		{
 			name: "duplicate reconcile — AlreadyExists is ignored",
@@ -116,7 +116,7 @@ func TestNodeRebootReconcile(t *testing.T) {
 			},
 			expectCNH:      true,
 			expectBootAnno: "boot-bbb",
-			expectRequeue:  30 * time.Minute,
+			expectRequeue:  NodeConditionTTL,
 		},
 		{
 			name:           "node with empty bootID — skipped",
