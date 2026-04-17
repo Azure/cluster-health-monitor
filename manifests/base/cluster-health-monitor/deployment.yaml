@@ -19,8 +19,7 @@ spec:
       serviceAccountName: cluster-health-monitor
       containers:
         - name: cluster-health-monitor
-          # TODO: Update the image to the latest version.
-          image: mcr.microsoft.com/aks/cluster-health-monitor/cluster-health-monitor:v0.0.17
+          image: mcr.microsoft.com/aks/cluster-health-monitor/cluster-health-monitor:latest
           args:
             - "-v=3"
           imagePullPolicy: Always
