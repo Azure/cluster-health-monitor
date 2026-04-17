@@ -30,6 +30,7 @@ func setupRebootTest(objs ...client.Object) (*NodeRebootReconciler, client.Clien
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithObjects(objs...).
+		WithStatusSubresource(&corev1.Node{}).
 		Build()
 
 	reconciler := &NodeRebootReconciler{
@@ -218,11 +219,11 @@ func TestNodeRebootPredicate(t *testing.T) {
 		}
 	})
 
-	t.Run("update with same bootID rejected", func(t *testing.T) {
+	t.Run("update with same bootID passes", func(t *testing.T) {
 		old := newNode("n", "boot-1", nil)
 		new := newNode("n", "boot-1", nil)
-		if pred.Update(event.UpdateEvent{ObjectOld: old, ObjectNew: new}) {
-			t.Error("expected same bootID update to be rejected")
+		if !pred.Update(event.UpdateEvent{ObjectOld: old, ObjectNew: new}) {
+			t.Error("expected same bootID update to pass")
 		}
 	})
 
@@ -239,4 +240,95 @@ func TestNodeRebootPredicate(t *testing.T) {
 			t.Error("expected generic to be rejected")
 		}
 	})
+}
+
+func TestRemoveStaleNodeCondition(t *testing.T) {
+	tests := []struct {
+		name            string
+		node            *corev1.Node
+		expectRemoved   bool
+		expectCondCount int
+	}{
+		{
+			name: "no NodeHealthy condition — no-op",
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{Name: "node-1"},
+				Status: corev1.NodeStatus{
+					NodeInfo: corev1.NodeSystemInfo{BootID: "boot-1"},
+					Conditions: []corev1.NodeCondition{
+						{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+					},
+				},
+			},
+			expectRemoved:   false,
+			expectCondCount: 1,
+		},
+		{
+			name: "fresh NodeHealthy condition — not removed",
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{Name: "node-1"},
+				Status: corev1.NodeStatus{
+					NodeInfo: corev1.NodeSystemInfo{BootID: "boot-1"},
+					Conditions: []corev1.NodeCondition{
+						{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+						{
+							Type:               "kubernetes.azure.com/NodeHealthy",
+							Status:             corev1.ConditionFalse,
+							LastTransitionTime: metav1.Now(),
+						},
+					},
+				},
+			},
+			expectRemoved:   false,
+			expectCondCount: 2,
+		},
+		{
+			name: "stale NodeHealthy condition — removed",
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{Name: "node-1"},
+				Status: corev1.NodeStatus{
+					NodeInfo: corev1.NodeSystemInfo{BootID: "boot-1"},
+					Conditions: []corev1.NodeCondition{
+						{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+						{
+							Type:               "kubernetes.azure.com/NodeHealthy",
+							Status:             corev1.ConditionFalse,
+							LastTransitionTime: metav1.NewTime(time.Now().Add(-1 * time.Hour)),
+						},
+					},
+				},
+			},
+			expectRemoved:   true,
+			expectCondCount: 1,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			r, fc := setupRebootTest(tc.node)
+			ctx := context.Background()
+
+			err := r.removeStaleNodeCondition(ctx, tc.node)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			updatedNode := &corev1.Node{}
+			if err := fc.Get(ctx, client.ObjectKeyFromObject(tc.node), updatedNode); err != nil {
+				t.Fatalf("failed to get node: %v", err)
+			}
+
+			if len(updatedNode.Status.Conditions) != tc.expectCondCount {
+				t.Errorf("expected %d conditions, got %d", tc.expectCondCount, len(updatedNode.Status.Conditions))
+			}
+
+			if tc.expectRemoved {
+				for _, c := range updatedNode.Status.Conditions {
+					if c.Type == "kubernetes.azure.com/NodeHealthy" {
+						t.Error("expected NodeHealthy condition to be removed, but it still exists")
+					}
+				}
+			}
+		})
+	}
 }
