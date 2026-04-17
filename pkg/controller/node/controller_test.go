@@ -65,20 +65,23 @@ func TestNodeRebootReconcile(t *testing.T) {
 		name           string
 		node           *corev1.Node
 		existingCNH    *chmv1alpha1.CheckNodeHealth
-		expectCNH      bool   // expect a CheckNodeHealth CR to exist after reconcile
-		expectBootAnno string // expected bootID annotation value after reconcile
+		expectCNH      bool          // expect a CheckNodeHealth CR to exist after reconcile
+		expectBootAnno string        // expected bootID annotation value after reconcile
+		expectRequeue  time.Duration // expected RequeueAfter value
 	}{
 		{
 			name:           "first time seeing an existing node — sets annotation, no CNH created",
 			node:           newNode("node-1", "boot-aaa", nil),
 			expectCNH:      false,
 			expectBootAnno: "boot-aaa",
+			expectRequeue:  30 * time.Minute,
 		},
 		{
 			name:           "new node (recently created) — creates CheckNodeHealth CR",
 			node:           newNodeWithCreationTime("node-1", "boot-aaa", nil, time.Now()),
 			expectCNH:      true,
 			expectBootAnno: "boot-aaa",
+			expectRequeue:  30 * time.Minute,
 		},
 		{
 			name: "same bootID — no-op",
@@ -87,6 +90,7 @@ func TestNodeRebootReconcile(t *testing.T) {
 			}),
 			expectCNH:      false,
 			expectBootAnno: "boot-aaa",
+			expectRequeue:  0,
 		},
 		{
 			name: "bootID changed — creates CheckNodeHealth CR",
@@ -95,6 +99,7 @@ func TestNodeRebootReconcile(t *testing.T) {
 			}),
 			expectCNH:      true,
 			expectBootAnno: "boot-bbb",
+			expectRequeue:  30 * time.Minute,
 		},
 		{
 			name: "duplicate reconcile — AlreadyExists is ignored",
@@ -111,12 +116,14 @@ func TestNodeRebootReconcile(t *testing.T) {
 			},
 			expectCNH:      true,
 			expectBootAnno: "boot-bbb",
+			expectRequeue:  30 * time.Minute,
 		},
 		{
 			name:           "node with empty bootID — skipped",
 			node:           newNode("node-1", "", nil),
 			expectCNH:      false,
 			expectBootAnno: "",
+			expectRequeue:  0,
 		},
 	}
 
@@ -134,8 +141,8 @@ func TestNodeRebootReconcile(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if result.RequeueAfter != 0 {
-				t.Errorf("unexpected requeue: %v", result)
+			if result.RequeueAfter != tc.expectRequeue {
+				t.Errorf("RequeueAfter = %v, want %v", result.RequeueAfter, tc.expectRequeue)
 			}
 
 			// Check annotation
