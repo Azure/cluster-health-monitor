@@ -516,14 +516,17 @@ func TestReconcile(t *testing.T) {
 					t.Errorf("Expected reason %q, got %q", ReasonCheckPassed, healthyCondition.Reason)
 				}
 
-				// Verify node condition is NOT set (Healthy=True should not emit node condition)
+				// Verify node condition is set to True
 				node := &corev1.Node{}
 				if err := fakeClient.Get(context.Background(), client.ObjectKey{Name: "test-node"}, node); err != nil {
 					t.Fatalf("Failed to get node: %v", err)
 				}
 				nodeCondition := getNodeHealthyCondition(node.Status.Conditions)
-				if nodeCondition != nil {
-					t.Error("Expected no NodeHealthy condition on node when Healthy=True")
+				if nodeCondition == nil {
+					t.Fatal("Expected NodeHealthy condition on node, but not found")
+				}
+				if nodeCondition.Status != corev1.ConditionTrue {
+					t.Errorf("Expected node condition status True, got %v", nodeCondition.Status)
 				}
 			},
 		},
