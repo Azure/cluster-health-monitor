@@ -17,11 +17,10 @@ jobs:
   golangci:
     name: lint
     runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/oss/go/microsoft/golang:1.26.2
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: 'go.mod'
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v8
         with:
@@ -30,11 +29,10 @@ jobs:
   test:
     name: Unit Tests
     runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/oss/go/microsoft/golang:1.26.2
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: 'go.mod'
       - name: Download dependencies
         run: go mod download
       - name: Run tests
@@ -43,12 +41,13 @@ jobs:
   e2e:
     name: E2E Tests
     runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/oss/go/microsoft/golang:1.26.2
+      volumes:
+        - /var/run/docker.sock:/var/run/docker.sock
     needs: [test]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: 'go.mod'
       - uses: azure/setup-kubectl@v4
       - name: Install kind
         run: go install sigs.k8s.io/kind@v0.29.0
