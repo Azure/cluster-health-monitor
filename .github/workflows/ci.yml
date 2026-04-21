@@ -51,6 +51,7 @@ jobs:
           docker cp msgo:/usr/local/go "$HOME/microsoft-go"
           docker rm msgo
           echo "$HOME/microsoft-go/bin" >> "$GITHUB_PATH"
+          echo "$HOME/go/bin" >> "$GITHUB_PATH"
       - uses: azure/setup-kubectl@v4
       - name: Install kind
         run: go install sigs.k8s.io/kind@v0.29.0
