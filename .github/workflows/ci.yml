@@ -51,7 +51,7 @@ jobs:
       - name: Mark workspace as safe for git
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Install Docker CLI
-        run: tdnf install -y moby-cli
+        run: apt-get update && apt-get install -y docker.io
       - uses: azure/setup-kubectl@v4
       - name: Install kind
         run: go install sigs.k8s.io/kind@v0.29.0
