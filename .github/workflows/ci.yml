@@ -43,6 +43,7 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: mcr.microsoft.com/oss/go/microsoft/golang:1.26.2
+      options: --network host
       volumes:
         - /var/run/docker.sock:/var/run/docker.sock
     needs: [test]
