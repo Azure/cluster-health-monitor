@@ -382,12 +382,15 @@ func TestCreateCheckNodeHealthWaitsForReady(t *testing.T) {
 	t.Run("becomes Ready before timeout creates CR", func(t *testing.T) {
 		node := newNotReadyNode("node-1", "boot-aaa", nil, time.Now())
 		r, fc := setupRebootTest(node)
+		nodeKey := client.ObjectKey{Name: node.Name}
 
-		// Flip the node to Ready shortly after the call begins.
+		// Flip the node to Ready shortly after the call begins. Use a separate
+		// Node value to avoid racing with waitForNodeReady, which writes into
+		// the node passed to createCheckNodeHealth.
 		go func() {
 			time.Sleep(15 * time.Millisecond)
 			updated := &corev1.Node{}
-			if err := fc.Get(context.Background(), client.ObjectKeyFromObject(node), updated); err != nil {
+			if err := fc.Get(context.Background(), nodeKey, updated); err != nil {
 				return
 			}
 			updated.Status.Conditions = []corev1.NodeCondition{
