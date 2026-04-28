@@ -39,6 +39,33 @@ var _ = Describe("NodeReboot Controller", Ordered, ContinueOnFailure, Label("nod
 		Expect(err).NotTo(HaveOccurred())
 		Expect(nodeList.Items).NotTo(BeEmpty(), "No nodes found in cluster")
 
+		By("Waiting for all nodes to report Ready=True")
+		// The controller intentionally defers initializing the bootID
+		// annotation on a brand-new node until that node reports Ready, so
+		// that a CheckNodeHealth CR can also be created. In Kind, the
+		// control-plane node can take a couple of minutes to become Ready
+		// after cluster startup.
+		Eventually(func() bool {
+			nodes, err := clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
+			if err != nil {
+				return false
+			}
+			for _, node := range nodes.Items {
+				ready := false
+				for _, c := range node.Status.Conditions {
+					if c.Type == "Ready" && c.Status == "True" {
+						ready = true
+						break
+					}
+				}
+				if !ready {
+					GinkgoWriter.Printf("Node %s is not Ready yet\n", node.Name)
+					return false
+				}
+			}
+			return true
+		}, "5m", "5s").Should(BeTrue(), "Not all nodes became Ready in time")
+
 		By("Verifying each node has the last-boot-id annotation set")
 		Eventually(func() bool {
 			nodeList, err = clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
@@ -54,7 +81,7 @@ var _ = Describe("NodeReboot Controller", Ordered, ContinueOnFailure, Label("nod
 				}
 			}
 			return true
-		}, "60s", "2s").Should(BeTrue(), "Not all nodes have the last-boot-id annotation")
+		}, "2m", "2s").Should(BeTrue(), "Not all nodes have the last-boot-id annotation")
 
 		By("Verifying annotation matches the node's actual bootID")
 		for _, node := range nodeList.Items {
