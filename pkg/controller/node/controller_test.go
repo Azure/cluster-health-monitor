@@ -64,11 +64,17 @@ func newNodeWithCreationTime(name, bootID string, annotations map[string]string,
 	}
 }
 
-// newNotReadyNode is like newNode but the Ready condition is False.
+// newNotReadyNode is like newNode but the Ready condition is False. The
+// Ready condition's LastTransitionTime is set to the node's creationTime so
+// callers can control how long the node has been not Ready.
 func newNotReadyNode(name, bootID string, annotations map[string]string, creationTime time.Time) *corev1.Node {
 	n := newNodeWithCreationTime(name, bootID, annotations, creationTime)
 	n.Status.Conditions = []corev1.NodeCondition{
-		{Type: corev1.NodeReady, Status: corev1.ConditionFalse},
+		{
+			Type:               corev1.NodeReady,
+			Status:             corev1.ConditionFalse,
+			LastTransitionTime: metav1.NewTime(creationTime),
+		},
 	}
 	return n
 }
@@ -149,10 +155,19 @@ func TestNodeRebootReconcile(t *testing.T) {
 			name: "reboot detected but node not Ready yet — no CNH, annotation unchanged, requeues",
 			node: newNotReadyNode("node-1", "boot-bbb", map[string]string{
 				AnnotationLastBootID: "boot-aaa",
-			}, time.Time{}),
+			}, time.Now()),
 			expectCNH:      false,
 			expectBootAnno: "boot-aaa",
 			expectRequeue:  NodeReadyRequeueInterval,
+		},
+		{
+			name: "reboot detected, node not Ready past max wait — no CNH, annotation unchanged, no requeue",
+			node: newNotReadyNode("node-1", "boot-bbb", map[string]string{
+				AnnotationLastBootID: "boot-aaa",
+			}, time.Now().Add(-(NodeReadyMaxWait + time.Minute))),
+			expectCNH:      false,
+			expectBootAnno: "boot-aaa",
+			expectRequeue:  0,
 		},
 	}
 
