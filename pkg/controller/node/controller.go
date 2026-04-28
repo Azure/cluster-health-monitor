@@ -43,6 +43,21 @@ const (
 	NodeConditionTTL = 30 * time.Minute
 )
 
+// Tunable wait parameters for the Ready check inside createCheckNodeHealth.
+// These are var (not const) so tests can shorten them.
+var (
+	// NodeReadyPollInterval is how often to re-check a node's Ready condition
+	// while waiting for it to become Ready before creating a CheckNodeHealth.
+	NodeReadyPollInterval = 5 * time.Second
+
+	// NodeReadyWaitTimeout is the maximum time to wait for a node to become
+	// Ready before giving up on creating a CheckNodeHealth for the current
+	// reconcile. The reconciler will retry on the next observation.
+	// Set it as 5 minute because node being not ready for over 5 min should have been
+	// remediated by AKS.
+	NodeReadyWaitTimeout = 5 * time.Minute
+)
+
 // NodeRebootReconciler watches Node objects and creates CheckNodeHealth CRs
 // when a node reboot is detected via a change in bootID.
 type NodeRebootReconciler struct {
@@ -115,10 +130,19 @@ func (r *NodeRebootReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	return ctrl.Result{RequeueAfter: NodeConditionTTL}, r.updateBootIDAnnotation(ctx, node, currentBootID)
 }
 
-// createCheckNodeHealth creates a CheckNodeHealth CR with a deterministic name.
+// createCheckNodeHealth waits until the node reports Ready=True, then creates
+// a CheckNodeHealth CR with a deterministic name. Running the health checks
+// against a node that has not finished initializing (e.g., still booting after
+// a reboot) would produce spurious failures, so this function polls the node's
+// status until it is Ready before creating the CR.
+//
 // If a CR with the same name already exists (e.g., from a duplicate reconcile),
 // the AlreadyExists error is safely ignored.
 func (r *NodeRebootReconciler) createCheckNodeHealth(ctx context.Context, node *corev1.Node, bootID string) error {
+	if err := r.waitForNodeReady(ctx, node); err != nil {
+		return fmt.Errorf("node %s did not become Ready: %w", node.Name, err)
+	}
+
 	crName := GenerateCNHName(node.Name, bootID)
 	cnh := &chmv1alpha1.CheckNodeHealth{
 		ObjectMeta: metav1.ObjectMeta{
@@ -140,6 +164,48 @@ func (r *NodeRebootReconciler) createCheckNodeHealth(ctx context.Context, node *
 	}
 	klog.InfoS("Created CheckNodeHealth for rebooted node", "name", crName, "node", node.Name, "bootID", bootID)
 	return nil
+}
+
+// waitForNodeReady blocks until the given node reports Ready=True, the context
+// is cancelled, or NodeReadyWaitTimeout elapses. The node argument is refreshed
+// in place with the latest observed state.
+func (r *NodeRebootReconciler) waitForNodeReady(ctx context.Context, node *corev1.Node) error {
+	if isNodeReady(node) {
+		return nil
+	}
+
+	klog.InfoS("Waiting for node to become Ready before creating CheckNodeHealth", "node", node.Name)
+
+	waitCtx, cancel := context.WithTimeout(ctx, NodeReadyWaitTimeout)
+	defer cancel()
+
+	ticker := time.NewTicker(NodeReadyPollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-waitCtx.Done():
+			return waitCtx.Err()
+		case <-ticker.C:
+			if err := r.Get(waitCtx, client.ObjectKeyFromObject(node), node); err != nil {
+				return fmt.Errorf("failed to refresh node %s: %w", node.Name, err)
+			}
+			if isNodeReady(node) {
+				klog.InfoS("Node is now Ready", "node", node.Name)
+				return nil
+			}
+		}
+	}
+}
+
+// isNodeReady reports whether the node has a Ready condition with status True.
+func isNodeReady(node *corev1.Node) bool {
+	for _, c := range node.Status.Conditions {
+		if c.Type == corev1.NodeReady {
+			return c.Status == corev1.ConditionTrue
+		}
+	}
+	return false
 }
 
 // removeStaleNodeCondition removes the NodeHealthy condition from the node
