@@ -41,6 +41,22 @@ const (
 	// it is garbage collected. Stale conditions are removed to avoid leaving
 	// outdated health signals on nodes after the check results expire.
 	NodeConditionTTL = 30 * time.Minute
+
+	// NodeReadyRequeueInterval is how long to wait before re-checking a node
+	// that was observed as not Ready when a CheckNodeHealth would otherwise
+	// have been created. Returning a short RequeueAfter keeps the worker free
+	// to reconcile other nodes instead of blocking inside Reconcile.
+	NodeReadyRequeueInterval = 30 * time.Second
+
+	// NodeReadyMaxWait bounds how long the controller will keep requeueing a
+	// node that remains not Ready before giving up on the proactive retry
+	// loop. Once exceeded, reconcile returns without requeueing and without
+	// persisting the bootID, so a later Ready=True transition (delivered via
+	// the watch) can still produce a CheckNodeHealth for the current boot.
+	// Without this bound a node stuck in Ready=False would be requeued
+	// forever. The value is aligned with Karpenter's Node Auto Repair unready
+	// timeout (10m); the in-house Remediator uses 5m for the same condition.
+	NodeReadyMaxWait = 10 * time.Minute
 )
 
 // NodeRebootReconciler watches Node objects and creates CheckNodeHealth CRs
@@ -92,8 +108,19 @@ func (r *NodeRebootReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	if lastBootID == "" {
 		if time.Since(node.CreationTimestamp.Time) < NewNodeThreshold {
 			klog.InfoS("New node detected, creating health check", "node", node.Name, "bootID", currentBootID)
-			if err := r.createCheckNodeHealth(ctx, node, currentBootID); err != nil {
+			created, err := r.createCheckNodeHealth(ctx, node, currentBootID)
+			if err != nil {
 				return ctrl.Result{}, err
+			}
+			if !created {
+				if notReadyExceeds(node, NodeReadyMaxWait) {
+					// Node has been not Ready for too long; stop the requeue loop.
+					klog.InfoS("Node not Ready past max wait,", "node", node.Name, "bootID", currentBootID, "maxWait", NodeReadyMaxWait)
+					return ctrl.Result{}, nil
+				}
+				// Node not Ready yet; requeue without persisting the bootID so we
+				// re-evaluate on the next reconcile and don't block this worker.
+				return ctrl.Result{RequeueAfter: NodeReadyRequeueInterval}, nil
 			}
 		} else {
 			klog.InfoS("Initializing bootID annotation for existing node", "node", node.Name, "bootID", currentBootID)
@@ -108,17 +135,40 @@ func (r *NodeRebootReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 
 	// Reboot detected.
 	klog.InfoS("Node reboot detected", "node", node.Name, "oldBootID", lastBootID, "newBootID", currentBootID)
-	if err := r.createCheckNodeHealth(ctx, node, currentBootID); err != nil {
+	created, err := r.createCheckNodeHealth(ctx, node, currentBootID)
+	if err != nil {
 		return ctrl.Result{}, err
+	}
+	if !created {
+		if notReadyExceeds(node, NodeReadyMaxWait) {
+			// Node has been not Ready for too long; stop the requeue loop.
+			klog.InfoS("Node not Ready past max wait,", "node", node.Name, "bootID", currentBootID, "maxWait", NodeReadyMaxWait)
+			return ctrl.Result{}, nil
+		}
+		// Node not Ready yet; requeue without persisting the new bootID so the
+		// reboot remains detectable on the next reconcile.
+		return ctrl.Result{RequeueAfter: NodeReadyRequeueInterval}, nil
 	}
 
 	return ctrl.Result{RequeueAfter: NodeConditionTTL}, r.updateBootIDAnnotation(ctx, node, currentBootID)
 }
 
-// createCheckNodeHealth creates a CheckNodeHealth CR with a deterministic name.
-// If a CR with the same name already exists (e.g., from a duplicate reconcile),
-// the AlreadyExists error is safely ignored.
-func (r *NodeRebootReconciler) createCheckNodeHealth(ctx context.Context, node *corev1.Node, bootID string) error {
+// createCheckNodeHealth creates a CheckNodeHealth CR with a deterministic
+// name, but only if the node currently reports Ready=True. Running the health
+// checks against a node that has not finished initializing (e.g., still
+// booting after a reboot) would produce spurious failures, so the caller
+// should requeue and retry when this returns (false, nil).
+//
+// Returns (true, nil) if the CR was created (or already existed). Returns
+// (false, nil) if the node is not Ready yet and no CR was created. If a CR
+// with the same name already exists (e.g., from a duplicate reconcile), the
+// AlreadyExists error is safely ignored.
+func (r *NodeRebootReconciler) createCheckNodeHealth(ctx context.Context, node *corev1.Node, bootID string) (bool, error) {
+	if !isNodeReady(node) {
+		klog.InfoS("Node is not Ready yet, deferring CheckNodeHealth creation", "node", node.Name, "bootID", bootID)
+		return false, nil
+	}
+
 	crName := GenerateCNHName(node.Name, bootID)
 	cnh := &chmv1alpha1.CheckNodeHealth{
 		ObjectMeta: metav1.ObjectMeta{
@@ -134,12 +184,40 @@ func (r *NodeRebootReconciler) createCheckNodeHealth(ctx context.Context, node *
 	if err := r.Create(ctx, cnh); err != nil {
 		if apierrors.IsAlreadyExists(err) {
 			klog.V(1).InfoS("CheckNodeHealth already exists for this boot", "name", crName, "node", node.Name)
-			return nil
+			return true, nil
 		}
-		return fmt.Errorf("failed to create CheckNodeHealth for node %s: %w", node.Name, err)
+		return false, fmt.Errorf("failed to create CheckNodeHealth for node %s: %w", node.Name, err)
 	}
 	klog.InfoS("Created CheckNodeHealth for rebooted node", "name", crName, "node", node.Name, "bootID", bootID)
-	return nil
+	return true, nil
+}
+
+// isNodeReady reports whether the node has a Ready condition with status True.
+func isNodeReady(node *corev1.Node) bool {
+	for _, c := range node.Status.Conditions {
+		if c.Type == corev1.NodeReady {
+			return c.Status == corev1.ConditionTrue
+		}
+	}
+	return false
+}
+
+// notReadyExceeds reports whether the node's Ready condition is not True and
+// its LastTransitionTime is older than the given duration. If the Ready
+// condition is missing, the node's CreationTimestamp is used as the reference
+// point so freshly observed nodes without a Ready condition are not
+// immediately considered to have exceeded the wait.
+func notReadyExceeds(node *corev1.Node, d time.Duration) bool {
+	for _, c := range node.Status.Conditions {
+		if c.Type != corev1.NodeReady {
+			continue
+		}
+		if c.Status == corev1.ConditionTrue {
+			return false
+		}
+		return time.Since(c.LastTransitionTime.Time) > d
+	}
+	return time.Since(node.CreationTimestamp.Time) > d
 }
 
 // removeStaleNodeCondition removes the NodeHealthy condition from the node

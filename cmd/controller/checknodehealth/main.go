@@ -117,7 +117,9 @@ func main() {
 	}
 
 	// When node reboot detection is enabled, cache Node objects with a transformer
-	// that strips most fields to minimize memory usage. Only metadata and bootID are retained.
+	// that strips most fields to minimize memory usage. Only metadata, bootID, and
+	// conditions are retained — conditions are needed so the reboot reconciler can
+	// defer creating CheckNodeHealth CRs until the node reports Ready.
 	if enableNodeRebootCheck {
 		cacheByObject[&corev1.Node{}] = cache.ByObject{
 			Transform: func(obj interface{}) (interface{}, error) {
@@ -129,6 +131,7 @@ func main() {
 					NodeInfo: corev1.NodeSystemInfo{
 						BootID: node.Status.NodeInfo.BootID,
 					},
+					Conditions: node.Status.Conditions,
 				}
 				node.Spec = corev1.NodeSpec{}
 				return node, nil
