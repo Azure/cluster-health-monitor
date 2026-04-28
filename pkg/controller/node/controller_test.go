@@ -138,6 +138,22 @@ func TestNodeRebootReconcile(t *testing.T) {
 			expectBootAnno: "",
 			expectRequeue:  0,
 		},
+		{
+			name:           "new node not Ready yet — no CNH, annotation not set, requeues",
+			node:           newNotReadyNode("node-1", "boot-aaa", nil, time.Now()),
+			expectCNH:      false,
+			expectBootAnno: "",
+			expectRequeue:  NodeReadyRequeueInterval,
+		},
+		{
+			name: "reboot detected but node not Ready yet — no CNH, annotation unchanged, requeues",
+			node: newNotReadyNode("node-1", "boot-bbb", map[string]string{
+				AnnotationLastBootID: "boot-aaa",
+			}, time.Time{}),
+			expectCNH:      false,
+			expectBootAnno: "boot-aaa",
+			expectRequeue:  NodeReadyRequeueInterval,
+		},
 	}
 
 	for _, tc := range tests {
@@ -353,23 +369,17 @@ func TestRemoveStaleNodeCondition(t *testing.T) {
 	}
 }
 
-func TestCreateCheckNodeHealthWaitsForReady(t *testing.T) {
-	// Shorten wait/poll to keep the test fast.
-	origPoll, origTimeout := NodeReadyPollInterval, NodeReadyWaitTimeout
-	NodeReadyPollInterval = 10 * time.Millisecond
-	NodeReadyWaitTimeout = 50 * time.Millisecond
-	t.Cleanup(func() {
-		NodeReadyPollInterval = origPoll
-		NodeReadyWaitTimeout = origTimeout
-	})
-
-	t.Run("not Ready within timeout returns error and creates no CR", func(t *testing.T) {
+func TestCreateCheckNodeHealthSkipsWhenNotReady(t *testing.T) {
+	t.Run("not Ready returns (false, nil) and creates no CR", func(t *testing.T) {
 		node := newNotReadyNode("node-1", "boot-aaa", nil, time.Now())
 		r, fc := setupRebootTest(node)
 
-		err := r.createCheckNodeHealth(context.Background(), node, "boot-aaa")
-		if err == nil {
-			t.Fatal("expected error when node never becomes Ready")
+		created, err := r.createCheckNodeHealth(context.Background(), node, "boot-aaa")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if created {
+			t.Fatal("expected created=false when node is not Ready")
 		}
 
 		cnh := &chmv1alpha1.CheckNodeHealth{}
@@ -379,28 +389,16 @@ func TestCreateCheckNodeHealthWaitsForReady(t *testing.T) {
 		}
 	})
 
-	t.Run("becomes Ready before timeout creates CR", func(t *testing.T) {
-		node := newNotReadyNode("node-1", "boot-aaa", nil, time.Now())
+	t.Run("Ready returns (true, nil) and creates CR", func(t *testing.T) {
+		node := newNodeWithCreationTime("node-1", "boot-aaa", nil, time.Now())
 		r, fc := setupRebootTest(node)
-		nodeKey := client.ObjectKey{Name: node.Name}
 
-		// Flip the node to Ready shortly after the call begins. Use a separate
-		// Node value to avoid racing with waitForNodeReady, which writes into
-		// the node passed to createCheckNodeHealth.
-		go func() {
-			time.Sleep(15 * time.Millisecond)
-			updated := &corev1.Node{}
-			if err := fc.Get(context.Background(), nodeKey, updated); err != nil {
-				return
-			}
-			updated.Status.Conditions = []corev1.NodeCondition{
-				{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
-			}
-			_ = fc.Status().Update(context.Background(), updated)
-		}()
-
-		if err := r.createCheckNodeHealth(context.Background(), node, "boot-aaa"); err != nil {
+		created, err := r.createCheckNodeHealth(context.Background(), node, "boot-aaa")
+		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
+		}
+		if !created {
+			t.Fatal("expected created=true when node is Ready")
 		}
 
 		cnh := &chmv1alpha1.CheckNodeHealth{}
