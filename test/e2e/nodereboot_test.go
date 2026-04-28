@@ -81,7 +81,7 @@ var _ = Describe("NodeReboot Controller", Ordered, ContinueOnFailure, Label("nod
 				}
 			}
 			return true
-		}, "2m", "2s").Should(BeTrue(), "Not all nodes have the last-boot-id annotation")
+		}, "60s", "2s").Should(BeTrue(), "Not all nodes have the last-boot-id annotation")
 
 		By("Verifying annotation matches the node's actual bootID")
 		for _, node := range nodeList.Items {
