@@ -15,9 +15,9 @@ COPY pkg/ pkg/
 COPY apis/ apis/
 
 # Build
-RUN CGO_ENABLED=1 go build -o clusterhealthmonitor cmd/clusterhealthmonitor/main.go
-RUN CGO_ENABLED=1 go build -o controller cmd/controller/checknodehealth/main.go
-RUN CGO_ENABLED=1 go build -o nodechecker cmd/nodechecker/main.go
+RUN go build -o clusterhealthmonitor cmd/clusterhealthmonitor/main.go
+RUN go build -o controller cmd/controller/checknodehealth/main.go
+RUN go build -o nodechecker cmd/nodechecker/main.go
 
 # Patch the distroless base image with updated openssl packages
 FROM mcr.microsoft.com/azurelinux/distroless/base:3.0 AS distroless-base
