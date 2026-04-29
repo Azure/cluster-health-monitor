@@ -68,5 +68,5 @@ jobs:
         context: .
         file: docker/cluster-health-monitor.Dockerfile
         platforms: linux/amd64,linux/arm64
-        push: true
+        push: false
         tags: ${{ secrets.AZURE_REGISTRY }}/${{ env.REGISTRY_REPO}}/${{ env.CLUSTER_HEALTH_MONITOR_IMAGE_NAME }}:${{ needs.prepare-variables.outputs.release_tag }}
