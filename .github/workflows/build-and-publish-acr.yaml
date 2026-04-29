@@ -40,33 +40,70 @@ jobs:
         # NOTE: As exporting a variable from a secret is not possible, the shared variable registry obtained
         # from AZURE_REGISTRY secret is not exported from here.
 
-  publish-images:
+  # Build each platform on its own runner so amd64 and arm64 don't compete for RAM
+  # on a single (2 vCPU / ~8 GiB) runner. Each job pushes a per-arch tag and the
+  # final manifest list is assembled by the publish-manifest job.
+  build-per-arch:
     runs-on:
       labels: [ self-hosted, "1ES.Pool=1es-aks-cluster-health-monitor-pool-ubuntu" ]
     needs: prepare-variables
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - platform: linux/amd64
+            suffix: amd64
+          - platform: linux/arm64
+            suffix: arm64
     steps:
     - uses: actions/checkout@v4
       with:
         ref: ${{ needs.prepare-variables.outputs.release_tag }}
-    
+
     - name: Set up QEMU
+      if: matrix.platform == 'linux/arm64'
       uses: docker/setup-qemu-action@v3
-    
+
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
       with:
         driver-opts: image=mcr.microsoft.com/oss/v2/moby/buildkit:v0.18.1
-    
+
     - name: 'Login the ACR'
       run: |
-        az login --identity 
+        az login --identity
         az acr login -n ${{ secrets.AZURE_REGISTRY }}
-    
-    - name: Build and publish cluster-health-monitor
+
+    - name: Build and push (${{ matrix.platform }})
       uses: docker/build-push-action@v6
       with:
         context: .
         file: docker/cluster-health-monitor.Dockerfile
-        platforms: linux/amd64,linux/arm64
+        platforms: ${{ matrix.platform }}
         push: true
-        tags: ${{ secrets.AZURE_REGISTRY }}/${{ env.REGISTRY_REPO}}/${{ env.CLUSTER_HEALTH_MONITOR_IMAGE_NAME }}:${{ needs.prepare-variables.outputs.release_tag }}
+        provenance: false
+        tags: ${{ secrets.AZURE_REGISTRY }}/${{ env.REGISTRY_REPO }}/${{ env.CLUSTER_HEALTH_MONITOR_IMAGE_NAME }}:${{ needs.prepare-variables.outputs.release_tag }}-${{ matrix.suffix }}
+
+  # Combine the per-arch tags into a single multi-arch manifest list under the
+  # canonical release tag so consumers see a normal multi-arch image.
+  publish-manifest:
+    runs-on:
+      labels: [ self-hosted, "1ES.Pool=1es-aks-cluster-health-monitor-pool-ubuntu" ]
+    needs: [prepare-variables, build-per-arch]
+    steps:
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+      with:
+        driver-opts: image=mcr.microsoft.com/oss/v2/moby/buildkit:v0.18.1
+
+    - name: 'Login the ACR'
+      run: |
+        az login --identity
+        az acr login -n ${{ secrets.AZURE_REGISTRY }}
+
+    - name: Create multi-arch manifest
+      env:
+        TAG: ${{ secrets.AZURE_REGISTRY }}/${{ env.REGISTRY_REPO }}/${{ env.CLUSTER_HEALTH_MONITOR_IMAGE_NAME }}:${{ needs.prepare-variables.outputs.release_tag }}
+      run: |
+        docker buildx imagetools create -t "$TAG" "${TAG}-amd64" "${TAG}-arm64"
+        docker buildx imagetools inspect "$TAG"
