@@ -15,9 +15,11 @@ COPY pkg/ pkg/
 COPY apis/ apis/
 
 # Build
-RUN CGO_ENABLED=1 go build -o clusterhealthmonitor cmd/clusterhealthmonitor/main.go
-RUN CGO_ENABLED=1 go build -o controller cmd/controller/checknodehealth/main.go
-RUN CGO_ENABLED=1 go build -o nodechecker cmd/nodechecker/main.go
+# According to https://github.com/microsoft/go/tree/microsoft/main/eng/doc/fips#usage-common-configurations
+# CGO_ENABLED=0 GOEXPERIMENT=ms_nocgo_opensslcrypto is FIPS compliant with Go 1.26
+RUN CGO_ENABLED=0 GOEXPERIMENT=ms_nocgo_opensslcrypto go build -o clusterhealthmonitor cmd/clusterhealthmonitor/main.go
+RUN CGO_ENABLED=0 GOEXPERIMENT=ms_nocgo_opensslcrypto go build -o controller cmd/controller/checknodehealth/main.go
+RUN CGO_ENABLED=0 GOEXPERIMENT=ms_nocgo_opensslcrypto go build -o nodechecker cmd/nodechecker/main.go
 
 # Patch the distroless base image with updated openssl packages
 FROM mcr.microsoft.com/azurelinux/distroless/base:3.0 AS distroless-base
