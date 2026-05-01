@@ -167,6 +167,8 @@ func (r *NodeRebootReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 
 // createCheckNodeHealth creates a CheckNodeHealth CR with a deterministic
 // name, but only if the node currently reports Ready=True. Running the health
+// createCheckNodeHealth creates a CheckNodeHealth CR with a deterministic
+// name, but only if the node has been initialized. Running the health
 // checks against a node that has not finished initializing (e.g., still
 // booting after a reboot) would produce spurious failures, so the caller
 // should requeue and retry when this returns (false, nil).
