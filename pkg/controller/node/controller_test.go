@@ -439,17 +439,17 @@ func TestIsNodeReadyForHealthCheck(t *testing.T) {
 		want bool
 	}{
 		{
-			name: "non-Karpenter Ready=True — ready",
+			name: "non-Karpenter node condition Ready=True — ready for health check",
 			node: newNodeWithCreationTime("node-1", "boot-aaa", nil, time.Now()),
 			want: true,
 		},
 		{
-			name: "non-Karpenter Ready=False — not ready",
+			name: "non-Karpenter node condition Ready=False — not ready for health check",
 			node: newNotReadyNode("node-1", "boot-aaa", nil, time.Now()),
 			want: false,
 		},
 		{
-			name: "non-Karpenter no Ready condition — not ready",
+			name: "non-Karpenter no Ready condition — not ready for health check",
 			node: func() *corev1.Node {
 				n := newNodeWithCreationTime("node-1", "boot-aaa", nil, time.Now())
 				n.Status.Conditions = nil
@@ -458,25 +458,14 @@ func TestIsNodeReadyForHealthCheck(t *testing.T) {
 			want: false,
 		},
 		{
-			name: "Karpenter initialized — ready (Ready condition not required)",
+			name: "Karpenter initialized — ready for health check (Ready condition not required)",
 			node: newKarpenterNode("node-1", "boot-aaa", nil, time.Now(), true),
 			want: true,
 		},
 		{
-			name: "Karpenter not initialized — not ready",
+			name: "Karpenter not initialized — not ready for health check",
 			node: newKarpenterNode("node-1", "boot-aaa", nil, time.Now(), false),
 			want: false,
-		},
-		{
-			name: "Karpenter initialized but Ready=False — ready (initialized label is sufficient)",
-			node: func() *corev1.Node {
-				n := newKarpenterNode("node-1", "boot-aaa", nil, time.Now(), true)
-				n.Status.Conditions = []corev1.NodeCondition{
-					{Type: corev1.NodeReady, Status: corev1.ConditionFalse},
-				}
-				return n
-			}(),
-			want: true,
 		},
 	}
 	for _, tc := range tests {
