@@ -57,6 +57,13 @@ const (
 	// forever. The value is aligned with Karpenter's Node Auto Repair unready
 	// timeout (10m); the in-house Remediator uses 5m for the same condition.
 	NodeReadyMaxWait = 10 * time.Minute
+
+	// KarpenterUnregisteredTaintKey is the taint key Karpenter applies to
+	// nodes it has provisioned but not yet finished registering. The taint is
+	// removed by Karpenter once the node has been registered, so we defer
+	// CheckNodeHealth creation until then to avoid running checks against a
+	// node that is not yet fully initialized.
+	KarpenterUnregisteredTaintKey = "karpenter.sh/unregistered"
 )
 
 // NodeRebootReconciler watches Node objects and creates CheckNodeHealth CRs
@@ -168,6 +175,11 @@ func (r *NodeRebootReconciler) createCheckNodeHealth(ctx context.Context, node *
 		klog.InfoS("Node is not Ready yet, deferring CheckNodeHealth creation", "node", node.Name, "bootID", bootID)
 		return false, nil
 	}
+	if hasKarpenterUnregisteredTaint(node) {
+		klog.InfoS("Karpenter node not registered yet, deferring CheckNodeHealth creation",
+			"node", node.Name, "bootID", bootID, "taint", KarpenterUnregisteredTaintKey)
+		return false, nil
+	}
 
 	crName := GenerateCNHName(node.Name, bootID)
 	cnh := &chmv1alpha1.CheckNodeHealth{
@@ -202,12 +214,30 @@ func isNodeReady(node *corev1.Node) bool {
 	return false
 }
 
+// hasKarpenterUnregisteredTaint reports whether the node carries Karpenter's
+// unregistered taint, indicating that Karpenter has not yet finished
+// registering the node.
+func hasKarpenterUnregisteredTaint(node *corev1.Node) bool {
+	for _, t := range node.Spec.Taints {
+		if t.Key == KarpenterUnregisteredTaintKey {
+			return true
+		}
+	}
+	return false
+}
+
 // notReadyExceeds reports whether the node's Ready condition is not True and
 // its LastTransitionTime is older than the given duration. If the Ready
 // condition is missing, the node's CreationTimestamp is used as the reference
 // point so freshly observed nodes without a Ready condition are not
 // immediately considered to have exceeded the wait.
 func notReadyExceeds(node *corev1.Node, d time.Duration) bool {
+	// If a Karpenter node is Ready=True but still has the unregistered taint,
+	// bound the wait using the node's CreationTimestamp so we don't requeue
+	// forever should Karpenter never remove the taint.
+	if hasKarpenterUnregisteredTaint(node) && isNodeReady(node) {
+		return time.Since(node.CreationTimestamp.Time) > d
+	}
 	for _, c := range node.Status.Conditions {
 		if c.Type != corev1.NodeReady {
 			continue
