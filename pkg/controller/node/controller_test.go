@@ -79,13 +79,18 @@ func newNotReadyNode(name, bootID string, annotations map[string]string, creatio
 	return n
 }
 
-// newKarpenterUnregisteredNode returns a Ready=True node carrying Karpenter's
-// unregistered taint, simulating a node that has been provisioned but not yet
-// registered by Karpenter.
-func newKarpenterUnregisteredNode(name, bootID string, annotations map[string]string, creationTime time.Time) *corev1.Node {
+// newKarpenterNode returns a Ready=True node managed by Karpenter. If
+// initialized is true, the karpenter.sh/initialized=true label is set;
+// otherwise the label is absent (simulating a node that Karpenter has not
+// yet finished initializing).
+func newKarpenterNode(name, bootID string, annotations map[string]string, creationTime time.Time, initialized bool) *corev1.Node {
 	n := newNodeWithCreationTime(name, bootID, annotations, creationTime)
-	n.Spec.Taints = []corev1.Taint{
-		{Key: KarpenterUnregisteredTaintKey, Effect: corev1.TaintEffectNoSchedule},
+	if n.Labels == nil {
+		n.Labels = map[string]string{}
+	}
+	n.Labels[KarpenterNodePoolLabel] = "default"
+	if initialized {
+		n.Labels[KarpenterInitializedLabel] = "true"
 	}
 	return n
 }
@@ -181,29 +186,36 @@ func TestNodeRebootReconcile(t *testing.T) {
 			expectRequeue:  0,
 		},
 		{
-			name:           "new Karpenter node still unregistered — no CNH, annotation not set, requeues",
-			node:           newKarpenterUnregisteredNode("node-1", "boot-aaa", nil, time.Now()),
+			name:           "new Karpenter node not initialized — no CNH, annotation not set, requeues",
+			node:           newKarpenterNode("node-1", "boot-aaa", nil, time.Now(), false),
 			expectCNH:      false,
 			expectBootAnno: "",
 			expectRequeue:  NodeReadyRequeueInterval,
 		},
 		{
-			name: "reboot detected on Karpenter node still unregistered — no CNH, annotation unchanged, requeues",
-			node: newKarpenterUnregisteredNode("node-1", "boot-bbb", map[string]string{
+			name: "reboot detected on Karpenter node not initialized — no CNH, annotation unchanged, requeues",
+			node: newKarpenterNode("node-1", "boot-bbb", map[string]string{
 				AnnotationLastBootID: "boot-aaa",
-			}, time.Now()),
+			}, time.Now(), false),
 			expectCNH:      false,
 			expectBootAnno: "boot-aaa",
 			expectRequeue:  NodeReadyRequeueInterval,
 		},
 		{
-			name: "reboot detected on Karpenter node still unregistered past max wait — no CNH, annotation unchanged, no requeue",
-			node: newKarpenterUnregisteredNode("node-1", "boot-bbb", map[string]string{
+			name: "reboot detected on Karpenter node not initialized past max wait — no CNH, annotation unchanged, no requeue",
+			node: newKarpenterNode("node-1", "boot-bbb", map[string]string{
 				AnnotationLastBootID: "boot-aaa",
-			}, time.Now().Add(-(NodeReadyMaxWait + time.Minute))),
+			}, time.Now().Add(-(NodeReadyMaxWait + time.Minute)), false),
 			expectCNH:      false,
 			expectBootAnno: "boot-aaa",
 			expectRequeue:  0,
+		},
+		{
+			name:           "new Karpenter node already initialized — creates CNH",
+			node:           newKarpenterNode("node-1", "boot-aaa", nil, time.Now(), true),
+			expectCNH:      true,
+			expectBootAnno: "boot-aaa",
+			expectRequeue:  NodeConditionTTL,
 		},
 	}
 
@@ -458,8 +470,8 @@ func TestCreateCheckNodeHealthSkipsWhenNotReady(t *testing.T) {
 		}
 	})
 
-	t.Run("Karpenter unregistered taint returns (false, nil) and creates no CR", func(t *testing.T) {
-		node := newKarpenterUnregisteredNode("node-1", "boot-aaa", nil, time.Now())
+	t.Run("Karpenter node not initialized returns (false, nil) and creates no CR", func(t *testing.T) {
+		node := newKarpenterNode("node-1", "boot-aaa", nil, time.Now(), false)
 		r, fc := setupRebootTest(node)
 
 		created, err := r.createCheckNodeHealth(context.Background(), node, "boot-aaa")
@@ -467,7 +479,7 @@ func TestCreateCheckNodeHealthSkipsWhenNotReady(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if created {
-			t.Fatal("expected created=false when Karpenter unregistered taint is present")
+			t.Fatal("expected created=false when Karpenter node is not initialized")
 		}
 
 		cnh := &chmv1alpha1.CheckNodeHealth{}
@@ -476,55 +488,95 @@ func TestCreateCheckNodeHealthSkipsWhenNotReady(t *testing.T) {
 			t.Errorf("expected NotFound error for CheckNodeHealth, got %v", gotErr)
 		}
 	})
+
+	t.Run("Karpenter node initialized returns (true, nil) and creates CR", func(t *testing.T) {
+		node := newKarpenterNode("node-1", "boot-aaa", nil, time.Now(), true)
+		r, fc := setupRebootTest(node)
+
+		created, err := r.createCheckNodeHealth(context.Background(), node, "boot-aaa")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !created {
+			t.Fatal("expected created=true when Karpenter node is initialized")
+		}
+
+		cnh := &chmv1alpha1.CheckNodeHealth{}
+		if err := fc.Get(context.Background(), client.ObjectKey{Name: GenerateCNHName("node-1", "boot-aaa")}, cnh); err != nil {
+			t.Errorf("expected CheckNodeHealth to be created: %v", err)
+		}
+	})
 }
 
-func TestHasKarpenterUnregisteredTaint(t *testing.T) {
+func TestKarpenterHelpers(t *testing.T) {
 	tests := []struct {
-		name   string
-		taints []corev1.Taint
-		want   bool
+		name            string
+		labels          map[string]string
+		wantManaged     bool
+		wantInitialized bool
 	}{
-		{name: "no taints", taints: nil, want: false},
+		{name: "no labels", labels: nil, wantManaged: false, wantInitialized: false},
 		{
-			name:   "unrelated taint",
-			taints: []corev1.Taint{{Key: "node.kubernetes.io/unreachable", Effect: corev1.TaintEffectNoSchedule}},
-			want:   false,
+			name:            "managed but not initialized",
+			labels:          map[string]string{KarpenterNodePoolLabel: "default"},
+			wantManaged:     true,
+			wantInitialized: false,
 		},
 		{
-			name:   "karpenter unregistered taint present",
-			taints: []corev1.Taint{{Key: KarpenterUnregisteredTaintKey, Effect: corev1.TaintEffectNoSchedule}},
-			want:   true,
+			name:            "managed and initialized",
+			labels:          map[string]string{KarpenterNodePoolLabel: "default", KarpenterInitializedLabel: "true"},
+			wantManaged:     true,
+			wantInitialized: true,
 		},
 		{
-			name: "karpenter unregistered taint among others",
-			taints: []corev1.Taint{
-				{Key: "node.kubernetes.io/unreachable", Effect: corev1.TaintEffectNoSchedule},
-				{Key: KarpenterUnregisteredTaintKey, Effect: corev1.TaintEffectNoSchedule},
-			},
-			want: true,
+			name:            "initialized label not 'true'",
+			labels:          map[string]string{KarpenterNodePoolLabel: "default", KarpenterInitializedLabel: "false"},
+			wantManaged:     true,
+			wantInitialized: false,
+		},
+		{
+			name:            "initialized label without nodepool",
+			labels:          map[string]string{KarpenterInitializedLabel: "true"},
+			wantManaged:     false,
+			wantInitialized: true,
+		},
+		{
+			name:            "nodepool label present but empty value",
+			labels:          map[string]string{KarpenterNodePoolLabel: ""},
+			wantManaged:     false,
+			wantInitialized: false,
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			node := &corev1.Node{Spec: corev1.NodeSpec{Taints: tc.taints}}
-			if got := hasKarpenterUnregisteredTaint(node); got != tc.want {
-				t.Errorf("hasKarpenterUnregisteredTaint = %v, want %v", got, tc.want)
+			node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Labels: tc.labels}}
+			if got := isKarpenterManaged(node); got != tc.wantManaged {
+				t.Errorf("isKarpenterManaged = %v, want %v", got, tc.wantManaged)
+			}
+			if got := isKarpenterInitialized(node); got != tc.wantInitialized {
+				t.Errorf("isKarpenterInitialized = %v, want %v", got, tc.wantInitialized)
 			}
 		})
 	}
 }
 
-func TestNotReadyExceedsKarpenterTainted(t *testing.T) {
-	t.Run("Ready=True with taint, recent — does not exceed", func(t *testing.T) {
-		node := newKarpenterUnregisteredNode("node-1", "boot-aaa", nil, time.Now())
+func TestNotReadyExceedsKarpenterUninitialized(t *testing.T) {
+	t.Run("Karpenter Ready=True not initialized, recent — does not exceed", func(t *testing.T) {
+		node := newKarpenterNode("node-1", "boot-aaa", nil, time.Now(), false)
 		if notReadyExceeds(node, NodeReadyMaxWait) {
-			t.Error("expected notReadyExceeds=false for recently created tainted node")
+			t.Error("expected notReadyExceeds=false for recently created uninitialized node")
 		}
 	})
-	t.Run("Ready=True with taint, old — exceeds", func(t *testing.T) {
-		node := newKarpenterUnregisteredNode("node-1", "boot-aaa", nil, time.Now().Add(-(NodeReadyMaxWait + time.Minute)))
+	t.Run("Karpenter Ready=True not initialized, old — exceeds", func(t *testing.T) {
+		node := newKarpenterNode("node-1", "boot-aaa", nil, time.Now().Add(-(NodeReadyMaxWait + time.Minute)), false)
 		if !notReadyExceeds(node, NodeReadyMaxWait) {
-			t.Error("expected notReadyExceeds=true for old tainted node")
+			t.Error("expected notReadyExceeds=true for old uninitialized node")
+		}
+	})
+	t.Run("Karpenter Ready=True initialized — does not exceed", func(t *testing.T) {
+		node := newKarpenterNode("node-1", "boot-aaa", nil, time.Now().Add(-(NodeReadyMaxWait + time.Minute)), true)
+		if notReadyExceeds(node, NodeReadyMaxWait) {
+			t.Error("expected notReadyExceeds=false for initialized Ready=True node")
 		}
 	})
 }

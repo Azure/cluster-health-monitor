@@ -58,12 +58,17 @@ const (
 	// timeout (10m); the in-house Remediator uses 5m for the same condition.
 	NodeReadyMaxWait = 10 * time.Minute
 
-	// KarpenterUnregisteredTaintKey is the taint key Karpenter applies to
-	// nodes it has provisioned but not yet finished registering. The taint is
-	// removed by Karpenter once the node has been registered, so we defer
-	// CheckNodeHealth creation until then to avoid running checks against a
-	// node that is not yet fully initialized.
-	KarpenterUnregisteredTaintKey = "karpenter.sh/unregistered"
+	// KarpenterNodePoolLabel is set by Karpenter on every node it manages and
+	// holds the name of the owning NodePool. Its presence is used to detect
+	// whether a node is Karpenter-managed.
+	KarpenterNodePoolLabel = "karpenter.sh/nodepool"
+
+	// KarpenterInitializedLabel is set to "true" by Karpenter once a node it
+	// manages has finished initializing (Ready, startup taints removed, etc.).
+	// CheckNodeHealth creation is deferred for Karpenter-managed nodes until
+	// this label is true to avoid running checks against a node that is not
+	// yet fully initialized.
+	KarpenterInitializedLabel = "karpenter.sh/initialized"
 )
 
 // NodeRebootReconciler watches Node objects and creates CheckNodeHealth CRs
@@ -175,9 +180,9 @@ func (r *NodeRebootReconciler) createCheckNodeHealth(ctx context.Context, node *
 		klog.InfoS("Node is not Ready yet, deferring CheckNodeHealth creation", "node", node.Name, "bootID", bootID)
 		return false, nil
 	}
-	if hasKarpenterUnregisteredTaint(node) {
-		klog.InfoS("Karpenter node not registered yet, deferring CheckNodeHealth creation",
-			"node", node.Name, "bootID", bootID, "taint", KarpenterUnregisteredTaintKey)
+	if isKarpenterManaged(node) && !isKarpenterInitialized(node) {
+		klog.InfoS("Karpenter node not initialized yet, deferring CheckNodeHealth creation",
+			"node", node.Name, "bootID", bootID, "label", KarpenterInitializedLabel)
 		return false, nil
 	}
 
@@ -214,16 +219,17 @@ func isNodeReady(node *corev1.Node) bool {
 	return false
 }
 
-// hasKarpenterUnregisteredTaint reports whether the node carries Karpenter's
-// unregistered taint, indicating that Karpenter has not yet finished
-// registering the node.
-func hasKarpenterUnregisteredTaint(node *corev1.Node) bool {
-	for _, t := range node.Spec.Taints {
-		if t.Key == KarpenterUnregisteredTaintKey {
-			return true
-		}
-	}
-	return false
+// isKarpenterManaged reports whether the node is managed by Karpenter,
+// detected via the presence of the karpenter.sh/nodepool label.
+func isKarpenterManaged(node *corev1.Node) bool {
+	v, ok := node.Labels[KarpenterNodePoolLabel]
+	return ok && v != ""
+}
+
+// isKarpenterInitialized reports whether Karpenter has marked the node as
+// initialized via the karpenter.sh/initialized=true label.
+func isKarpenterInitialized(node *corev1.Node) bool {
+	return node.Labels[KarpenterInitializedLabel] == "true"
 }
 
 // notReadyExceeds reports whether the node's Ready condition is not True and
@@ -232,10 +238,10 @@ func hasKarpenterUnregisteredTaint(node *corev1.Node) bool {
 // point so freshly observed nodes without a Ready condition are not
 // immediately considered to have exceeded the wait.
 func notReadyExceeds(node *corev1.Node, d time.Duration) bool {
-	// If a Karpenter node is Ready=True but still has the unregistered taint,
-	// bound the wait using the node's CreationTimestamp so we don't requeue
-	// forever should Karpenter never remove the taint.
-	if hasKarpenterUnregisteredTaint(node) && isNodeReady(node) {
+	// If a Karpenter node is Ready=True but not yet initialized, bound the
+	// wait using the node's CreationTimestamp so we don't requeue forever
+	// should Karpenter never set the initialized label.
+	if isKarpenterManaged(node) && !isKarpenterInitialized(node) && isNodeReady(node) {
 		return time.Since(node.CreationTimestamp.Time) > d
 	}
 	for _, c := range node.Status.Conditions {
