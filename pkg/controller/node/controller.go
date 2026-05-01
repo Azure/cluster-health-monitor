@@ -58,10 +58,10 @@ const (
 	// timeout (10m); the in-house Remediator uses 5m for the same condition.
 	NodeReadyMaxWait = 10 * time.Minute
 
-	// KarpenterNodePoolLabel is set by Karpenter on every node it manages and
-	// holds the name of the owning NodePool. Its presence is used to detect
-	// whether a node is Karpenter-managed.
-	KarpenterNodePoolLabel = "karpenter.sh/capacity-type"
+	// KarpenterCapacityTyeLabel is set by Karpenter on every node it manages and
+	// holds the name of the capacity type (e.g., "spot" or "on-demand") for the
+	// node. It is used to determine whether a node is Karpenter-managed.
+	KarpenterCapacityTypeLabel = "karpenter.sh/capacity-type"
 
 	// KarpenterInitializedLabel is set to "true" by Karpenter once a node it
 	// manages has finished initializing (Ready, startup taints removed, etc.).
@@ -222,7 +222,7 @@ func isNodeReady(node *corev1.Node) bool {
 // isKarpenterManaged reports whether the node is managed by Karpenter,
 // detected via the presence of the karpenter.sh/nodepool label.
 func isKarpenterManaged(node *corev1.Node) bool {
-	v, ok := node.Labels[KarpenterNodePoolLabel]
+	v, ok := node.Labels[KarpenterCapacityTypeLabel]
 	return ok && v != ""
 }
 

@@ -88,7 +88,7 @@ func newKarpenterNode(name, bootID string, annotations map[string]string, creati
 	if n.Labels == nil {
 		n.Labels = map[string]string{}
 	}
-	n.Labels[KarpenterNodePoolLabel] = "spot"
+	n.Labels[KarpenterCapacityTypeLabel] = "spot"
 	if initialized {
 		n.Labels[KarpenterInitializedLabel] = "true"
 	}
@@ -518,19 +518,19 @@ func TestKarpenterHelpers(t *testing.T) {
 		{name: "no labels", labels: nil, wantManaged: false, wantInitialized: false},
 		{
 			name:            "managed (spot) but not initialized",
-			labels:          map[string]string{KarpenterNodePoolLabel: "spot"},
+			labels:          map[string]string{KarpenterCapacityTypeLabel: "spot"},
 			wantManaged:     true,
 			wantInitialized: false,
 		},
 		{
 			name:            "managed (on-demand) and initialized",
-			labels:          map[string]string{KarpenterNodePoolLabel: "on-demand", KarpenterInitializedLabel: "true"},
+			labels:          map[string]string{KarpenterCapacityTypeLabel: "on-demand", KarpenterInitializedLabel: "true"},
 			wantManaged:     true,
 			wantInitialized: true,
 		},
 		{
 			name:            "initialized label not 'true'",
-			labels:          map[string]string{KarpenterNodePoolLabel: "spot", KarpenterInitializedLabel: "false"},
+			labels:          map[string]string{KarpenterCapacityTypeLabel: "spot", KarpenterInitializedLabel: "false"},
 			wantManaged:     true,
 			wantInitialized: false,
 		},
@@ -542,7 +542,7 @@ func TestKarpenterHelpers(t *testing.T) {
 		},
 		{
 			name:            "capacity-type label present but empty value",
-			labels:          map[string]string{KarpenterNodePoolLabel: ""},
+			labels:          map[string]string{KarpenterCapacityTypeLabel: ""},
 			wantManaged:     false,
 			wantInitialized: false,
 		},
