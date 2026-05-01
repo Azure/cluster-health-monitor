@@ -57,6 +57,18 @@ const (
 	// forever. The value is aligned with Karpenter's Node Auto Repair unready
 	// timeout (10m); the in-house Remediator uses 5m for the same condition.
 	NodeReadyMaxWait = 10 * time.Minute
+
+	// KarpenterCapacityTypeLabel is set by Karpenter on every node it manages and
+	// holds the name of the capacity type (e.g., "spot" or "on-demand") for the
+	// node. It is used to determine whether a node is Karpenter-managed.
+	KarpenterCapacityTypeLabel = "karpenter.sh/capacity-type"
+
+	// KarpenterInitializedLabel is set to "true" by Karpenter once a node it
+	// manages has finished initializing (Ready, startup taints removed, etc.).
+	// CheckNodeHealth creation is deferred for Karpenter-managed nodes until
+	// this label is true to avoid running checks against a node that is not
+	// yet fully initialized.
+	KarpenterInitializedLabel = "karpenter.sh/initialized"
 )
 
 // NodeRebootReconciler watches Node objects and creates CheckNodeHealth CRs
@@ -154,7 +166,7 @@ func (r *NodeRebootReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 }
 
 // createCheckNodeHealth creates a CheckNodeHealth CR with a deterministic
-// name, but only if the node currently reports Ready=True. Running the health
+// name, but only if the node has been initialized. Running the health
 // checks against a node that has not finished initializing (e.g., still
 // booting after a reboot) would produce spurious failures, so the caller
 // should requeue and retry when this returns (false, nil).
@@ -164,8 +176,7 @@ func (r *NodeRebootReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 // with the same name already exists (e.g., from a duplicate reconcile), the
 // AlreadyExists error is safely ignored.
 func (r *NodeRebootReconciler) createCheckNodeHealth(ctx context.Context, node *corev1.Node, bootID string) (bool, error) {
-	if !isNodeReady(node) {
-		klog.InfoS("Node is not Ready yet, deferring CheckNodeHealth creation", "node", node.Name, "bootID", bootID)
+	if !isNodeReadyForHealthCheck(node, bootID) {
 		return false, nil
 	}
 
@@ -192,6 +203,30 @@ func (r *NodeRebootReconciler) createCheckNodeHealth(ctx context.Context, node *
 	return true, nil
 }
 
+// isNodeReadyForHealthCheck reports whether the node is ready to have a
+// CheckNodeHealth CR created against it. A node is considered ready when its
+// Ready condition is True and, if managed by Karpenter, the
+// karpenter.sh/initialized label is set to "true". When the node is not yet
+// ready, a log line is emitted explaining why so the caller can simply
+// requeue without additional logging.
+func isNodeReadyForHealthCheck(node *corev1.Node, bootID string) bool {
+	if isKarpenterManaged(node) {
+		if !isKarpenterInitialized(node) {
+			klog.InfoS("Karpenter node not initialized yet, deferring CheckNodeHealth creation",
+				"node", node.Name, "bootID", bootID, "label", KarpenterInitializedLabel)
+			return false
+		}
+		return true
+	}
+
+	// Non-Karpenter nodes are considered ready when the Ready condition is True.
+	if !isNodeReady(node) {
+		klog.InfoS("Node is not Ready yet, deferring CheckNodeHealth creation", "node", node.Name, "bootID", bootID)
+		return false
+	}
+	return true
+}
+
 // isNodeReady reports whether the node has a Ready condition with status True.
 func isNodeReady(node *corev1.Node) bool {
 	for _, c := range node.Status.Conditions {
@@ -202,12 +237,31 @@ func isNodeReady(node *corev1.Node) bool {
 	return false
 }
 
+// isKarpenterManaged reports whether the node is managed by Karpenter,
+// detected via the presence of the karpenter.sh/nodepool label.
+func isKarpenterManaged(node *corev1.Node) bool {
+	v, ok := node.Labels[KarpenterCapacityTypeLabel]
+	return ok && v != ""
+}
+
+// isKarpenterInitialized reports whether Karpenter has marked the node as
+// initialized via the karpenter.sh/initialized=true label.
+func isKarpenterInitialized(node *corev1.Node) bool {
+	return node.Labels[KarpenterInitializedLabel] == "true"
+}
+
 // notReadyExceeds reports whether the node's Ready condition is not True and
 // its LastTransitionTime is older than the given duration. If the Ready
 // condition is missing, the node's CreationTimestamp is used as the reference
 // point so freshly observed nodes without a Ready condition are not
 // immediately considered to have exceeded the wait.
 func notReadyExceeds(node *corev1.Node, d time.Duration) bool {
+	// If a Karpenter node is Ready=True but not yet initialized, bound the
+	// wait using the node's CreationTimestamp so we don't requeue forever
+	// should Karpenter never set the initialized label.
+	if isKarpenterManaged(node) && !isKarpenterInitialized(node) {
+		return time.Since(node.CreationTimestamp.Time) > d
+	}
 	for _, c := range node.Status.Conditions {
 		if c.Type != corev1.NodeReady {
 			continue

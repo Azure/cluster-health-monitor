@@ -79,6 +79,22 @@ func newNotReadyNode(name, bootID string, annotations map[string]string, creatio
 	return n
 }
 
+// newKarpenterNode returns a Ready=True node managed by Karpenter. If
+// initialized is true, the karpenter.sh/initialized=true label is set;
+// otherwise the label is absent (simulating a node that Karpenter has not
+// yet finished initializing).
+func newKarpenterNode(name, bootID string, annotations map[string]string, creationTime time.Time, initialized bool) *corev1.Node {
+	n := newNodeWithCreationTime(name, bootID, annotations, creationTime)
+	if n.Labels == nil {
+		n.Labels = map[string]string{}
+	}
+	n.Labels[KarpenterCapacityTypeLabel] = "spot"
+	if initialized {
+		n.Labels[KarpenterInitializedLabel] = "true"
+	}
+	return n
+}
+
 func TestNodeRebootReconcile(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -168,6 +184,38 @@ func TestNodeRebootReconcile(t *testing.T) {
 			expectCNH:      false,
 			expectBootAnno: "boot-aaa",
 			expectRequeue:  0,
+		},
+		{
+			name:           "new Karpenter node not initialized — no CNH, annotation not set, requeues",
+			node:           newKarpenterNode("node-1", "boot-aaa", nil, time.Now(), false),
+			expectCNH:      false,
+			expectBootAnno: "",
+			expectRequeue:  NodeReadyRequeueInterval,
+		},
+		{
+			name: "reboot detected on Karpenter node not initialized — no CNH, annotation unchanged, requeues",
+			node: newKarpenterNode("node-1", "boot-bbb", map[string]string{
+				AnnotationLastBootID: "boot-aaa",
+			}, time.Now(), false),
+			expectCNH:      false,
+			expectBootAnno: "boot-aaa",
+			expectRequeue:  NodeReadyRequeueInterval,
+		},
+		{
+			name: "reboot detected on Karpenter node not initialized past max wait — no CNH, annotation unchanged, no requeue",
+			node: newKarpenterNode("node-1", "boot-bbb", map[string]string{
+				AnnotationLastBootID: "boot-aaa",
+			}, time.Now().Add(-(NodeReadyMaxWait + time.Minute)), false),
+			expectCNH:      false,
+			expectBootAnno: "boot-aaa",
+			expectRequeue:  0,
+		},
+		{
+			name:           "new Karpenter node already initialized — creates CNH",
+			node:           newKarpenterNode("node-1", "boot-aaa", nil, time.Now(), true),
+			expectCNH:      true,
+			expectBootAnno: "boot-aaa",
+			expectRequeue:  NodeConditionTTL,
 		},
 	}
 
@@ -384,6 +432,51 @@ func TestRemoveStaleNodeCondition(t *testing.T) {
 	}
 }
 
+func TestIsNodeReadyForHealthCheck(t *testing.T) {
+	tests := []struct {
+		name string
+		node *corev1.Node
+		want bool
+	}{
+		{
+			name: "non-Karpenter node condition Ready=True — ready for health check",
+			node: newNodeWithCreationTime("node-1", "boot-aaa", nil, time.Now()),
+			want: true,
+		},
+		{
+			name: "non-Karpenter node condition Ready=False — not ready for health check",
+			node: newNotReadyNode("node-1", "boot-aaa", nil, time.Now()),
+			want: false,
+		},
+		{
+			name: "non-Karpenter no Ready condition — not ready for health check",
+			node: func() *corev1.Node {
+				n := newNodeWithCreationTime("node-1", "boot-aaa", nil, time.Now())
+				n.Status.Conditions = nil
+				return n
+			}(),
+			want: false,
+		},
+		{
+			name: "Karpenter initialized — ready for health check (Ready condition not required)",
+			node: newKarpenterNode("node-1", "boot-aaa", nil, time.Now(), true),
+			want: true,
+		},
+		{
+			name: "Karpenter not initialized — not ready for health check",
+			node: newKarpenterNode("node-1", "boot-aaa", nil, time.Now(), false),
+			want: false,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isNodeReadyForHealthCheck(tc.node, "boot-aaa"); got != tc.want {
+				t.Errorf("isNodeReadyForHealthCheck = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestCreateCheckNodeHealthSkipsWhenNotReady(t *testing.T) {
 	t.Run("not Ready returns (false, nil) and creates no CR", func(t *testing.T) {
 		node := newNotReadyNode("node-1", "boot-aaa", nil, time.Now())
@@ -414,6 +507,43 @@ func TestCreateCheckNodeHealthSkipsWhenNotReady(t *testing.T) {
 		}
 		if !created {
 			t.Fatal("expected created=true when node is Ready")
+		}
+
+		cnh := &chmv1alpha1.CheckNodeHealth{}
+		if err := fc.Get(context.Background(), client.ObjectKey{Name: GenerateCNHName("node-1", "boot-aaa")}, cnh); err != nil {
+			t.Errorf("expected CheckNodeHealth to be created: %v", err)
+		}
+	})
+
+	t.Run("Karpenter node not initialized returns (false, nil) and creates no CR", func(t *testing.T) {
+		node := newKarpenterNode("node-1", "boot-aaa", nil, time.Now(), false)
+		r, fc := setupRebootTest(node)
+
+		created, err := r.createCheckNodeHealth(context.Background(), node, "boot-aaa")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if created {
+			t.Fatal("expected created=false when Karpenter node is not initialized")
+		}
+
+		cnh := &chmv1alpha1.CheckNodeHealth{}
+		gotErr := fc.Get(context.Background(), client.ObjectKey{Name: GenerateCNHName("node-1", "boot-aaa")}, cnh)
+		if !apierrors.IsNotFound(gotErr) {
+			t.Errorf("expected NotFound error for CheckNodeHealth, got %v", gotErr)
+		}
+	})
+
+	t.Run("Karpenter node initialized returns (true, nil) and creates CR", func(t *testing.T) {
+		node := newKarpenterNode("node-1", "boot-aaa", nil, time.Now(), true)
+		r, fc := setupRebootTest(node)
+
+		created, err := r.createCheckNodeHealth(context.Background(), node, "boot-aaa")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !created {
+			t.Fatal("expected created=true when Karpenter node is initialized")
 		}
 
 		cnh := &chmv1alpha1.CheckNodeHealth{}
