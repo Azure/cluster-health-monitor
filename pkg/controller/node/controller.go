@@ -259,7 +259,7 @@ func notReadyExceeds(node *corev1.Node, d time.Duration) bool {
 	// If a Karpenter node is Ready=True but not yet initialized, bound the
 	// wait using the node's CreationTimestamp so we don't requeue forever
 	// should Karpenter never set the initialized label.
-	if isKarpenterManaged(node) && !isKarpenterInitialized(node) && isNodeReady(node) {
+	if isKarpenterManaged(node) && !isKarpenterInitialized(node) {
 		return time.Since(node.CreationTimestamp.Time) > d
 	}
 	for _, c := range node.Status.Conditions {
