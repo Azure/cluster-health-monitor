@@ -88,7 +88,7 @@ func newKarpenterNode(name, bootID string, annotations map[string]string, creati
 	if n.Labels == nil {
 		n.Labels = map[string]string{}
 	}
-	n.Labels[KarpenterNodePoolLabel] = "default"
+	n.Labels[KarpenterNodePoolLabel] = "spot"
 	if initialized {
 		n.Labels[KarpenterInitializedLabel] = "true"
 	}
@@ -517,31 +517,31 @@ func TestKarpenterHelpers(t *testing.T) {
 	}{
 		{name: "no labels", labels: nil, wantManaged: false, wantInitialized: false},
 		{
-			name:            "managed but not initialized",
-			labels:          map[string]string{KarpenterNodePoolLabel: "default"},
+			name:            "managed (spot) but not initialized",
+			labels:          map[string]string{KarpenterNodePoolLabel: "spot"},
 			wantManaged:     true,
 			wantInitialized: false,
 		},
 		{
-			name:            "managed and initialized",
-			labels:          map[string]string{KarpenterNodePoolLabel: "default", KarpenterInitializedLabel: "true"},
+			name:            "managed (on-demand) and initialized",
+			labels:          map[string]string{KarpenterNodePoolLabel: "on-demand", KarpenterInitializedLabel: "true"},
 			wantManaged:     true,
 			wantInitialized: true,
 		},
 		{
 			name:            "initialized label not 'true'",
-			labels:          map[string]string{KarpenterNodePoolLabel: "default", KarpenterInitializedLabel: "false"},
+			labels:          map[string]string{KarpenterNodePoolLabel: "spot", KarpenterInitializedLabel: "false"},
 			wantManaged:     true,
 			wantInitialized: false,
 		},
 		{
-			name:            "initialized label without nodepool",
+			name:            "initialized label without capacity-type",
 			labels:          map[string]string{KarpenterInitializedLabel: "true"},
 			wantManaged:     false,
 			wantInitialized: true,
 		},
 		{
-			name:            "nodepool label present but empty value",
+			name:            "capacity-type label present but empty value",
 			labels:          map[string]string{KarpenterNodePoolLabel: ""},
 			wantManaged:     false,
 			wantInitialized: false,

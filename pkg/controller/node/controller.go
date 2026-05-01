@@ -61,7 +61,7 @@ const (
 	// KarpenterNodePoolLabel is set by Karpenter on every node it manages and
 	// holds the name of the owning NodePool. Its presence is used to detect
 	// whether a node is Karpenter-managed.
-	KarpenterNodePoolLabel = "karpenter.sh/nodepool"
+	KarpenterNodePoolLabel = "karpenter.sh/capacity-type"
 
 	// KarpenterInitializedLabel is set to "true" by Karpenter once a node it
 	// manages has finished initializing (Ready, startup taints removed, etc.).
