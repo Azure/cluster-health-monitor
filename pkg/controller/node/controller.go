@@ -176,13 +176,7 @@ func (r *NodeRebootReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 // with the same name already exists (e.g., from a duplicate reconcile), the
 // AlreadyExists error is safely ignored.
 func (r *NodeRebootReconciler) createCheckNodeHealth(ctx context.Context, node *corev1.Node, bootID string) (bool, error) {
-	if !isNodeReady(node) {
-		klog.InfoS("Node is not Ready yet, deferring CheckNodeHealth creation", "node", node.Name, "bootID", bootID)
-		return false, nil
-	}
-	if isKarpenterManaged(node) && !isKarpenterInitialized(node) {
-		klog.InfoS("Karpenter node not initialized yet, deferring CheckNodeHealth creation",
-			"node", node.Name, "bootID", bootID, "label", KarpenterInitializedLabel)
+	if !isNodeReadyForHealthCheck(node, bootID) {
 		return false, nil
 	}
 
@@ -207,6 +201,30 @@ func (r *NodeRebootReconciler) createCheckNodeHealth(ctx context.Context, node *
 	}
 	klog.InfoS("Created CheckNodeHealth for rebooted node", "name", crName, "node", node.Name, "bootID", bootID)
 	return true, nil
+}
+
+// isNodeReadyForHealthCheck reports whether the node is ready to have a
+// CheckNodeHealth CR created against it. A node is considered ready when its
+// Ready condition is True and, if managed by Karpenter, the
+// karpenter.sh/initialized label is set to "true". When the node is not yet
+// ready, a log line is emitted explaining why so the caller can simply
+// requeue without additional logging.
+func isNodeReadyForHealthCheck(node *corev1.Node, bootID string) bool {
+	if isKarpenterManaged(node) {
+		if !isKarpenterInitialized(node) {
+			klog.InfoS("Karpenter node not initialized yet, deferring CheckNodeHealth creation",
+				"node", node.Name, "bootID", bootID, "label", KarpenterInitializedLabel)
+			return false
+		}
+		return true
+	}
+
+	// Non-Karpenter nodes are considered ready when the Ready condition is True.
+	if !isNodeReady(node) {
+		klog.InfoS("Node is not Ready yet, deferring CheckNodeHealth creation", "node", node.Name, "bootID", bootID)
+		return false
+	}
+	return true
 }
 
 // isNodeReady reports whether the node has a Ready condition with status True.

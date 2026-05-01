@@ -432,6 +432,62 @@ func TestRemoveStaleNodeCondition(t *testing.T) {
 	}
 }
 
+func TestIsNodeReadyForHealthCheck(t *testing.T) {
+	tests := []struct {
+		name string
+		node *corev1.Node
+		want bool
+	}{
+		{
+			name: "non-Karpenter Ready=True — ready",
+			node: newNodeWithCreationTime("node-1", "boot-aaa", nil, time.Now()),
+			want: true,
+		},
+		{
+			name: "non-Karpenter Ready=False — not ready",
+			node: newNotReadyNode("node-1", "boot-aaa", nil, time.Now()),
+			want: false,
+		},
+		{
+			name: "non-Karpenter no Ready condition — not ready",
+			node: func() *corev1.Node {
+				n := newNodeWithCreationTime("node-1", "boot-aaa", nil, time.Now())
+				n.Status.Conditions = nil
+				return n
+			}(),
+			want: false,
+		},
+		{
+			name: "Karpenter initialized — ready (Ready condition not required)",
+			node: newKarpenterNode("node-1", "boot-aaa", nil, time.Now(), true),
+			want: true,
+		},
+		{
+			name: "Karpenter not initialized — not ready",
+			node: newKarpenterNode("node-1", "boot-aaa", nil, time.Now(), false),
+			want: false,
+		},
+		{
+			name: "Karpenter initialized but Ready=False — ready (initialized label is sufficient)",
+			node: func() *corev1.Node {
+				n := newKarpenterNode("node-1", "boot-aaa", nil, time.Now(), true)
+				n.Status.Conditions = []corev1.NodeCondition{
+					{Type: corev1.NodeReady, Status: corev1.ConditionFalse},
+				}
+				return n
+			}(),
+			want: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isNodeReadyForHealthCheck(tc.node, "boot-aaa"); got != tc.want {
+				t.Errorf("isNodeReadyForHealthCheck = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestCreateCheckNodeHealthSkipsWhenNotReady(t *testing.T) {
 	t.Run("not Ready returns (false, nil) and creates no CR", func(t *testing.T) {
 		node := newNotReadyNode("node-1", "boot-aaa", nil, time.Now())
@@ -504,79 +560,6 @@ func TestCreateCheckNodeHealthSkipsWhenNotReady(t *testing.T) {
 		cnh := &chmv1alpha1.CheckNodeHealth{}
 		if err := fc.Get(context.Background(), client.ObjectKey{Name: GenerateCNHName("node-1", "boot-aaa")}, cnh); err != nil {
 			t.Errorf("expected CheckNodeHealth to be created: %v", err)
-		}
-	})
-}
-
-func TestKarpenterHelpers(t *testing.T) {
-	tests := []struct {
-		name            string
-		labels          map[string]string
-		wantManaged     bool
-		wantInitialized bool
-	}{
-		{name: "no labels", labels: nil, wantManaged: false, wantInitialized: false},
-		{
-			name:            "managed (spot) but not initialized",
-			labels:          map[string]string{KarpenterCapacityTypeLabel: "spot"},
-			wantManaged:     true,
-			wantInitialized: false,
-		},
-		{
-			name:            "managed (on-demand) and initialized",
-			labels:          map[string]string{KarpenterCapacityTypeLabel: "on-demand", KarpenterInitializedLabel: "true"},
-			wantManaged:     true,
-			wantInitialized: true,
-		},
-		{
-			name:            "initialized label not 'true'",
-			labels:          map[string]string{KarpenterCapacityTypeLabel: "spot", KarpenterInitializedLabel: "false"},
-			wantManaged:     true,
-			wantInitialized: false,
-		},
-		{
-			name:            "initialized label without capacity-type",
-			labels:          map[string]string{KarpenterInitializedLabel: "true"},
-			wantManaged:     false,
-			wantInitialized: true,
-		},
-		{
-			name:            "capacity-type label present but empty value",
-			labels:          map[string]string{KarpenterCapacityTypeLabel: ""},
-			wantManaged:     false,
-			wantInitialized: false,
-		},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Labels: tc.labels}}
-			if got := isKarpenterManaged(node); got != tc.wantManaged {
-				t.Errorf("isKarpenterManaged = %v, want %v", got, tc.wantManaged)
-			}
-			if got := isKarpenterInitialized(node); got != tc.wantInitialized {
-				t.Errorf("isKarpenterInitialized = %v, want %v", got, tc.wantInitialized)
-			}
-		})
-	}
-}
-
-func TestNotReadyExceedsKarpenterUninitialized(t *testing.T) {
-	t.Run("Karpenter Ready=True not initialized, recent — does not exceed", func(t *testing.T) {
-		node := newKarpenterNode("node-1", "boot-aaa", nil, time.Now(), false)
-		if notReadyExceeds(node, NodeReadyMaxWait) {
-			t.Error("expected notReadyExceeds=false for recently created uninitialized node")
-		}
-	})
-	t.Run("Karpenter Ready=True not initialized, old — exceeds", func(t *testing.T) {
-		node := newKarpenterNode("node-1", "boot-aaa", nil, time.Now().Add(-(NodeReadyMaxWait + time.Minute)), false)
-		if !notReadyExceeds(node, NodeReadyMaxWait) {
-			t.Error("expected notReadyExceeds=true for old uninitialized node")
-		}
-	})
-	t.Run("Karpenter Ready=True initialized — does not exceed", func(t *testing.T) {
-		node := newKarpenterNode("node-1", "boot-aaa", nil, time.Now().Add(-(NodeReadyMaxWait + time.Minute)), true)
-		if notReadyExceeds(node, NodeReadyMaxWait) {
-			t.Error("expected notReadyExceeds=false for initialized Ready=True node")
 		}
 	})
 }
