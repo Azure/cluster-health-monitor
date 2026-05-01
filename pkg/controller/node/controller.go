@@ -58,7 +58,7 @@ const (
 	// timeout (10m); the in-house Remediator uses 5m for the same condition.
 	NodeReadyMaxWait = 10 * time.Minute
 
-	// KarpenterCapacityTyeLabel is set by Karpenter on every node it manages and
+	// KarpenterCapacityTypeLabel is set by Karpenter on every node it manages and
 	// holds the name of the capacity type (e.g., "spot" or "on-demand") for the
 	// node. It is used to determine whether a node is Karpenter-managed.
 	KarpenterCapacityTypeLabel = "karpenter.sh/capacity-type"
