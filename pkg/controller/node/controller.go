@@ -225,7 +225,7 @@ func (r *NodeRebootReconciler) createCheckNodeHealth(ctx context.Context, node *
 //   - at least one CoreDNS pod is Ready in the cluster, since the health
 //     checks rely on cluster DNS being functional.
 //
-// When the node is not yet ready, a log line is emitted explaining why so
+// When the node is not yet ready for health checks, a log line is emitted explaining why so
 // the caller can simply requeue without additional logging. An error is
 // returned only for transient failures (e.g., listing pods).
 func (r *NodeRebootReconciler) isNodeReadyForHealthCheck(ctx context.Context, node *corev1.Node, bootID string) (bool, error) {
