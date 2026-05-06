@@ -22,6 +22,16 @@ import (
 )
 
 const (
+	// coreDNSNamespace is the namespace where CoreDNS pods run.
+	coreDNSNamespace = "kube-system"
+
+	// coreDNSAppLabelKey/Value identify CoreDNS pods via the standard
+	// k8s-app=kube-dns label used by both kube-dns and CoreDNS deployments.
+	coreDNSAppLabelKey   = "k8s-app"
+	coreDNSAppLabelValue = "kube-dns"
+)
+
+const (
 	// AnnotationLastBootID is the annotation key used to store the last observed bootID on a node.
 	AnnotationLastBootID = "checknodehealth.clusterhealthmonitor.azure.com/last-boot-id"
 
@@ -87,6 +97,7 @@ func (r *NodeRebootReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups="",resources=nodes/status,verbs=patch
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch,namespace=kube-system
 
 // Reconcile detects node reboots by comparing the node's current bootID
 // against the last-seen bootID stored in an annotation. When a reboot is
@@ -176,7 +187,11 @@ func (r *NodeRebootReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 // with the same name already exists (e.g., from a duplicate reconcile), the
 // AlreadyExists error is safely ignored.
 func (r *NodeRebootReconciler) createCheckNodeHealth(ctx context.Context, node *corev1.Node, bootID string) (bool, error) {
-	if !isNodeReadyForHealthCheck(node, bootID) {
+	ready, err := r.isNodeReadyForHealthCheck(ctx, node, bootID)
+	if err != nil {
+		return false, err
+	}
+	if !ready {
 		return false, nil
 	}
 
@@ -204,27 +219,68 @@ func (r *NodeRebootReconciler) createCheckNodeHealth(ctx context.Context, node *
 }
 
 // isNodeReadyForHealthCheck reports whether the node is ready to have a
-// CheckNodeHealth CR created against it. A node is considered ready when its
-// Ready condition is True and, if managed by Karpenter, the
-// karpenter.sh/initialized label is set to "true". When the node is not yet
-// ready, a log line is emitted explaining why so the caller can simply
-// requeue without additional logging.
-func isNodeReadyForHealthCheck(node *corev1.Node, bootID string) bool {
+// CheckNodeHealth CR created against it. A node is considered ready when:
+//   - its Ready condition is True (or, if managed by Karpenter, the
+//     karpenter.sh/initialized label is set to "true"); and
+//   - at least one CoreDNS pod is Ready in the cluster, since the health
+//     checks rely on cluster DNS being functional.
+//
+// When the node is not yet ready, a log line is emitted explaining why so
+// the caller can simply requeue without additional logging. An error is
+// returned only for transient failures (e.g., listing pods).
+func (r *NodeRebootReconciler) isNodeReadyForHealthCheck(ctx context.Context, node *corev1.Node, bootID string) (bool, error) {
 	if isKarpenterManaged(node) {
 		if !isKarpenterInitialized(node) {
 			klog.InfoS("Karpenter node not initialized yet, deferring CheckNodeHealth creation",
 				"node", node.Name, "bootID", bootID, "label", KarpenterInitializedLabel)
-			return false
+			return false, nil
 		}
-		return true
+	} else if !isNodeReady(node) {
+		// Non-Karpenter nodes are considered ready when the Ready condition is True.
+		klog.InfoS("Node is not Ready yet, deferring CheckNodeHealth creation", "node", node.Name, "bootID", bootID)
+		return false, nil
 	}
 
-	// Non-Karpenter nodes are considered ready when the Ready condition is True.
-	if !isNodeReady(node) {
-		klog.InfoS("Node is not Ready yet, deferring CheckNodeHealth creation", "node", node.Name, "bootID", bootID)
-		return false
+	ready, err := r.coreDNSReady(ctx)
+	if err != nil {
+		return false, fmt.Errorf("failed to check CoreDNS readiness: %w", err)
 	}
-	return true
+	if !ready {
+		klog.InfoS("No Ready CoreDNS pods found, deferring CheckNodeHealth creation",
+			"node", node.Name, "bootID", bootID)
+		return false, nil
+	}
+
+	return true, nil
+}
+
+// coreDNSReady reports whether at least one CoreDNS pod in the kube-system
+// namespace is Ready. CheckNodeHealth runs DNS-dependent checks, so creating
+// CRs while CoreDNS is unavailable would produce spurious failures.
+func (r *NodeRebootReconciler) coreDNSReady(ctx context.Context) (bool, error) {
+	podList := &corev1.PodList{}
+	if err := r.List(ctx, podList,
+		client.InNamespace(coreDNSNamespace),
+		client.MatchingLabels{coreDNSAppLabelKey: coreDNSAppLabelValue},
+	); err != nil {
+		return false, err
+	}
+	for _, pod := range podList.Items {
+		if isPodReady(&pod) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// isPodReady reports whether the pod has a PodReady condition with status True.
+func isPodReady(pod *corev1.Pod) bool {
+	for _, c := range pod.Status.Conditions {
+		if c.Type == corev1.PodReady {
+			return c.Status == corev1.ConditionTrue
+		}
+	}
+	return false
 }
 
 // isNodeReady reports whether the node has a Ready condition with status True.
