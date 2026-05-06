@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -22,13 +24,12 @@ import (
 )
 
 const (
-	// coreDNSNamespace is the namespace where CoreDNS pods run.
+	// coreDNSNamespace is the namespace where the CoreDNS Deployment lives.
 	coreDNSNamespace = "kube-system"
 
-	// coreDNSAppLabelKey/Value identify CoreDNS pods via the standard
-	// k8s-app=kube-dns label used by both kube-dns and CoreDNS deployments.
-	coreDNSAppLabelKey   = "k8s-app"
-	coreDNSAppLabelValue = "kube-dns"
+	// coreDNSDeploymentName is the name of the CoreDNS Deployment used to
+	// determine cluster DNS readiness.
+	coreDNSDeploymentName = "coredns"
 )
 
 const (
@@ -97,7 +98,7 @@ func (r *NodeRebootReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups="",resources=nodes/status,verbs=patch
-// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch,namespace=kube-system
+// +kubebuilder:rbac:groups="apps",resources=deployments,verbs=get;list;watch,namespace=kube-system
 
 // Reconcile detects node reboots by comparing the node's current bootID
 // against the last-seen bootID stored in an annotation. When a reboot is
@@ -222,21 +223,19 @@ func (r *NodeRebootReconciler) createCheckNodeHealth(ctx context.Context, node *
 // CheckNodeHealth CR created against it. A node is considered ready when:
 //   - its Ready condition is True (or, if managed by Karpenter, the
 //     karpenter.sh/initialized label is set to "true"); and
-//   - at least one CoreDNS pod is Ready in the cluster, since the health
-//     checks rely on cluster DNS being functional.
+//   - the CoreDNS Deployment in kube-system has all of its replicas Ready,
+//     since the health checks rely on cluster DNS being functional.
 //
 // When the node is not yet ready for health checks, a log line is emitted explaining why so
 // the caller can simply requeue without additional logging. An error is
 // returned only for transient failures (e.g., listing pods).
 func (r *NodeRebootReconciler) isNodeReadyForHealthCheck(ctx context.Context, node *corev1.Node, bootID string) (bool, error) {
 	if isKarpenterManaged(node) {
-		if !isKarpenterInitialized(node) {
-			klog.InfoS("Karpenter node not initialized yet, deferring CheckNodeHealth creation",
-				"node", node.Name, "bootID", bootID, "label", KarpenterInitializedLabel)
-			return false, nil
-		}
-	} else if !isNodeReady(node) {
-		// Non-Karpenter nodes are considered ready when the Ready condition is True.
+		return isKarpenterInitialized(node), nil
+	}
+
+	// Non-Karpenter nodes are considered ready when the node's Ready condition is True and all coreDNS replicas are Ready.
+	if !isNodeReady(node) {
 		klog.InfoS("Node is not Ready yet, deferring CheckNodeHealth creation", "node", node.Name, "bootID", bootID)
 		return false, nil
 	}
@@ -246,7 +245,7 @@ func (r *NodeRebootReconciler) isNodeReadyForHealthCheck(ctx context.Context, no
 		return false, fmt.Errorf("failed to check CoreDNS readiness: %w", err)
 	}
 	if !ready {
-		klog.InfoS("No Ready CoreDNS pods found, deferring CheckNodeHealth creation",
+		klog.InfoS("CoreDNS Deployment not fully Ready, deferring CheckNodeHealth creation",
 			"node", node.Name, "bootID", bootID)
 		return false, nil
 	}
@@ -254,33 +253,20 @@ func (r *NodeRebootReconciler) isNodeReadyForHealthCheck(ctx context.Context, no
 	return true, nil
 }
 
-// coreDNSReady reports whether at least one CoreDNS pod in the kube-system
-// namespace is Ready. CheckNodeHealth runs DNS-dependent checks, so creating
-// CRs while CoreDNS is unavailable would produce spurious failures.
+// coreDNSReady reports whether the CoreDNS Deployment in kube-system has all
+// of its replicas Ready. CheckNodeHealth runs DNS-dependent checks, so
+// creating CRs while CoreDNS is unavailable would produce spurious failures.
+// Returns false (without error) when the Deployment is not found.
 func (r *NodeRebootReconciler) coreDNSReady(ctx context.Context) (bool, error) {
-	podList := &corev1.PodList{}
-	if err := r.List(ctx, podList,
-		client.InNamespace(coreDNSNamespace),
-		client.MatchingLabels{coreDNSAppLabelKey: coreDNSAppLabelValue},
-	); err != nil {
+	deploy := &appsv1.Deployment{}
+	key := types.NamespacedName{Namespace: coreDNSNamespace, Name: coreDNSDeploymentName}
+	if err := r.Get(ctx, key, deploy); err != nil {
+		if apierrors.IsNotFound(err) {
+			return false, nil
+		}
 		return false, err
 	}
-	for _, pod := range podList.Items {
-		if isPodReady(&pod) {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-// isPodReady reports whether the pod has a PodReady condition with status True.
-func isPodReady(pod *corev1.Pod) bool {
-	for _, c := range pod.Status.Conditions {
-		if c.Type == corev1.PodReady {
-			return c.Status == corev1.ConditionTrue
-		}
-	}
-	return false
+	return deploy.Status.Replicas > 0 && deploy.Status.ReadyReplicas == deploy.Status.Replicas, nil
 }
 
 // isNodeReady reports whether the node has a Ready condition with status True.

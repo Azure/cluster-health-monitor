@@ -4,6 +4,7 @@ import (
 	"flag"
 	"os"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -135,6 +136,14 @@ func main() {
 				}
 				node.Spec = corev1.NodeSpec{}
 				return node, nil
+			},
+		}
+		// The reboot reconciler reads the CoreDNS Deployment in kube-system to
+		// gate CheckNodeHealth creation on cluster DNS being Ready. Restrict
+		// the cache to that namespace to avoid pulling unrelated Deployments.
+		cacheByObject[&appsv1.Deployment{}] = cache.ByObject{
+			Namespaces: map[string]cache.Config{
+				"kube-system": {},
 			},
 		}
 	}

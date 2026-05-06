@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -20,11 +21,10 @@ import (
 )
 
 // setupRebootTest builds a NodeRebootReconciler backed by a fake client
-// seeded with the given objects. If no CoreDNS pod (matching the
-// k8s-app=kube-dns label in kube-system) is provided, a Ready one is
-// injected automatically so callers that don't care about CoreDNS readiness
-// see it as available. Tests that need to exercise CoreDNS-not-ready paths
-// can pass their own CoreDNS pod(s) (Ready, NotReady, or none) to opt out.
+// seeded with the given objects. If no CoreDNS Deployment is provided, a
+// fully Ready one is injected automatically so callers that don't care
+// about CoreDNS readiness see it as available. Tests that need to
+// exercise CoreDNS-not-ready paths can pass their own CoreDNS Deployment.
 func setupRebootTest(objs ...client.Object) (*NodeRebootReconciler, client.Client) {
 	scheme := runtime.NewScheme()
 	if err := chmv1alpha1.AddToScheme(scheme); err != nil {
@@ -33,9 +33,12 @@ func setupRebootTest(objs ...client.Object) (*NodeRebootReconciler, client.Clien
 	if err := corev1.AddToScheme(scheme); err != nil {
 		panic(err)
 	}
+	if err := appsv1.AddToScheme(scheme); err != nil {
+		panic(err)
+	}
 
-	if !hasCoreDNSPod(objs) {
-		objs = append(objs, newReadyCoreDNSPod("coredns-default"))
+	if !hasCoreDNSDeployment(objs) {
+		objs = append(objs, newCoreDNSDeployment(2, 2))
 	}
 
 	fakeClient := fake.NewClientBuilder().
@@ -52,43 +55,34 @@ func setupRebootTest(objs ...client.Object) (*NodeRebootReconciler, client.Clien
 	return reconciler, fakeClient
 }
 
-// hasCoreDNSPod reports whether objs already contains a CoreDNS pod
-// identified by namespace and the k8s-app=kube-dns label.
-func hasCoreDNSPod(objs []client.Object) bool {
+// hasCoreDNSDeployment reports whether objs already contains the CoreDNS
+// Deployment in kube-system.
+func hasCoreDNSDeployment(objs []client.Object) bool {
 	for _, o := range objs {
-		pod, ok := o.(*corev1.Pod)
+		d, ok := o.(*appsv1.Deployment)
 		if !ok {
 			continue
 		}
-		if pod.Namespace == coreDNSNamespace && pod.Labels[coreDNSAppLabelKey] == coreDNSAppLabelValue {
+		if d.Namespace == coreDNSNamespace && d.Name == coreDNSDeploymentName {
 			return true
 		}
 	}
 	return false
 }
 
-// newReadyCoreDNSPod returns a CoreDNS pod in kube-system with the
-// k8s-app=kube-dns label and a PodReady=True condition.
-func newReadyCoreDNSPod(name string) *corev1.Pod {
-	return &corev1.Pod{
+// newCoreDNSDeployment returns a CoreDNS Deployment in kube-system with the
+// given Status.Replicas and Status.ReadyReplicas.
+func newCoreDNSDeployment(replicas, readyReplicas int32) *appsv1.Deployment {
+	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      name,
+			Name:      coreDNSDeploymentName,
 			Namespace: coreDNSNamespace,
-			Labels:    map[string]string{coreDNSAppLabelKey: coreDNSAppLabelValue},
 		},
-		Status: corev1.PodStatus{
-			Conditions: []corev1.PodCondition{
-				{Type: corev1.PodReady, Status: corev1.ConditionTrue},
-			},
+		Status: appsv1.DeploymentStatus{
+			Replicas:      replicas,
+			ReadyReplicas: readyReplicas,
 		},
 	}
-}
-
-// newNotReadyCoreDNSPod returns a CoreDNS pod whose PodReady condition is False.
-func newNotReadyCoreDNSPod(name string) *corev1.Pod {
-	p := newReadyCoreDNSPod(name)
-	p.Status.Conditions[0].Status = corev1.ConditionFalse
-	return p
 }
 
 func newNode(name, bootID string, annotations map[string]string) *corev1.Node {
@@ -490,15 +484,15 @@ func TestIsNodeReadyForHealthCheck(t *testing.T) {
 		wantErr bool
 	}{
 		{
-			name:    "non-Karpenter node condition Ready=True with Ready CoreDNS — ready for health check",
+			name:    "non-Karpenter node condition Ready=True with fully Ready CoreDNS Deployment — ready for health check",
 			node:    newNodeWithCreationTime("node-1", "boot-aaa", nil, time.Now()),
-			coreDNS: []client.Object{newReadyCoreDNSPod("coredns-1")},
+			coreDNS: []client.Object{newCoreDNSDeployment(2, 2)},
 			want:    true,
 		},
 		{
 			name:    "non-Karpenter node condition Ready=False — not ready for health check",
 			node:    newNotReadyNode("node-1", "boot-aaa", nil, time.Now()),
-			coreDNS: []client.Object{newReadyCoreDNSPod("coredns-1")},
+			coreDNS: []client.Object{newCoreDNSDeployment(2, 2)},
 			want:    false,
 		},
 		{
@@ -508,31 +502,31 @@ func TestIsNodeReadyForHealthCheck(t *testing.T) {
 				n.Status.Conditions = nil
 				return n
 			}(),
-			coreDNS: []client.Object{newReadyCoreDNSPod("coredns-1")},
+			coreDNS: []client.Object{newCoreDNSDeployment(2, 2)},
 			want:    false,
 		},
 		{
-			name:    "non-Karpenter node Ready but only NotReady CoreDNS pods — not ready for health check",
+			name:    "non-Karpenter node Ready but CoreDNS Deployment has no Ready replicas — not ready for health check",
 			node:    newNodeWithCreationTime("node-1", "boot-aaa", nil, time.Now()),
-			coreDNS: []client.Object{newNotReadyCoreDNSPod("coredns-1")},
+			coreDNS: []client.Object{newCoreDNSDeployment(2, 0)},
 			want:    false,
 		},
 		{
-			name:    "non-Karpenter node Ready with one Ready and one NotReady CoreDNS pod — ready for health check",
+			name:    "non-Karpenter node Ready but CoreDNS Deployment partially Ready — not ready for health check",
 			node:    newNodeWithCreationTime("node-1", "boot-aaa", nil, time.Now()),
-			coreDNS: []client.Object{newNotReadyCoreDNSPod("coredns-1"), newReadyCoreDNSPod("coredns-2")},
-			want:    true,
+			coreDNS: []client.Object{newCoreDNSDeployment(2, 1)},
+			want:    false,
 		},
 		{
-			name:    "Karpenter initialized with Ready CoreDNS — ready for health check",
+			name:    "Karpenter initialized with fully Ready CoreDNS Deployment — ready for health check",
 			node:    newKarpenterNode("node-1", "boot-aaa", nil, time.Now(), true),
-			coreDNS: []client.Object{newReadyCoreDNSPod("coredns-1")},
+			coreDNS: []client.Object{newCoreDNSDeployment(2, 2)},
 			want:    true,
 		},
 		{
 			name:    "Karpenter not initialized — not ready for health check",
 			node:    newKarpenterNode("node-1", "boot-aaa", nil, time.Now(), false),
-			coreDNS: []client.Object{newReadyCoreDNSPod("coredns-1")},
+			coreDNS: []client.Object{newCoreDNSDeployment(2, 2)},
 			want:    false,
 		},
 	}
