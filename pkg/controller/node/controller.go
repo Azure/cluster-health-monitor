@@ -266,7 +266,15 @@ func (r *NodeRebootReconciler) coreDNSReady(ctx context.Context) (bool, error) {
 		}
 		return false, err
 	}
-	return deploy.Status.Replicas > 0 && deploy.Status.ReadyReplicas == deploy.Status.Replicas, nil
+	// Replicas defaults to 1 when unset.
+	desiredReplicas := int32(1)
+	if deploy.Spec.Replicas != nil {
+		desiredReplicas = *deploy.Spec.Replicas
+	}
+	if desiredReplicas == 0 {
+		return false, fmt.Errorf("CoreDNS Deployment %s/%s has 0 desired replicas", coreDNSNamespace, coreDNSDeploymentName)
+	}
+	return deploy.Status.ReadyReplicas == desiredReplicas, nil
 }
 
 // isNodeReady reports whether the node has a Ready condition with status True.

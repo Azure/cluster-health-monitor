@@ -70,16 +70,19 @@ func hasCoreDNSDeployment(objs []client.Object) bool {
 	return false
 }
 
-// newCoreDNSDeployment returns a CoreDNS Deployment in kube-system with the
-// given Status.Replicas and Status.ReadyReplicas.
+// newCoreDNSDeployment returns a CoreDNS Deployment in kube-system with
+// Spec.Replicas, Status.Replicas, and Status.ReadyReplicas all set from the
+// given values. The desired replica count is taken from `replicas`.
 func newCoreDNSDeployment(replicas, readyReplicas int32) *appsv1.Deployment {
 	return &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      coreDNSDeploymentName,
 			Namespace: coreDNSNamespace,
 		},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: &replicas,
+		},
 		Status: appsv1.DeploymentStatus{
-			Replicas:      replicas,
 			ReadyReplicas: readyReplicas,
 		},
 	}
@@ -528,6 +531,45 @@ func TestIsNodeReadyForHealthCheck(t *testing.T) {
 			node:    newKarpenterNode("node-1", "boot-aaa", nil, time.Now(), false),
 			coreDNS: []client.Object{newCoreDNSDeployment(2, 2)},
 			want:    false,
+		},
+		{
+			name: "non-Karpenter node Ready and CoreDNS Spec.Replicas nil with 1 Ready replica — ready (defaults to 1)",
+			node: newNodeWithCreationTime("node-1", "boot-aaa", nil, time.Now()),
+			coreDNS: []client.Object{
+				&appsv1.Deployment{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      coreDNSDeploymentName,
+						Namespace: coreDNSNamespace,
+					},
+					Status: appsv1.DeploymentStatus{
+						ReadyReplicas: 1,
+					},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "non-Karpenter node Ready and CoreDNS Spec.Replicas nil with 0 Ready replicas — not ready (defaults to 1)",
+			node: newNodeWithCreationTime("node-1", "boot-aaa", nil, time.Now()),
+			coreDNS: []client.Object{
+				&appsv1.Deployment{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      coreDNSDeploymentName,
+						Namespace: coreDNSNamespace,
+					},
+					Status: appsv1.DeploymentStatus{
+						ReadyReplicas: 0,
+					},
+				},
+			},
+			want: false,
+		},
+		{
+			name:    "non-Karpenter node Ready but CoreDNS Spec.Replicas is 0 — error",
+			node:    newNodeWithCreationTime("node-1", "boot-aaa", nil, time.Now()),
+			coreDNS: []client.Object{newCoreDNSDeployment(0, 0)},
+			want:    false,
+			wantErr: true,
 		},
 	}
 	for _, tc := range tests {
