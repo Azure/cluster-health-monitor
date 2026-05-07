@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -19,6 +20,11 @@ import (
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
 )
 
+// setupRebootTest builds a NodeRebootReconciler backed by a fake client
+// seeded with the given objects. If no CoreDNS Deployment is provided, a
+// fully Ready one is injected automatically so callers that don't care
+// about CoreDNS readiness see it as available. Tests that need to
+// exercise CoreDNS-not-ready paths can pass their own CoreDNS Deployment.
 func setupRebootTest(objs ...client.Object) (*NodeRebootReconciler, client.Client) {
 	scheme := runtime.NewScheme()
 	if err := chmv1alpha1.AddToScheme(scheme); err != nil {
@@ -26,6 +32,13 @@ func setupRebootTest(objs ...client.Object) (*NodeRebootReconciler, client.Clien
 	}
 	if err := corev1.AddToScheme(scheme); err != nil {
 		panic(err)
+	}
+	if err := appsv1.AddToScheme(scheme); err != nil {
+		panic(err)
+	}
+
+	if !hasCoreDNSDeployment(objs) {
+		objs = append(objs, newCoreDNSDeployment(2, 2))
 	}
 
 	fakeClient := fake.NewClientBuilder().
@@ -40,6 +53,39 @@ func setupRebootTest(objs ...client.Object) (*NodeRebootReconciler, client.Clien
 	}
 
 	return reconciler, fakeClient
+}
+
+// hasCoreDNSDeployment reports whether objs already contains the CoreDNS
+// Deployment in kube-system.
+func hasCoreDNSDeployment(objs []client.Object) bool {
+	for _, o := range objs {
+		d, ok := o.(*appsv1.Deployment)
+		if !ok {
+			continue
+		}
+		if d.Namespace == coreDNSNamespace && d.Name == coreDNSDeploymentName {
+			return true
+		}
+	}
+	return false
+}
+
+// newCoreDNSDeployment returns a CoreDNS Deployment in kube-system with
+// Spec.Replicas, Status.Replicas, and Status.ReadyReplicas all set from the
+// given values. The desired replica count is taken from `replicas`.
+func newCoreDNSDeployment(replicas, readyReplicas int32) *appsv1.Deployment {
+	return &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      coreDNSDeploymentName,
+			Namespace: coreDNSNamespace,
+		},
+		Spec: appsv1.DeploymentSpec{
+			Replicas: &replicas,
+		},
+		Status: appsv1.DeploymentStatus{
+			ReadyReplicas: readyReplicas,
+		},
+	}
 }
 
 func newNode(name, bootID string, annotations map[string]string) *corev1.Node {
@@ -434,19 +480,23 @@ func TestRemoveStaleNodeCondition(t *testing.T) {
 
 func TestIsNodeReadyForHealthCheck(t *testing.T) {
 	tests := []struct {
-		name string
-		node *corev1.Node
-		want bool
+		name    string
+		node    *corev1.Node
+		coreDNS []client.Object
+		want    bool
+		wantErr bool
 	}{
 		{
-			name: "non-Karpenter node condition Ready=True — ready for health check",
-			node: newNodeWithCreationTime("node-1", "boot-aaa", nil, time.Now()),
-			want: true,
+			name:    "non-Karpenter node condition Ready=True with fully Ready CoreDNS Deployment — ready for health check",
+			node:    newNodeWithCreationTime("node-1", "boot-aaa", nil, time.Now()),
+			coreDNS: []client.Object{newCoreDNSDeployment(2, 2)},
+			want:    true,
 		},
 		{
-			name: "non-Karpenter node condition Ready=False — not ready for health check",
-			node: newNotReadyNode("node-1", "boot-aaa", nil, time.Now()),
-			want: false,
+			name:    "non-Karpenter node condition Ready=False — not ready for health check",
+			node:    newNotReadyNode("node-1", "boot-aaa", nil, time.Now()),
+			coreDNS: []client.Object{newCoreDNSDeployment(2, 2)},
+			want:    false,
 		},
 		{
 			name: "non-Karpenter no Ready condition — not ready for health check",
@@ -455,22 +505,82 @@ func TestIsNodeReadyForHealthCheck(t *testing.T) {
 				n.Status.Conditions = nil
 				return n
 			}(),
-			want: false,
+			coreDNS: []client.Object{newCoreDNSDeployment(2, 2)},
+			want:    false,
 		},
 		{
-			name: "Karpenter initialized — ready for health check (Ready condition not required)",
-			node: newKarpenterNode("node-1", "boot-aaa", nil, time.Now(), true),
+			name:    "non-Karpenter node Ready but CoreDNS Deployment has no Ready replicas — not ready for health check",
+			node:    newNodeWithCreationTime("node-1", "boot-aaa", nil, time.Now()),
+			coreDNS: []client.Object{newCoreDNSDeployment(2, 0)},
+			want:    false,
+		},
+		{
+			name:    "non-Karpenter node Ready but CoreDNS Deployment partially Ready — not ready for health check",
+			node:    newNodeWithCreationTime("node-1", "boot-aaa", nil, time.Now()),
+			coreDNS: []client.Object{newCoreDNSDeployment(2, 1)},
+			want:    false,
+		},
+		{
+			name:    "Karpenter initialized with fully Ready CoreDNS Deployment — ready for health check",
+			node:    newKarpenterNode("node-1", "boot-aaa", nil, time.Now(), true),
+			coreDNS: []client.Object{newCoreDNSDeployment(2, 2)},
+			want:    true,
+		},
+		{
+			name:    "Karpenter not initialized — not ready for health check",
+			node:    newKarpenterNode("node-1", "boot-aaa", nil, time.Now(), false),
+			coreDNS: []client.Object{newCoreDNSDeployment(2, 2)},
+			want:    false,
+		},
+		{
+			name: "non-Karpenter node Ready and CoreDNS Spec.Replicas nil with 1 Ready replica — ready (defaults to 1)",
+			node: newNodeWithCreationTime("node-1", "boot-aaa", nil, time.Now()),
+			coreDNS: []client.Object{
+				&appsv1.Deployment{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      coreDNSDeploymentName,
+						Namespace: coreDNSNamespace,
+					},
+					Status: appsv1.DeploymentStatus{
+						ReadyReplicas: 1,
+					},
+				},
+			},
 			want: true,
 		},
 		{
-			name: "Karpenter not initialized — not ready for health check",
-			node: newKarpenterNode("node-1", "boot-aaa", nil, time.Now(), false),
+			name: "non-Karpenter node Ready and CoreDNS Spec.Replicas nil with 0 Ready replicas — not ready (defaults to 1)",
+			node: newNodeWithCreationTime("node-1", "boot-aaa", nil, time.Now()),
+			coreDNS: []client.Object{
+				&appsv1.Deployment{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      coreDNSDeploymentName,
+						Namespace: coreDNSNamespace,
+					},
+					Status: appsv1.DeploymentStatus{
+						ReadyReplicas: 0,
+					},
+				},
+			},
 			want: false,
+		},
+		{
+			name:    "non-Karpenter node Ready but CoreDNS Spec.Replicas is 0 — error",
+			node:    newNodeWithCreationTime("node-1", "boot-aaa", nil, time.Now()),
+			coreDNS: []client.Object{newCoreDNSDeployment(0, 0)},
+			want:    false,
+			wantErr: true,
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := isNodeReadyForHealthCheck(tc.node, "boot-aaa"); got != tc.want {
+			objs := append([]client.Object{tc.node}, tc.coreDNS...)
+			r, _ := setupRebootTest(objs...)
+			got, err := r.isNodeReadyForHealthCheck(context.Background(), tc.node, "boot-aaa")
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("isNodeReadyForHealthCheck err = %v, wantErr %v", err, tc.wantErr)
+			}
+			if got != tc.want {
 				t.Errorf("isNodeReadyForHealthCheck = %v, want %v", got, tc.want)
 			}
 		})

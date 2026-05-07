@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -19,6 +21,15 @@ import (
 
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
 	"github.com/Azure/cluster-health-monitor/pkg/controller/checknodehealth"
+)
+
+const (
+	// coreDNSNamespace is the namespace where the CoreDNS Deployment lives.
+	coreDNSNamespace = "kube-system"
+
+	// coreDNSDeploymentName is the name of the CoreDNS Deployment used to
+	// determine cluster DNS readiness.
+	coreDNSDeploymentName = "coredns"
 )
 
 const (
@@ -87,6 +98,7 @@ func (r *NodeRebootReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups="",resources=nodes/status,verbs=patch
+// +kubebuilder:rbac:groups="apps",resources=deployments,verbs=get;list;watch,namespace=kube-system
 
 // Reconcile detects node reboots by comparing the node's current bootID
 // against the last-seen bootID stored in an annotation. When a reboot is
@@ -176,7 +188,11 @@ func (r *NodeRebootReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 // with the same name already exists (e.g., from a duplicate reconcile), the
 // AlreadyExists error is safely ignored.
 func (r *NodeRebootReconciler) createCheckNodeHealth(ctx context.Context, node *corev1.Node, bootID string) (bool, error) {
-	if !isNodeReadyForHealthCheck(node, bootID) {
+	ready, err := r.isNodeReadyForHealthCheck(ctx, node, bootID)
+	if err != nil {
+		return false, err
+	}
+	if !ready {
 		return false, nil
 	}
 
@@ -204,27 +220,61 @@ func (r *NodeRebootReconciler) createCheckNodeHealth(ctx context.Context, node *
 }
 
 // isNodeReadyForHealthCheck reports whether the node is ready to have a
-// CheckNodeHealth CR created against it. A node is considered ready when its
-// Ready condition is True and, if managed by Karpenter, the
-// karpenter.sh/initialized label is set to "true". When the node is not yet
-// ready, a log line is emitted explaining why so the caller can simply
-// requeue without additional logging.
-func isNodeReadyForHealthCheck(node *corev1.Node, bootID string) bool {
+// CheckNodeHealth CR created against it. A node is considered ready when:
+//   - its Ready condition is True (or, if managed by Karpenter, the
+//     karpenter.sh/initialized label is set to "true"); and
+//   - the CoreDNS Deployment in kube-system has all of its replicas Ready,
+//     since the health checks rely on cluster DNS being functional.
+//
+// When the node is not yet ready for health checks, a log line is emitted explaining why so
+// the caller can simply requeue without additional logging. An error is
+// returned only for transient failures (e.g., listing pods).
+func (r *NodeRebootReconciler) isNodeReadyForHealthCheck(ctx context.Context, node *corev1.Node, bootID string) (bool, error) {
 	if isKarpenterManaged(node) {
-		if !isKarpenterInitialized(node) {
-			klog.InfoS("Karpenter node not initialized yet, deferring CheckNodeHealth creation",
-				"node", node.Name, "bootID", bootID, "label", KarpenterInitializedLabel)
-			return false
-		}
-		return true
+		return isKarpenterInitialized(node), nil
 	}
 
-	// Non-Karpenter nodes are considered ready when the Ready condition is True.
+	// Non-Karpenter nodes are considered ready when the node's Ready condition is True and all coreDNS replicas are Ready.
 	if !isNodeReady(node) {
 		klog.InfoS("Node is not Ready yet, deferring CheckNodeHealth creation", "node", node.Name, "bootID", bootID)
-		return false
+		return false, nil
 	}
-	return true
+
+	ready, err := r.coreDNSReady(ctx)
+	if err != nil {
+		return false, fmt.Errorf("failed to check CoreDNS readiness: %w", err)
+	}
+	if !ready {
+		klog.InfoS("CoreDNS Deployment not fully Ready, deferring CheckNodeHealth creation",
+			"node", node.Name, "bootID", bootID)
+		return false, nil
+	}
+
+	return true, nil
+}
+
+// coreDNSReady reports whether the CoreDNS Deployment in kube-system has all
+// of its replicas Ready. CheckNodeHealth runs DNS-dependent checks, so
+// creating CRs while CoreDNS is unavailable would produce spurious failures.
+// Returns false (without error) when the Deployment is not found.
+func (r *NodeRebootReconciler) coreDNSReady(ctx context.Context) (bool, error) {
+	deploy := &appsv1.Deployment{}
+	key := types.NamespacedName{Namespace: coreDNSNamespace, Name: coreDNSDeploymentName}
+	if err := r.Get(ctx, key, deploy); err != nil {
+		if apierrors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	// Replicas defaults to 1 when unset.
+	desiredReplicas := int32(1)
+	if deploy.Spec.Replicas != nil {
+		desiredReplicas = *deploy.Spec.Replicas
+	}
+	if desiredReplicas == 0 {
+		return false, fmt.Errorf("CoreDNS Deployment %s/%s has 0 desired replicas", coreDNSNamespace, coreDNSDeploymentName)
+	}
+	return deploy.Status.ReadyReplicas == desiredReplicas, nil
 }
 
 // isNodeReady reports whether the node has a Ready condition with status True.
