@@ -182,6 +182,7 @@ jobs:
               --location "${{ needs.validate_region.outputs.region }}" \
               --subscription "$SUBSCRIPTION_ID" \
               --sku "${{ needs.validate_sku.outputs.sku }}" \
+              --tags "enable-cluster-health-monitor=false" \
               --no-ssh-key
 
   deploy_kubernetes_resources:

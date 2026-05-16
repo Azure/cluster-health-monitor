@@ -12,13 +12,13 @@ metadata:
   name: cluster-health-monitor-kubedns-reader
   namespace: kube-system
 rules:
-  - apiGroups: [ "" ]
-    resources: [ "services" ]
-    resourceNames: [ "kube-dns" ]
-    verbs: [ "get" ]
-  - apiGroups: [ "discovery.k8s.io" ]
-    resources: [ "endpointslices" ]
-    verbs: [ "list" ]
+  - apiGroups: [""]
+    resources: ["services"]
+    resourceNames: ["kube-dns"]
+    verbs: ["get"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -41,12 +41,15 @@ metadata:
   name: cluster-health-monitor-synth-pod-manager
   namespace: kube-system
 rules:
-  - apiGroups: [ "" ]
-    resources: [ "pods" ]
-    verbs: [ "get", "create", "list", "delete" ]
-  - apiGroups: [ "" ]
-    resources: [ "events" ]
-    verbs: [ "get", "list" ]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "create", "list", "delete"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "create", "list", "delete"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -69,9 +72,9 @@ metadata:
   name: cluster-health-monitor-configmap-manager
   namespace: kube-system
 rules:
-  - apiGroups: [ "" ]
-    resources: [ "configmaps" ]
-    verbs: [ "get", "create", "list", "delete" ]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "create", "list", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -88,7 +91,7 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
 ---
 # Role for managing pods in default namespace. At time of writing, this is used by the azure policy checker. This role exists because the
-# default configuration of azure-policy is not evaluated in the kube-system namespace. However, pod creation requests are rejected by the 
+# default configuration of azure-policy is not evaluated in the kube-system namespace. However, pod creation requests are rejected by the
 # API server before azure policy can be evaluated if this permission is not present. All modifying requests in the default namespace should
 # be dry-run only.
 apiVersion: rbac.authorization.k8s.io/v1
@@ -97,9 +100,9 @@ metadata:
   name: cluster-health-monitor-default-pod-manager
   namespace: default
 rules:
-  - apiGroups: [ "" ]
-    resources: [ "pods" ]
-    verbs: [ "get", "create", "list", "delete" ]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "create", "list", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -121,9 +124,9 @@ kind: ClusterRole
 metadata:
   name: cluster-health-monitor-metrics-server-reader
 rules:
-  - apiGroups: [ "metrics.k8s.io" ]
-    resources: [ "nodes", "pods" ]
-    verbs: [ "get", "list" ]
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["nodes", "pods"]
+    verbs: ["get", "list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -144,24 +147,24 @@ kind: ClusterRole
 metadata:
   name: cluster-health-monitor-karpenter-admin
 rules:
-  - apiGroups: [ "apiextensions.k8s.io" ]
-    resources: [ "customresourcedefinitions" ]
-    resourceNames: [ "nodepools.karpenter.sh" ]
-    verbs: [ "get", "list" ]
+  - apiGroups: ["apiextensions.k8s.io"]
+    resources: ["customresourcedefinitions"]
+    resourceNames: ["nodepools.karpenter.sh"]
+    verbs: ["get", "list"]
 
   # Core Karpenter v1beta1 APIs
-  - apiGroups: [ "karpenter.sh" ]
+  - apiGroups: ["karpenter.sh"]
     resources:
       - nodepools
       - nodepools/status
       - nodeclaims
       - nodeclaims/status
-    verbs: [ "get", "list", "create", "delete" ]
+    verbs: ["get", "list", "create", "delete"]
 
   # Provider-specific NodeClass
-  - apiGroups: [ "karpenter.azure.com" ]
-    resources: [ "aksnodeclasses" ]
-    verbs: [ "get", "list", "watch" ]
+  - apiGroups: ["karpenter.azure.com"]
+    resources: ["aksnodeclasses"]
+    verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
