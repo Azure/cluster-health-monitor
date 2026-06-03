@@ -395,7 +395,6 @@ func (r *CheckNodeHealthReconciler) findMissingResult(cnh *chmv1alpha1.CheckNode
 	missed := []string{}
 	for _, requiredCheckName := range RequiredCheckResults {
 		if found, _ := r.findResult(cnh, requiredCheckName); !found {
-			klog.Warningf("required checker result %q is missing", requiredCheckName)
 			missed = append(missed, requiredCheckName)
 		}
 	}
