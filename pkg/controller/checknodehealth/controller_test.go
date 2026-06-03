@@ -953,7 +953,7 @@ func TestDetermineHealthyCondition(t *testing.T) {
 			wantMessage: "PodStartup: Healthy\nPodNetwork: Missing",
 		},
 		{
-			name:        "no results - all required treated as Missing",
+			name:        "no results - all required checks are marked Missing",
 			results:     nil,
 			wantStatus:  metav1.ConditionUnknown,
 			wantReason:  ReasonCheckUnknown,
@@ -980,46 +980,3 @@ func TestDetermineHealthyCondition(t *testing.T) {
 	}
 }
 
-func TestFormatResultsMessage(t *testing.T) {
-	r := &CheckNodeHealthReconciler{}
-
-	tests := []struct {
-		name    string
-		results []chmv1alpha1.CheckResult
-		want    string
-	}{
-		{
-			name: "reported and missing results both included",
-			results: []chmv1alpha1.CheckResult{
-				{Name: "PodStartup", Status: chmv1alpha1.CheckStatusHealthy},
-				// PodNetwork missing
-			},
-			want: "PodStartup: Healthy\nPodNetwork: Missing",
-		},
-		{
-			name: "reported Unknown is distinct from Missing",
-			results: []chmv1alpha1.CheckResult{
-				{Name: "PodStartup", Status: chmv1alpha1.CheckStatusUnknown},
-				{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusHealthy},
-			},
-			want: "PodStartup: Unknown\nPodNetwork: Healthy",
-		},
-		{
-			name:    "no results - only missing required",
-			results: nil,
-			want:    "PodStartup: Missing\nPodNetwork: Missing",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cnh := &chmv1alpha1.CheckNodeHealth{
-				Status: chmv1alpha1.CheckNodeHealthStatus{Results: tt.results},
-			}
-			got := r.formatResultsMessage(cnh)
-			if got != tt.want {
-				t.Errorf("formatResultsMessage:\n got: %q\nwant: %q", got, tt.want)
-			}
-		})
-	}
-}
