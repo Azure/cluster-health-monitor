@@ -3,6 +3,7 @@ package checknodehealth
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -333,36 +334,50 @@ func (r *CheckNodeHealthReconciler) updateNodeCondition(ctx context.Context, cnh
 	return nil
 }
 
-// determineHealthyCondition determines the Healthy condition status based on check results
+// determineHealthyCondition determines the Healthy condition status based on check results.
+// The returned message always lists each check result (and any missing required results)
+// regardless of which rule produced the overall status.
 func (r *CheckNodeHealthReconciler) determineHealthyCondition(cnh *chmv1alpha1.CheckNodeHealth) (metav1.ConditionStatus, string, string) {
+	message := r.formatResultsMessage(cnh)
+
 	// Rule 1: Check if any Result.Status == "Unhealthy"
 	if r.hasUnhealthyResult(cnh) {
-		return metav1.ConditionFalse, ReasonCheckFailed, "At least one health check result is Unhealthy"
+		return metav1.ConditionFalse, ReasonCheckFailed, message
 	}
 
 	// Rule 2: Check if any Result.Status == "Unknown". This must be checked after Unhealthy
 	if r.hasUnknownResult(cnh) {
-		return metav1.ConditionUnknown, ReasonCheckUnknown, "At least one health check result has Unknown status or is missing"
+		return metav1.ConditionUnknown, ReasonCheckUnknown, message
 	}
 
-	// Rule 3: Check if any required results are missing
-	missingResults := r.findMissingResult(cnh)
-	if len(missingResults) > 0 {
-		return metav1.ConditionUnknown, ReasonCheckUnknown, fmt.Sprintf("Missing required health check results: %v", missingResults)
+	// Rule 3: Required results are missing
+	if len(r.findMissingResult(cnh)) > 0 {
+		return metav1.ConditionUnknown, ReasonCheckUnknown, message
 	}
 
-	// Rule 4: Check if no results
-	if len(cnh.Status.Results) == 0 {
-		return metav1.ConditionUnknown, ReasonCheckUnknown, "No health check results available"
-	}
-
-	// Rule 5: All Results.Status == "Healthy" (or yet)
+	// Rule 4: All Results.Status == "Healthy" (or yet)
 	if r.allResultsHealthy(cnh) {
-		return metav1.ConditionTrue, ReasonCheckPassed, "All health checks completed successfully"
+		return metav1.ConditionTrue, ReasonCheckPassed, message
 	}
 
 	// Default case - should not happen if logic is correct
-	return metav1.ConditionUnknown, ReasonCheckUnknown, "Unable to determine health status"
+	return metav1.ConditionUnknown, ReasonCheckUnknown, message
+}
+
+// formatResultsMessage returns a per-line summary of each reported check result followed
+// by any required results that were not reported, e.g.:
+//
+//	PodStartup: Healthy
+//	PodNetwork: Unhealthy
+func (r *CheckNodeHealthReconciler) formatResultsMessage(cnh *chmv1alpha1.CheckNodeHealth) string {
+	lines := make([]string, 0, len(cnh.Status.Results))
+	for _, result := range cnh.Status.Results {
+		lines = append(lines, fmt.Sprintf("%s: %s", result.Name, result.Status))
+	}
+	for _, missing := range r.findMissingResult(cnh) {
+		lines = append(lines, fmt.Sprintf("%s: Missing", missing))
+	}
+	return strings.Join(lines, "\n")
 }
 
 // hasunknownresult checks whether any result reported by a checker has an Unknown status.
