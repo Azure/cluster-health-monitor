@@ -901,3 +901,82 @@ func TestUpdateNodeCondition_NilHealthyCondition(t *testing.T) {
 		t.Error("Expected no NodeHealthy condition when Healthy condition is nil")
 	}
 }
+
+func TestDetermineHealthyCondition(t *testing.T) {
+	r := &CheckNodeHealthReconciler{}
+
+	tests := []struct {
+		name        string
+		results     []chmv1alpha1.CheckResult
+		wantStatus  metav1.ConditionStatus
+		wantReason  string
+		wantMessage string
+	}{
+		{
+			name: "all results healthy",
+			results: []chmv1alpha1.CheckResult{
+				{Name: "PodStartup", Status: chmv1alpha1.CheckStatusHealthy},
+				{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusHealthy},
+			},
+			wantStatus:  metav1.ConditionTrue,
+			wantReason:  ReasonCheckPassed,
+			wantMessage: "PodStartup: Healthy\nPodNetwork: Healthy",
+		},
+		{
+			name: "any result unhealthy takes precedence over unknown",
+			results: []chmv1alpha1.CheckResult{
+				{Name: "PodStartup", Status: chmv1alpha1.CheckStatusUnknown},
+				{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusUnhealthy},
+			},
+			wantStatus:  metav1.ConditionFalse,
+			wantReason:  ReasonCheckFailed,
+			wantMessage: "PodStartup: Unknown\nPodNetwork: Unhealthy",
+		},
+		{
+			name: "any result unknown",
+			results: []chmv1alpha1.CheckResult{
+				{Name: "PodStartup", Status: chmv1alpha1.CheckStatusHealthy},
+				{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusUnknown},
+			},
+			wantStatus:  metav1.ConditionUnknown,
+			wantReason:  ReasonCheckUnknown,
+			wantMessage: "PodStartup: Healthy\nPodNetwork: Unknown",
+		},
+		{
+			name: "missing required result reported as Unknown",
+			results: []chmv1alpha1.CheckResult{
+				{Name: "PodStartup", Status: chmv1alpha1.CheckStatusHealthy},
+				// PodNetwork is missing
+			},
+			wantStatus:  metav1.ConditionUnknown,
+			wantReason:  ReasonCheckUnknown,
+			wantMessage: "PodStartup: Healthy\nPodNetwork: Missing",
+		},
+		{
+			name:        "no results - all required checks are marked Missing",
+			results:     nil,
+			wantStatus:  metav1.ConditionUnknown,
+			wantReason:  ReasonCheckUnknown,
+			wantMessage: "PodStartup: Missing\nPodNetwork: Missing",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cnh := &chmv1alpha1.CheckNodeHealth{
+				Status: chmv1alpha1.CheckNodeHealthStatus{Results: tt.results},
+			}
+			gotStatus, gotReason, gotMessage := r.determineHealthyCondition(cnh)
+			if gotStatus != tt.wantStatus {
+				t.Errorf("status: got %q, want %q", gotStatus, tt.wantStatus)
+			}
+			if gotReason != tt.wantReason {
+				t.Errorf("reason: got %q, want %q", gotReason, tt.wantReason)
+			}
+			if gotMessage != tt.wantMessage {
+				t.Errorf("message:\n got: %q\nwant: %q", gotMessage, tt.wantMessage)
+			}
+		})
+	}
+}
+
