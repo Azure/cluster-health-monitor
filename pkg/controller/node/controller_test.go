@@ -533,6 +533,18 @@ func TestIsNodeReadyForHealthCheck(t *testing.T) {
 			want:    false,
 		},
 		{
+			name:    "Karpenter initialized but CoreDNS Deployment not fully Ready — not ready for health check",
+			node:    newKarpenterNode("node-1", "boot-aaa", nil, time.Now(), true),
+			coreDNS: []client.Object{newCoreDNSDeployment(2, 1)},
+			want:    false,
+		},
+		{
+			name:    "Karpenter initialized but CoreDNS Deployment has no Ready replicas — not ready for health check",
+			node:    newKarpenterNode("node-1", "boot-aaa", nil, time.Now(), true),
+			coreDNS: []client.Object{newCoreDNSDeployment(2, 0)},
+			want:    false,
+		},
+		{
 			name: "non-Karpenter node Ready and CoreDNS Spec.Replicas nil with 1 Ready replica — ready (defaults to 1)",
 			node: newNodeWithCreationTime("node-1", "boot-aaa", nil, time.Now()),
 			coreDNS: []client.Object{
