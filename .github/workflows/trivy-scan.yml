@@ -41,7 +41,7 @@ jobs:
           PLATFORM: linux/amd64
       
       - name: Run Trivy scan
-        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: image
           image-ref: ${{ steps.vars.outputs.image }}
@@ -52,5 +52,6 @@ jobs:
           scanners: vuln,secret
           severity: CRITICAL,HIGH,MEDIUM,LOW,UNKNOWN
           timeout: 5m0s
+          version: v0.71.1
         env:
           TRIVY_DB_REPOSITORY: mcr.microsoft.com/mirror/ghcr/aquasecurity/trivy-db
