@@ -230,16 +230,6 @@ func (r *NodeRebootReconciler) createCheckNodeHealth(ctx context.Context, node *
 // the caller can simply requeue without additional logging. An error is
 // returned only for transient failures (e.g., listing pods).
 func (r *NodeRebootReconciler) isNodeReadyForHealthCheck(ctx context.Context, node *corev1.Node, bootID string) (bool, error) {
-	if isKarpenterManaged(node) {
-		return isKarpenterInitialized(node), nil
-	}
-
-	// Non-Karpenter nodes are considered ready when the node's Ready condition is True and all coreDNS replicas are Ready.
-	if !isNodeReady(node) {
-		klog.InfoS("Node is not Ready yet, deferring CheckNodeHealth creation", "node", node.Name, "bootID", bootID)
-		return false, nil
-	}
-
 	ready, err := r.coreDNSReady(ctx)
 	if err != nil {
 		return false, fmt.Errorf("failed to check CoreDNS readiness: %w", err)
@@ -247,6 +237,19 @@ func (r *NodeRebootReconciler) isNodeReadyForHealthCheck(ctx context.Context, no
 	if !ready {
 		klog.InfoS("CoreDNS Deployment not fully Ready, deferring CheckNodeHealth creation",
 			"node", node.Name, "bootID", bootID)
+		return false, nil
+	}
+
+	if isKarpenterManaged(node) {
+		if !isKarpenterInitialized(node) {
+			klog.InfoS("Karpenter node not initialized yet, deferring CheckNodeHealth creation", "node", node.Name, "bootID", bootID)
+			return false, nil
+		}
+		return true, nil
+	}
+
+	if !isNodeReady(node) {
+		klog.InfoS("Node is not Ready yet, deferring CheckNodeHealth creation", "node", node.Name, "bootID", bootID)
 		return false, nil
 	}
 
