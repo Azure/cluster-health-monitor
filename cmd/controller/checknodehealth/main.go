@@ -66,7 +66,7 @@ func main() {
 	flag.BoolVar(&enableNodeCondition, "enable-node-condition", false,
 		"Enable setting the NodeHealthy condition on Node objects when health checks fail.")
 	flag.BoolVar(&enableGPUHealthCheck, "enable-gpu-health-check", false,
-		"Enable running AzNHC GPU health checks on GPU nodes (PoC, advisory-only).")
+		"Enable running DCGM diagnostic GPU health checks on GPU nodes (PoC, advisory-only).")
 
 	// Set up logging configuration with JSON format (no CLI override needed)
 	logConfig := logsapi.NewLoggingConfiguration()
@@ -187,7 +187,7 @@ func main() {
 		)
 	}
 
-	// Clientset for reading AzNHC pod logs (controller-runtime client cannot).
+	// Clientset for reading DCGM diag pod logs (controller-runtime client cannot).
 	var gpuClientSet kubernetes.Interface
 	if enableGPUHealthCheck {
 		cs, err := kubernetes.NewForConfig(cfg)

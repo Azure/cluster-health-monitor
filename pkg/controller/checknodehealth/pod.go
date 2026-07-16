@@ -62,11 +62,11 @@ func (r *CheckNodeHealthReconciler) ensureHealthCheckPod(ctx context.Context, cn
 	}
 
 	if len(podList.Items) > 0 {
-		// Both the node-health-checker pod and the AzNHC pod share the
-		// CheckNodeHealthLabel; select the node-health-checker pod (skip AzNHC pods).
+		// Both the node-health-checker pod and the DCGM diag pod share the
+		// CheckNodeHealthLabel; select the node-health-checker pod (skip DCGM pods).
 		var checkerPods []*corev1.Pod
 		for i := range podList.Items {
-			if podList.Items[i].Labels[aznhcPodKindLabel] == aznhcPodKindValue {
+			if podList.Items[i].Labels[dcgmPodKindLabel] == dcgmPodKindValue {
 				continue
 			}
 			checkerPods = append(checkerPods, &podList.Items[i])

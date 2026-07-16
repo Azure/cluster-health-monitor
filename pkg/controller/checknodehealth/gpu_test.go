@@ -76,31 +76,17 @@ func TestPreflightGPU(t *testing.T) {
 	})
 }
 
-func TestAznhcConf(t *testing.T) {
-	conf := aznhcConf(8)
+func TestDcgmDiagCommand(t *testing.T) {
+	cmd := dcgmDiagCommand(3)
 	for _, want := range []string{
-		"check_gpu_count 8",
-		"check_nvsmi_healthmon",
-		"check_gpu_xid",
-		"check_gpu_ecc",
-		"check_gpu_clock_throttling",
-		"check_nvlink_status",
-		"check_gpu_bw",
-		"check_nccl_allreduce",
+		"nv-hostengine",
+		"dcgmi diag -r 3 -j",
+		dcgmOutputSentinel,
+		"exit 0",
 	} {
-		if !strings.Contains(conf, want) {
-			t.Errorf("conf missing %q\n%s", want, conf)
+		if !strings.Contains(cmd, want) {
+			t.Errorf("command missing %q:\n%s", want, cmd)
 		}
-	}
-}
-
-func TestAznhcCommandTemplatesGPUCount(t *testing.T) {
-	cmd := aznhcCommand(4)
-	if !strings.Contains(cmd, "check_gpu_count 4") {
-		t.Errorf("command missing templated gpu count:\n%s", cmd)
-	}
-	if !strings.Contains(cmd, "CONFFILE=/tmp/aznhc.conf") {
-		t.Errorf("command missing CONFFILE:\n%s", cmd)
 	}
 }
 
@@ -114,21 +100,18 @@ func newGPUReconciler() *CheckNodeHealthReconciler {
 	}
 }
 
-func TestBuildAznhcPod(t *testing.T) {
+func TestBuildDcgmPod(t *testing.T) {
 	r := newGPUReconciler()
 	cnh := &chmv1alpha1.CheckNodeHealth{
 		ObjectMeta: metav1.ObjectMeta{Name: "boot-abc-node1"},
 		Spec:       chmv1alpha1.CheckNodeHealthSpec{NodeRef: chmv1alpha1.NodeReference{Name: "node1"}},
 	}
-	pod, err := r.buildAznhcPod(cnh, gpuNode("node1", 8))
+	pod, err := r.buildDcgmPod(cnh, gpuNode("node1", 8))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if pod.Spec.NodeName != "node1" {
 		t.Errorf("NodeName=%q want node1", pod.Spec.NodeName)
-	}
-	if !pod.Spec.HostPID || !pod.Spec.HostNetwork {
-		t.Errorf("expected HostPID and HostNetwork true")
 	}
 	c := pod.Spec.Containers[0]
 	if c.SecurityContext == nil || c.SecurityContext.Privileged == nil || !*c.SecurityContext.Privileged {
@@ -138,96 +121,128 @@ func TestBuildAznhcPod(t *testing.T) {
 	if q.Value() != 8 {
 		t.Errorf("gpu limit=%d want 8", q.Value())
 	}
-	if c.Image != DefaultAznhcImage {
-		t.Errorf("image=%q want %q", c.Image, DefaultAznhcImage)
+	if c.Image != DefaultDcgmImage {
+		t.Errorf("image=%q want %q", c.Image, DefaultDcgmImage)
 	}
-	if pod.Labels[aznhcPodKindLabel] != aznhcPodKindValue {
-		t.Errorf("missing aznhc pod-kind label")
+	if pod.Labels[dcgmPodKindLabel] != dcgmPodKindValue {
+		t.Errorf("missing dcgm pod-kind label")
 	}
 	if len(pod.OwnerReferences) != 1 || pod.OwnerReferences[0].Name != cnh.Name {
 		t.Errorf("expected owner reference to the CR")
 	}
 }
 
-func TestBuildAznhcPodImageOverride(t *testing.T) {
+func TestBuildDcgmPodImageOverride(t *testing.T) {
 	r := newGPUReconciler()
-	r.AznhcImage = "myacr.azurecr.io/aznhc:test"
+	r.DcgmImage = "myacr.azurecr.io/dcgm:test"
 	cnh := &chmv1alpha1.CheckNodeHealth{
 		ObjectMeta: metav1.ObjectMeta{Name: "c1"},
 		Spec:       chmv1alpha1.CheckNodeHealthSpec{NodeRef: chmv1alpha1.NodeReference{Name: "node1"}},
 	}
-	pod, err := r.buildAznhcPod(cnh, gpuNode("node1", 1))
+	pod, err := r.buildDcgmPod(cnh, gpuNode("node1", 1))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if pod.Spec.Containers[0].Image != "myacr.azurecr.io/aznhc:test" {
+	if pod.Spec.Containers[0].Image != "myacr.azurecr.io/dcgm:test" {
 		t.Errorf("image override not applied: %q", pod.Spec.Containers[0].Image)
 	}
 }
 
-func TestAznhcResultFromPod(t *testing.T) {
-	tests := []struct {
-		name     string
-		phase    corev1.PodPhase
-		timedOut bool
-		want     chmv1alpha1.CheckStatus
-		wantCode string
-	}{
-		{"succeeded", corev1.PodSucceeded, false, chmv1alpha1.CheckStatusHealthy, ""},
-		{"failed", corev1.PodFailed, false, chmv1alpha1.CheckStatusUnhealthy, GPUErrCodeRunFailed},
-		{"timeout", corev1.PodRunning, true, chmv1alpha1.CheckStatusUnhealthy, GPUErrCodeTimeout},
-		{"running", corev1.PodRunning, false, chmv1alpha1.CheckStatusUnknown, ""},
+// dcgmHealthyJSON: hardware (memory) and integration (pcie) pass; the Deployment
+// software test "fails" only on the benign persistence-mode warning.
+const dcgmHealthyJSON = `{
+  "DCGM Diagnostic": {
+    "test_categories": [
+      { "category": "Deployment", "tests": [
+        { "name": "software", "results": [
+          { "status": "Fail", "warnings": [ { "warning": "Persistence Mode: Persistence mode for GPU 0 is disabled." } ] }
+        ], "test_summary": { "status": "Fail" } }
+      ] },
+      { "category": "Hardware", "tests": [
+        { "name": "memory", "results": [ { "status": "Pass" } ], "test_summary": { "status": "Pass" } }
+      ] },
+      { "category": "Integration", "tests": [
+        { "name": "pcie", "results": [ { "status": "Pass" } ], "test_summary": { "status": "Pass" } }
+      ] }
+    ]
+  },
+  "metadata": { "version": "4.5.3", "Driver Version Detected": "580.126.09" }
+}`
+
+// dcgmUnhealthyJSON: a hardware (memory) test fails => gates the verdict.
+const dcgmUnhealthyJSON = `{
+  "DCGM Diagnostic": {
+    "test_categories": [
+      { "category": "Hardware", "tests": [
+        { "name": "memory", "results": [
+          { "status": "Fail", "warnings": [ { "warning": "GPU 3 ECC error" } ] }
+        ], "test_summary": { "status": "Fail" } }
+      ] }
+    ]
+  },
+  "metadata": { "version": "4.5.3" }
+}`
+
+func TestDcgmResultFromLogsHealthy(t *testing.T) {
+	// Deployment-only failure is advisory and must not gate the verdict.
+	logs := dcgmHealthyJSON + "\n" + dcgmOutputSentinel + "\nrc=226\n=== dcgmi stderr ===\n"
+	res := dcgmResultFromLogs(logs)
+	if res.Status != chmv1alpha1.CheckStatusHealthy {
+		t.Fatalf("status=%v want Healthy: %s", res.Status, res.Message)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			pod := &corev1.Pod{Status: corev1.PodStatus{Phase: tt.phase}}
-			res := aznhcResultFromPod(pod, tt.timedOut)
-			if res.Name != GPUHealthResultName {
-				t.Errorf("name=%q want %q", res.Name, GPUHealthResultName)
-			}
-			if res.Status != tt.want {
-				t.Errorf("status=%v want %v", res.Status, tt.want)
-			}
-			if res.ErrorCode != tt.wantCode {
-				t.Errorf("errorCode=%q want %q", res.ErrorCode, tt.wantCode)
-			}
-		})
+	if res.Name != GPUHealthResultName {
+		t.Errorf("name=%q want %q", res.Name, GPUHealthResultName)
+	}
+	for _, want := range []string{"memory", "pcie", "deployment", "Persistence"} {
+		if !strings.Contains(res.Message, want) {
+			t.Errorf("message missing %q: %s", want, res.Message)
+		}
+	}
+	if strings.Contains(res.Message, "UNHEALTHY") {
+		t.Errorf("healthy result should not say UNHEALTHY: %s", res.Message)
 	}
 }
 
-func TestSummarizeAznhcLog(t *testing.T) {
-	passLog := `[1] - SUCCESS:  nhc:  Health check passed:  check_gpu_count: Expected 8 and found 8
-[2] - SUCCESS:  nhc:  Health check passed:  check_nvlink_status: GPU 0 has all nvlinks active.
-[3] - SUCCESS:  nhc:  Health check passed:  check_nvlink_status: GPU 1 has all nvlinks active.
-[4] - SUCCESS:  nhc:  Health check passed:  check_gpu_bw: GPU Bandwidth Tests Passed
-[5] - SUCCESS:  nhc:  Health check passed:  check_nccl_allreduce: NCCL all reduce bandwidth test passed, 479.624 GB/s
-=== nhc exited: 0 ===`
-	got := summarizeAznhcLog(passLog)
-	for _, want := range []string{"check_gpu_count", "check_nvlink_status", "check_gpu_bw", "check_nccl_allreduce", "check_nccl_allreduce=479.624GB/s"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("summary %q missing %q", got, want)
-		}
+func TestDcgmResultFromLogsUnhealthy(t *testing.T) {
+	res := dcgmResultFromLogs(dcgmUnhealthyJSON)
+	if res.Status != chmv1alpha1.CheckStatusUnhealthy {
+		t.Fatalf("status=%v want Unhealthy: %s", res.Status, res.Message)
 	}
-	// nvlink appears 8x in a real log but should be de-duplicated.
-	if strings.Count(got, "check_nvlink_status") != 1 {
-		t.Errorf("check_nvlink_status should appear once, got: %q", got)
+	if res.ErrorCode != GPUErrCodeRunFailed {
+		t.Errorf("errorCode=%q want %q", res.ErrorCode, GPUErrCodeRunFailed)
 	}
-	if strings.Contains(got, "FAILED") {
-		t.Errorf("no failures expected, got: %q", got)
+	if !strings.Contains(res.Message, "FAILED") || !strings.Contains(res.Message, "memory") {
+		t.Errorf("expected memory FAILED in message: %s", res.Message)
 	}
+	if !strings.Contains(res.Message, "GPU 3 ECC error") {
+		t.Errorf("expected warning detail in message: %s", res.Message)
+	}
+}
 
-	failLog := `SUCCESS:  nhc:  Health check passed:  check_gpu_count: Expected 8 and found 8
-ERROR:  nhc:  Health check failed:  check_nvlink_status: GPU 3 has inactive nvlink`
-	gotFail := summarizeAznhcLog(failLog)
-	if !strings.Contains(gotFail, "FAILED: check_nvlink_status") {
-		t.Errorf("expected FAILED check_nvlink_status, got: %q", gotFail)
+func TestDcgmResultFromLogsUnparseable(t *testing.T) {
+	res := dcgmResultFromLogs("not json at all")
+	if res.Status != chmv1alpha1.CheckStatusUnknown || res.ErrorCode != GPUErrCodeDiagError {
+		t.Errorf("got status=%v code=%q want Unknown/%s", res.Status, res.ErrorCode, GPUErrCodeDiagError)
 	}
-	if !strings.Contains(gotFail, "passed: check_gpu_count") {
-		t.Errorf("expected passed check_gpu_count, got: %q", gotFail)
-	}
+}
 
-	if summarizeAznhcLog("nothing useful here") != "" {
-		t.Errorf("expected empty summary for unrecognized log")
+func TestDeriveTestStatus(t *testing.T) {
+	tests := []struct {
+		name    string
+		results []dcgmResult
+		want    string
+	}{
+		{"any fail", []dcgmResult{{Status: "Pass"}, {Status: "Fail"}}, "Fail"},
+		{"all pass", []dcgmResult{{Status: "Pass"}, {Status: "Pass"}}, "Pass"},
+		{"all skip", []dcgmResult{{Status: "Skip"}}, "Skip"},
+		{"empty", nil, "Skip"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := deriveTestStatus(tt.results); got != tt.want {
+				t.Errorf("deriveTestStatus()=%q want %q", got, tt.want)
+			}
+		})
 	}
 }
 

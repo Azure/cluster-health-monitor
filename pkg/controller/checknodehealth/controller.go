@@ -88,13 +88,14 @@ type CheckNodeHealthReconciler struct {
 	EnableNodeCondition bool                         // Whether to set NodeHealthy condition on the Node
 	CircuitBreaker      *NodeConditionCircuitBreaker // Circuit breaker for node condition updates
 
-	// EnableGPUHealthCheck enables running AzNHC GPU health checks on GPU nodes
-	// (PoC, advisory-only). See notes/gpu_health_checks/plan.md.
+	// EnableGPUHealthCheck enables running DCGM diagnostic GPU health checks on
+	// GPU nodes (PoC, advisory-only). See notes/gpu_health_checks/plan.md.
 	EnableGPUHealthCheck bool
-	// AznhcImage overrides the AzNHC container image. Defaults to DefaultAznhcImage.
-	AznhcImage string
-	// ClientSet is used to read AzNHC pod logs (the controller-runtime client
-	// cannot fetch pod logs). Optional; when nil, GPU log detail is skipped.
+	// DcgmImage overrides the DCGM diagnostic container image. Defaults to DefaultDcgmImage.
+	DcgmImage string
+	// ClientSet is used to read the DCGM diag pod logs (the controller-runtime
+	// client cannot fetch pod logs) to parse the diagnostic JSON. Required for the
+	// GPU health check; when nil, GPU diag results cannot be recorded.
 	ClientSet kubernetes.Interface
 }
 
@@ -195,9 +196,9 @@ func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cn
 			klog.InfoS("Health check pod timeout, marking as completed", "timeout", PodTimeout, "phase", pod.Status.Phase)
 		}
 
-		// GPU (AzNHC) advisory health check runs as a separate, long-running pod on
-		// GPU nodes. Hold overall completion until it finishes (or times out) so its
-		// GpuHealth result is recorded. It is advisory and does not affect the verdict.
+		// GPU (DCGM diagnostic) advisory health check runs as a separate, long-running
+		// pod on GPU nodes. Hold overall completion until it finishes (or times out) so
+		// its GpuHealth result is recorded. It is advisory and does not affect the verdict.
 		if r.EnableGPUHealthCheck {
 			gpuDone, err := r.reconcileGPUHealth(ctx, cnh)
 			if err != nil {
