@@ -62,13 +62,23 @@ func (r *CheckNodeHealthReconciler) ensureHealthCheckPod(ctx context.Context, cn
 	}
 
 	if len(podList.Items) > 0 {
-		// Pod already exists, return the first one
-		pod := &podList.Items[0]
-		if len(podList.Items) > 1 {
-			klog.InfoS("Multiple health check pods found, using first one", "count", len(podList.Items))
+		// Both the node-health-checker pod and the AzNHC pod share the
+		// CheckNodeHealthLabel; select the node-health-checker pod (skip AzNHC pods).
+		var checkerPods []*corev1.Pod
+		for i := range podList.Items {
+			if podList.Items[i].Labels[aznhcPodKindLabel] == aznhcPodKindValue {
+				continue
+			}
+			checkerPods = append(checkerPods, &podList.Items[i])
 		}
-		klog.InfoS("Health check pod already exists", "pod", pod.Name)
-		return pod, nil
+		if len(checkerPods) > 0 {
+			pod := checkerPods[0]
+			if len(checkerPods) > 1 {
+				klog.InfoS("Multiple health check pods found, using first one", "count", len(checkerPods))
+			}
+			klog.InfoS("Health check pod already exists", "pod", pod.Name)
+			return pod, nil
+		}
 	}
 
 	// Create the pod

@@ -19,14 +19,17 @@ spec:
       serviceAccountName: checknodehealth-controller
       containers:
         - name: controller
-          image: mcr.microsoft.com/aks/cluster-health-monitor/cluster-health-monitor:latest
+          image: carlostest3acr.azurecr.io/cluster-health-monitor:latest
           command: ["/controller"]
           args:
             - "-v=5"
+            - "-enable-node-reboot-check"
+            - "-enable-node-condition"
+            - "-enable-gpu-health-check"
           imagePullPolicy: Always
           env:
             - name: CHECKER_POD_IMAGE
-              value: "mcr.microsoft.com/aks/cluster-health-monitor/cluster-health-monitor:latest"
+              value: "carlostest3acr.azurecr.io/cluster-health-monitor:latest"
           resources:
             requests:
               cpu: 20m

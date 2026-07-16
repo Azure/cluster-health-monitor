@@ -9,6 +9,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -86,11 +87,21 @@ type CheckNodeHealthReconciler struct {
 	CheckerPodNamespace string                       // Namespace to create pods in
 	EnableNodeCondition bool                         // Whether to set NodeHealthy condition on the Node
 	CircuitBreaker      *NodeConditionCircuitBreaker // Circuit breaker for node condition updates
+
+	// EnableGPUHealthCheck enables running AzNHC GPU health checks on GPU nodes
+	// (PoC, advisory-only). See notes/gpu_health_checks/plan.md.
+	EnableGPUHealthCheck bool
+	// AznhcImage overrides the AzNHC container image. Defaults to DefaultAznhcImage.
+	AznhcImage string
+	// ClientSet is used to read AzNHC pod logs (the controller-runtime client
+	// cannot fetch pod logs). Optional; when nil, GPU log detail is skipped.
+	ClientSet kubernetes.Interface
 }
 
 // +kubebuilder:rbac:groups=clusterhealthmonitor.azure.com,resources=checknodehealths,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=clusterhealthmonitor.azure.com,resources=checknodehealths/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;create;delete,namespace=kube-system
+// +kubebuilder:rbac:groups="",resources=pods/log,verbs=get,namespace=kube-system
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get
 // +kubebuilder:rbac:groups="",resources=nodes/status,verbs=patch
 
@@ -182,6 +193,20 @@ func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cn
 			klog.InfoS("Health check pod completed, marking as completed", "phase", pod.Status.Phase)
 		} else {
 			klog.InfoS("Health check pod timeout, marking as completed", "timeout", PodTimeout, "phase", pod.Status.Phase)
+		}
+
+		// GPU (AzNHC) advisory health check runs as a separate, long-running pod on
+		// GPU nodes. Hold overall completion until it finishes (or times out) so its
+		// GpuHealth result is recorded. It is advisory and does not affect the verdict.
+		if r.EnableGPUHealthCheck {
+			gpuDone, err := r.reconcileGPUHealth(ctx, cnh)
+			if err != nil {
+				klog.ErrorS(err, "Failed to reconcile GPU health check", "cr", cnh.Name)
+				return ctrl.Result{}, err
+			}
+			if !gpuDone {
+				return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+			}
 		}
 
 		// Step 1: Mark as completed (determines health based on Results)
@@ -384,6 +409,9 @@ func (r *CheckNodeHealthReconciler) formatResultsMessage(cnh *chmv1alpha1.CheckN
 // If the required results are missing, it also returns true because the default result is Unknown.
 func (r *CheckNodeHealthReconciler) hasUnknownResult(cnh *chmv1alpha1.CheckNodeHealth) bool {
 	for _, result := range cnh.Status.Results {
+		if isAdvisoryResult(result.Name) {
+			continue
+		}
 		if result.Status == chmv1alpha1.CheckStatusUnknown {
 			return true
 		}
@@ -404,6 +432,9 @@ func (r *CheckNodeHealthReconciler) findMissingResult(cnh *chmv1alpha1.CheckNode
 // hasUnhealthyResult checks whether any result reported by a checker has an Unhealthy status.
 func (r *CheckNodeHealthReconciler) hasUnhealthyResult(cnh *chmv1alpha1.CheckNodeHealth) bool {
 	for _, result := range cnh.Status.Results {
+		if isAdvisoryResult(result.Name) {
+			continue
+		}
 		if result.Status == chmv1alpha1.CheckStatusUnhealthy {
 			return true
 		}
@@ -414,6 +445,9 @@ func (r *CheckNodeHealthReconciler) hasUnhealthyResult(cnh *chmv1alpha1.CheckNod
 // allResultsHealthy verifies that all result reported by checker has Healthy status.
 func (r *CheckNodeHealthReconciler) allResultsHealthy(cnh *chmv1alpha1.CheckNodeHealth) bool {
 	for _, result := range cnh.Status.Results {
+		if isAdvisoryResult(result.Name) {
+			continue
+		}
 		if result.Status != chmv1alpha1.CheckStatusHealthy {
 			return false
 		}

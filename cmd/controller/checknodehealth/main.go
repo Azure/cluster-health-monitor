@@ -10,6 +10,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/selection"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/component-base/logs"
 	logsapi "k8s.io/component-base/logs/api/v1"
@@ -50,6 +51,7 @@ func main() {
 	var enableNodeRebootCheck bool
 	var enableHealthCheckRequest bool
 	var enableNodeCondition bool
+	var enableGPUHealthCheck bool
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to")
@@ -63,6 +65,8 @@ func main() {
 			"The HealthCheckRequest CRD must be installed in the cluster by the AKS health signal component.")
 	flag.BoolVar(&enableNodeCondition, "enable-node-condition", false,
 		"Enable setting the NodeHealthy condition on Node objects when health checks fail.")
+	flag.BoolVar(&enableGPUHealthCheck, "enable-gpu-health-check", false,
+		"Enable running AzNHC GPU health checks on GPU nodes (PoC, advisory-only).")
 
 	// Set up logging configuration with JSON format (no CLI override needed)
 	logConfig := logsapi.NewLoggingConfiguration()
@@ -183,6 +187,17 @@ func main() {
 		)
 	}
 
+	// Clientset for reading AzNHC pod logs (controller-runtime client cannot).
+	var gpuClientSet kubernetes.Interface
+	if enableGPUHealthCheck {
+		cs, err := kubernetes.NewForConfig(cfg)
+		if err != nil {
+			klog.ErrorS(err, "Unable to create clientset for GPU health check")
+			klog.FlushAndExit(klog.ExitFlushTimeout, 1)
+		}
+		gpuClientSet = cs
+	}
+
 	if err = (&checknodehealth.CheckNodeHealthReconciler{
 		Client:              mgr.GetClient(),
 		Scheme:              mgr.GetScheme(),
@@ -192,6 +207,9 @@ func main() {
 		CheckerPodNamespace: checkerPodNamespace,
 		EnableNodeCondition: enableNodeCondition,
 		CircuitBreaker:      circuitBreaker,
+
+		EnableGPUHealthCheck: enableGPUHealthCheck,
+		ClientSet:            gpuClientSet,
 	}).SetupWithManager(mgr); err != nil {
 		klog.ErrorS(err, "Unable to create controller", "controller", "CheckNodeHealth")
 		klog.FlushAndExit(klog.ExitFlushTimeout, 1)
