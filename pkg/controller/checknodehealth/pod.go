@@ -113,6 +113,17 @@ func (r *CheckNodeHealthReconciler) buildHealthCheckPod(cnh *chmv1alpha1.CheckNo
 			ServiceAccountName: serviceAccountName,
 			RestartPolicy:      corev1.RestartPolicyNever,
 			NodeName:           cnh.Spec.NodeRef.Name, // Schedule on specific node
+			Tolerations: []corev1.Toleration{
+				// NoExecute taints are enforced by the node lifecycle controller even when
+				// NodeName is pre-set (bypassing the scheduler), so an explicit toleration
+				// is required to prevent eviction from nodes tainted with CriticalAddonsOnly.
+				{
+					Key:      "CriticalAddonsOnly",
+					Operator: corev1.TolerationOpEqual,
+					Value:    "true",
+					Effect:   corev1.TaintEffectNoExecute,
+				},
+			},
 			Containers: []corev1.Container{
 				{
 					Name:    "node-health-checker",
