@@ -54,6 +54,84 @@ spec:
           spec:
             description: CheckNodeHealthSpec defines the desired state of CheckNodeHealth
             properties:
+              checks:
+                description: |-
+                  Checks optionally requests additional, on-demand checks to run on the node,
+                  beyond the controller's built-in checks. Each entry runs as its own pod on the
+                  target node and produces a CheckResult with the same Name in the status.
+
+                  This is the extension point for intrusive checks (e.g. GPU diagnostics): the
+                  requester supplies the image and parameters; the controller owns the pod's
+                  security/scheduling shape via Profile.
+                items:
+                  description: NodeCheckSpec defines a single on-demand check to run
+                    on the target node.
+                  properties:
+                    args:
+                      description: |-
+                        Args are appended to the check container's command, allowing per-request
+                        customization such as test selection or run level.
+                      items:
+                        type: string
+                      type: array
+                    enforcement:
+                      default: Advisory
+                      description: |-
+                        Enforcement controls whether this check's result contributes to the node's overall
+                        Healthy verdict. Advisory (default) records the result but excludes it from the
+                        rollup. Enforcing lets the result flip Healthy.
+                      enum:
+                      - Advisory
+                      - Enforcing
+                      type: string
+                    image:
+                      description: |-
+                        Image optionally overrides the container image for this check. When empty, the
+                        controller-configured default image for the selected Profile is used. Must be a
+                        pinned, digest- or tag-referenced image the cluster is allowed to pull.
+                      maxLength: 1024
+                      type: string
+                    name:
+                      description: |-
+                        Name uniquely identifies this check within the request and is echoed back on the
+                        corresponding CheckResult.Name so results correlate to requests.
+                      maxLength: 253
+                      pattern: ^[A-Z][a-zA-Z0-9]*$
+                      type: string
+                    preemption:
+                      default: NonPreemptible
+                      description: |-
+                        Preemption selects whether an arriving customer GPU workload may preempt (evict) this
+                        check. On-demand/investigative checks typically run to completion (NonPreemptible),
+                        while periodic/background checks yield to customer work (Preemptible). Either way the
+                        check remains bounded by Timeout.
+                      enum:
+                      - Preemptible
+                      - NonPreemptible
+                      type: string
+                    profile:
+                      description: |-
+                        Profile selects a controller-defined execution profile (pod security context, device
+                        requests, host mounts, tolerations, isolation, default image, and default timeout).
+                        Requesters cannot craft an arbitrary privileged pod; they may only select a profile
+                        the controller supports.
+                      enum:
+                      - GPUIntrusive
+                      type: string
+                    timeout:
+                      description: |-
+                        Timeout bounds how long the check may run before it is recorded as a timeout
+                        (Status=Unknown, ErrorCode=Timeout). Defaults to the profile's controller-configured
+                        timeout.
+                      type: string
+                  required:
+                  - name
+                  - profile
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
               nodeRef:
                 description: NodeRef references the node to check
                 properties:
@@ -164,6 +242,53 @@ spec:
                       - Unhealthy
                       - Unknown
                       type: string
+                    subResults:
+                      description: |-
+                        SubResults optionally breaks this check into its constituent sub-checks (e.g. GPU
+                        diagnostic plugins), each with its own status and detail. This preserves granular
+                        diagnostics on the CR after the check pod is deleted.
+                      items:
+                        description: SubCheckResult is one granular sub-check within
+                          a CheckResult.
+                        properties:
+                          errorCode:
+                            description: ErrorCode is a stable, machine-readable code
+                              when Status is not Healthy.
+                            maxLength: 253
+                            pattern: ^[A-Z][a-zA-Z0-9]*$
+                            type: string
+                          message:
+                            description: Message provides human-readable detail about
+                              the sub-check result.
+                            maxLength: 32768
+                            type: string
+                          name:
+                            description: Name identifies the sub-check within the
+                              parent CheckResult.
+                            maxLength: 253
+                            type: string
+                          observations:
+                            additionalProperties:
+                              type: string
+                            description: |-
+                              Observations optionally carries measured values the check emitted, e.g.
+                              {"bandwidthGBps": "335", "eccErrors": "0"}.
+                            type: object
+                          status:
+                            description: Status is the health status of this sub-check.
+                            enum:
+                            - Healthy
+                            - Unhealthy
+                            - Unknown
+                            type: string
+                        required:
+                        - name
+                        - status
+                        type: object
+                      type: array
+                      x-kubernetes-list-map-keys:
+                      - name
+                      x-kubernetes-list-type: map
                   required:
                   - name
                   - status
