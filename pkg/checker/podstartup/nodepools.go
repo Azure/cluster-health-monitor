@@ -88,18 +88,6 @@ func (c *PodStartupChecker) deleteAllKarpenterNodePools(ctx context.Context) err
 	return errors.Join(errs...)
 }
 
-func (c *PodStartupChecker) syntheticNodeTaints() []v1.Taint {
-	return []v1.Taint{
-		{
-			// This taint is to prevent any pods that are not part of the synthetic test from being scheduled on the nodes created by this NodePool.
-			// This is to prevent node consolidation by Karpenter that could potentially disrupt pods and workloads that are not part of the test.
-			// Pods created by the synthetic test are expected to have a toleration for this taint.
-			Key:    c.config.SyntheticPodLabelKey,
-			Effect: v1.TaintEffectNoSchedule,
-		},
-	}
-}
-
 func (c *PodStartupChecker) karpenterNodePool(nodePoolName, timestampStr string) *karpenter.NodePool {
 	return &karpenter.NodePool{
 		TypeMeta: metav1.TypeMeta{
@@ -126,8 +114,24 @@ func (c *PodStartupChecker) karpenterNodePool(nodePoolName, timestampStr string)
 						Kind:  "AKSNodeClass",
 						Name:  "default",
 					},
-					Requirements: []karpenter.NodeSelectorRequirementWithMinValues{},
-					Taints:       c.syntheticNodeTaints(),
+					Requirements: []karpenter.NodeSelectorRequirementWithMinValues{
+						{
+							// Restrict to amd64 skus. In certain regions, arm64 skus have limited capacity and fail to scale up within the
+							// test timeout when selected.
+							NodeSelectorRequirement: v1.NodeSelectorRequirement{
+								Key:      v1.LabelArchStable,
+								Operator: v1.NodeSelectorOpIn,
+								Values:   []string{karpenter.ArchitectureAmd64},
+							},
+						},
+					},
+					Taints: []v1.Taint{
+						{
+							// Prevent non-synthetic pods from scheduling here, so Karpenter consolidation can't disrupt unrelated workloads.
+							Key:    c.config.SyntheticPodLabelKey,
+							Effect: v1.TaintEffectNoSchedule,
+						},
+					},
 				},
 			},
 		},
