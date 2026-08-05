@@ -15,30 +15,10 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	k8stesting "k8s.io/client-go/testing"
+	karpenter "sigs.k8s.io/karpenter/pkg/apis/v1"
 )
 
 const _testSyntheticLabelKey = "test-synthetic-label-key"
-
-func TestSyntheticNodeTaints(t *testing.T) {
-	g := NewWithT(t)
-
-	checker := &PodStartupChecker{
-		dynamicClient: nil, // no client necessary for this test. Just validating the taints.
-		config: &config.PodStartupConfig{
-			SyntheticPodNamespace: "test",
-			SyntheticPodLabelKey:  _testSyntheticLabelKey,
-		},
-	}
-
-	taints := checker.syntheticNodeTaints()
-
-	// Ensure there is a taint to prevent scheduling any pods that are not synthetics created by the checker.
-	// This is to prevent node consolidation by Karpenter that could potentially disrupt pods and workloads that are not part of the test.
-	g.Expect(taints).To(ContainElement(v1.Taint{
-		Key:    _testSyntheticLabelKey,
-		Effect: v1.TaintEffectNoSchedule,
-	}))
-}
 
 func TestKarpenterNodePool(t *testing.T) {
 	g := NewWithT(t)
@@ -62,8 +42,20 @@ func TestKarpenterNodePool(t *testing.T) {
 	// synthetic label is present and timestamp matches what was passed in
 	g.Expect(karpenterNodePool.Labels[_testSyntheticLabelKey]).To(Equal("123456"))
 
-	// taints are set
-	g.Expect(karpenterNodePool.Spec.Template.Spec.Taints).To(Equal(checker.syntheticNodeTaints()))
+	// taint is set
+	g.Expect(karpenterNodePool.Spec.Template.Spec.Taints).To(ContainElement(v1.Taint{
+		Key:    _testSyntheticLabelKey,
+		Effect: v1.TaintEffectNoSchedule,
+	}))
+
+	// amd64 architecture requirement
+	g.Expect(karpenterNodePool.Spec.Template.Spec.Requirements).To(ContainElement(karpenter.NodeSelectorRequirementWithMinValues{
+		NodeSelectorRequirement: v1.NodeSelectorRequirement{
+			Key:      v1.LabelArchStable,
+			Operator: v1.NodeSelectorOpIn,
+			Values:   []string{karpenter.ArchitectureAmd64},
+		},
+	}))
 }
 
 func TestCreateKarpenterNodePool(t *testing.T) {
