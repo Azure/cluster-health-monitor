@@ -276,7 +276,7 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 			return podList.Items[0].Status.Phase
 		}, "20s", "5s").Should(Equal(corev1.PodPending), "Pod should remain in Pending state")
 
-		By("Waiting for pod timeout to be detected (PodTimeout = 30 seconds)")
+		By("Waiting for pod timeout to be detected (PodTimeout = 2 minutes)")
 		var cnh *chmv1alpha1.CheckNodeHealth
 		Eventually(func() bool {
 			cnh, err = getCheckNodeHealthCR(ctx, k8sClient, cnhName)
@@ -284,7 +284,7 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 				return false
 			}
 			return cnh.Status.FinishedAt != nil
-		}, "60s", "5s").Should(BeTrue(), "Pod timeout was not detected within 1 minutes")
+		}, "180s", "5s").Should(BeTrue(), "Pod timeout was not detected within 3 minutes")
 
 		By("Verifying timeout condition is set correctly")
 		Expect(cnh.Status.Conditions).To(HaveLen(1))
@@ -352,7 +352,7 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 				return false
 			}
 			return cnh.Status.FinishedAt != nil
-		}, "60s", "5s").Should(BeTrue(), "Pod timeout was not detected within 1 minute")
+		}, "180s", "5s").Should(BeTrue(), "Pod timeout was not detected within 3 minutes")
 
 		By("Verifying Healthy condition is False")
 		Expect(cnh.Status.Conditions).To(HaveLen(1))
