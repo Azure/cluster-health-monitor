@@ -56,6 +56,9 @@ jobs:
       uses: docker/setup-buildx-action@v3
       with:
         driver-opts: image=mcr.microsoft.com/oss/v2/moby/buildkit:v0.18.1
+        buildkitd-config-inline: |
+          [worker.oci]
+            max-parallelism = 1
     
     - name: 'Login the ACR'
       run: |
