@@ -73,18 +73,25 @@ acr-push: acr-login ## Build and push cluster-health-monitor:latest to the test 
 
 GPU_CHECKS_IMAGE_NAME ?= gpu-checks
 GPU_CHECKS_TAG ?= latest
+GPU_CHECKS_DOCKERFILE ?= docker/gpu-checks.Dockerfile
 # Use BUILD_PROGRESS=plain to stream full, unbuffered build logs.
 BUILD_PROGRESS ?= auto
 
 .PHONY: acr-push-gpu-checks
 acr-push-gpu-checks: acr-login ## Build and push the GPU checks image (nccl-tests + nvbandwidth).
 	docker buildx build \
-		--file docker/gpu-checks.Dockerfile \
+		--file $(GPU_CHECKS_DOCKERFILE) \
 		--output=type=registry \
 		--platform=$(ACR_PLATFORM) \
 		--progress=$(BUILD_PROGRESS) \
 		--tag $(ACR_REGISTRY)/$(GPU_CHECKS_IMAGE_NAME):$(GPU_CHECKS_TAG) .
 	@echo "Pushed $(ACR_REGISTRY)/$(GPU_CHECKS_IMAGE_NAME):$(GPU_CHECKS_TAG)"
+
+.PHONY: acr-push-gpu-checks-distroless
+acr-push-gpu-checks-distroless: ## Experimental: same checks on the Azure Linux distroless base.
+	$(MAKE) acr-push-gpu-checks \
+		GPU_CHECKS_DOCKERFILE=docker/gpu-checks-distroless.Dockerfile \
+		GPU_CHECKS_TAG=distroless
 
 ## -----------------------------------
 ## Tests

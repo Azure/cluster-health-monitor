@@ -34,3 +34,7 @@ bin/
 # .idea/
 # .vscode/
 clusterhealthmonitor
+
+notes/
+
+hack/

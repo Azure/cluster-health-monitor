@@ -1,11 +1,17 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # Entrypoint for the GPU intrusive health check image. Runs the NCCL all-reduce and
 # nvbandwidth benchmarks, wrapping each in delimiters the controller parses into sub-results.
 # Each section is always emitted, even on failure, so one failing tool never hides the other.
+#
+# Deliberately uses only bash builtins and the benchmark binaries: the image may be built on a
+# distroless base that ships no coreutils.
 set -uo pipefail
 
 if [[ -z "${NGPUS:-}" ]]; then
-    NGPUS=$(nvidia-smi -L 2>/dev/null | grep -c '^GPU')
+    NGPUS=0
+    while read -r line; do
+        [[ ${line} == GPU* ]] && NGPUS=$(( NGPUS + 1 ))
+    done < <(nvidia-smi -L 2>/dev/null)
 fi
 [[ "${NGPUS}" -lt 1 ]] && NGPUS=1
 echo "=== detected GPUs: ${NGPUS} ==="
@@ -29,8 +35,10 @@ run_section() {
 
 # Split into arrays so each flag/value becomes its own argv entry; passing the raw
 # string would hand the tool a single argument.
-read -r -a nccl_args <<< "${NCCL_ARGS}"
-read -r -a nvbw_args <<< "${NVBW_ARGS}"
+# shellcheck disable=SC2206 # word splitting is the point here
+nccl_args=( ${NCCL_ARGS} )
+# shellcheck disable=SC2206
+nvbw_args=( ${NVBW_ARGS} )
 
 run_section nccl_all_reduce /usr/local/bin/all_reduce_perf "${nccl_args[@]}"
 run_section nvbandwidth /usr/local/bin/nvbandwidth "${nvbw_args[@]}"
