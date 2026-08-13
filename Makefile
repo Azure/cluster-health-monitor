@@ -49,6 +49,43 @@ docker-build-cluster-health-monitor: docker-buildx-builder
 		--pull \
 		--tag $(REGISTRY)/$(CLUSTER_HEALTH_MONITOR_IMAGE_NAME):$(CLUSTER_HEALTH_MONITOR_IMAGE_VERSION) .
 
+## --------------------------------------
+## Test ACR (carlostest) — build & push :latest
+## --------------------------------------
+
+# Convenience targets for the GPU intrusive health check test cluster.
+# ACR resource id:
+#   /subscriptions/8ecadfc9-d1a3-4ea4-b844-0d9f87e4d7c8/resourceGroups/carlostest/providers/Microsoft.ContainerRegistry/registries/carlostest
+# Push requires auth (az acr login), which acr-push runs for you.
+ACR_NAME ?= carlostest
+ACR_REGISTRY ?= $(ACR_NAME).azurecr.io
+ACR_TAG ?= latest
+ACR_PLATFORM ?= linux/amd64
+
+.PHONY: acr-login
+acr-login: ## Authenticate docker to the test ACR (needed for push only).
+	az acr login --name $(ACR_NAME)
+
+.PHONY: acr-push
+acr-push: acr-login ## Build and push cluster-health-monitor:latest to the test ACR.
+	$(MAKE) REGISTRY=$(ACR_REGISTRY) TAG=$(ACR_TAG) PLATFORM=$(ACR_PLATFORM) push
+	@echo "Pushed $(ACR_REGISTRY)/$(CLUSTER_HEALTH_MONITOR_IMAGE_NAME):$(ACR_TAG)"
+
+GPU_CHECKS_IMAGE_NAME ?= gpu-checks
+GPU_CHECKS_TAG ?= latest
+# Use BUILD_PROGRESS=plain to stream full, unbuffered build logs.
+BUILD_PROGRESS ?= auto
+
+.PHONY: acr-push-gpu-checks
+acr-push-gpu-checks: acr-login ## Build and push the GPU checks image (nccl-tests + nvbandwidth).
+	docker buildx build \
+		--file docker/gpu-checks.Dockerfile \
+		--output=type=registry \
+		--platform=$(ACR_PLATFORM) \
+		--progress=$(BUILD_PROGRESS) \
+		--tag $(ACR_REGISTRY)/$(GPU_CHECKS_IMAGE_NAME):$(GPU_CHECKS_TAG) .
+	@echo "Pushed $(ACR_REGISTRY)/$(GPU_CHECKS_IMAGE_NAME):$(GPU_CHECKS_TAG)"
+
 ## -----------------------------------
 ## Tests
 ## -----------------------------------

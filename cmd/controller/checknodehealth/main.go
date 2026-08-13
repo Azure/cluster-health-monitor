@@ -10,6 +10,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/selection"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/component-base/logs"
 	logsapi "k8s.io/component-base/logs/api/v1"
@@ -50,6 +51,7 @@ func main() {
 	var enableNodeRebootCheck bool
 	var enableHealthCheckRequest bool
 	var enableNodeCondition bool
+	var enableGPUHealthCheck bool
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to")
@@ -63,6 +65,9 @@ func main() {
 			"The HealthCheckRequest CRD must be installed in the cluster by the AKS health signal component.")
 	flag.BoolVar(&enableNodeCondition, "enable-node-condition", false,
 		"Enable setting the NodeHealthy condition on Node objects when health checks fail.")
+	flag.BoolVar(&enableGPUHealthCheck, "enable-gpu-health-check", false,
+		"Enable running requested GPUIntrusive checks (e.g. NCCL) from CheckNodeHealth.spec.checks. "+
+			"These run privileged pods on GPU nodes.")
 
 	// Set up logging configuration with JSON format (no CLI override needed)
 	logConfig := logsapi.NewLoggingConfiguration()
@@ -91,10 +96,27 @@ func main() {
 	}
 	klog.InfoS("Using checker pod image from CHECKER_POD_IMAGE", "image", checkerPodImage)
 
+	// Optional: default image for GPUIntrusive checks (the nccl-tests image).
+	gpuCheckImage := os.Getenv("GPU_CHECK_IMAGE")
+	if enableGPUHealthCheck {
+		if gpuCheckImage == "" {
+			klog.InfoS("GPU_CHECK_IMAGE is not set; GPU checks must specify spec.checks[].image")
+		} else {
+			klog.InfoS("Using GPU check image from GPU_CHECK_IMAGE", "image", gpuCheckImage)
+		}
+	}
+
 	// Get Kubernetes config
 	cfg, err := ctrl.GetConfig()
 	if err != nil {
 		klog.ErrorS(err, "Unable to get kubeconfig")
+		klog.FlushAndExit(klog.ExitFlushTimeout, 1)
+	}
+
+	// Typed clientset used to read checker pod logs (controller-runtime client cannot).
+	clientset, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		klog.ErrorS(err, "Unable to create clientset")
 		klog.FlushAndExit(klog.ExitFlushTimeout, 1)
 	}
 
@@ -184,14 +206,17 @@ func main() {
 	}
 
 	if err = (&checknodehealth.CheckNodeHealthReconciler{
-		Client:              mgr.GetClient(),
-		Scheme:              mgr.GetScheme(),
-		APIReader:           mgr.GetAPIReader(),
-		CheckerPodLabel:     "checknodehealth", // Label to identify health check pods
-		CheckerPodImage:     checkerPodImage,
-		CheckerPodNamespace: checkerPodNamespace,
-		EnableNodeCondition: enableNodeCondition,
-		CircuitBreaker:      circuitBreaker,
+		Client:               mgr.GetClient(),
+		Scheme:               mgr.GetScheme(),
+		APIReader:            mgr.GetAPIReader(),
+		Clientset:            clientset,
+		CheckerPodLabel:      "checknodehealth", // Label to identify health check pods
+		CheckerPodImage:      checkerPodImage,
+		GPUCheckImage:        gpuCheckImage,
+		CheckerPodNamespace:  checkerPodNamespace,
+		EnableNodeCondition:  enableNodeCondition,
+		EnableGPUHealthCheck: enableGPUHealthCheck,
+		CircuitBreaker:       circuitBreaker,
 	}).SetupWithManager(mgr); err != nil {
 		klog.ErrorS(err, "Unable to create controller", "controller", "CheckNodeHealth")
 		klog.FlushAndExit(klog.ExitFlushTimeout, 1)

@@ -9,6 +9,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -79,18 +80,22 @@ var (
 // CheckNodeHealthReconciler reconciles a CheckNodeHealth object
 type CheckNodeHealthReconciler struct {
 	client.Client
-	Scheme              *runtime.Scheme
-	APIReader           client.Reader                // Direct API server reader (bypasses cache) for node operations
-	CheckerPodLabel     string                       // Label to identify health check pods
-	CheckerPodImage     string                       // Image for the health check pod
-	CheckerPodNamespace string                       // Namespace to create pods in
-	EnableNodeCondition bool                         // Whether to set NodeHealthy condition on the Node
-	CircuitBreaker      *NodeConditionCircuitBreaker // Circuit breaker for node condition updates
+	Scheme               *runtime.Scheme
+	APIReader            client.Reader                // Direct API server reader (bypasses cache) for node operations
+	Clientset            kubernetes.Interface         // Typed client used to read checker pod logs
+	CheckerPodLabel      string                       // Label to identify health check pods
+	CheckerPodImage      string                       // Image for the health check pod
+	GPUCheckImage        string                       // Default image for GPUIntrusive checks (nccl-tests)
+	CheckerPodNamespace  string                       // Namespace to create pods in
+	EnableNodeCondition  bool                         // Whether to set NodeHealthy condition on the Node
+	EnableGPUHealthCheck bool                         // Whether to run requested GPUIntrusive checks
+	CircuitBreaker       *NodeConditionCircuitBreaker // Circuit breaker for node condition updates
 }
 
 // +kubebuilder:rbac:groups=clusterhealthmonitor.azure.com,resources=checknodehealths,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=clusterhealthmonitor.azure.com,resources=checknodehealths/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;create;delete,namespace=kube-system
+// +kubebuilder:rbac:groups="",resources=pods/log,verbs=get,namespace=kube-system
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get
 // +kubebuilder:rbac:groups="",resources=nodes/status,verbs=patch
 
@@ -169,15 +174,33 @@ func (r *CheckNodeHealthReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, err
 	}
 
+	// Run any requested on-demand GPU intrusive checks (each as its own pod).
+	gpuChecksComplete := true
+	if r.EnableGPUHealthCheck {
+		var err error
+		gpuChecksComplete, err = r.reconcileGPUChecks(ctx, cnh)
+		if err != nil {
+			klog.ErrorS(err, "Failed to reconcile GPU checks", "name", cnh.Name)
+			return ctrl.Result{}, err
+		}
+	}
+
 	// Determine the overall result based on pod status
-	return r.determineCheckResult(ctx, cnh, pod)
+	return r.determineCheckResult(ctx, cnh, pod, gpuChecksComplete)
 }
 
-func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, pod *corev1.Pod) (ctrl.Result, error) {
+func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, pod *corev1.Pod, gpuChecksComplete bool) (ctrl.Result, error) {
 	// Check if pod succeeded or failed (completed), or if it's timed out
 	isPodCompleted := pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed
 
 	if isPodCompleted || r.isPodTimeout(pod) {
+		// Standard checks are terminal, but GPU intrusive checks are long-running and may
+		// still be in progress. Do not roll up or clean up until they finish.
+		if !gpuChecksComplete {
+			klog.InfoS("Standard checks done, waiting on GPU intrusive checks", "name", cnh.Name)
+			return ctrl.Result{RequeueAfter: 15 * time.Second}, nil
+		}
+
 		if isPodCompleted {
 			klog.InfoS("Health check pod completed, marking as completed", "phase", pod.Status.Phase)
 		} else {
@@ -384,6 +407,9 @@ func (r *CheckNodeHealthReconciler) formatResultsMessage(cnh *chmv1alpha1.CheckN
 // If the required results are missing, it also returns true because the default result is Unknown.
 func (r *CheckNodeHealthReconciler) hasUnknownResult(cnh *chmv1alpha1.CheckNodeHealth) bool {
 	for _, result := range cnh.Status.Results {
+		if r.isAdvisoryResult(cnh, result.Name) {
+			continue
+		}
 		if result.Status == chmv1alpha1.CheckStatusUnknown {
 			return true
 		}
@@ -404,6 +430,9 @@ func (r *CheckNodeHealthReconciler) findMissingResult(cnh *chmv1alpha1.CheckNode
 // hasUnhealthyResult checks whether any result reported by a checker has an Unhealthy status.
 func (r *CheckNodeHealthReconciler) hasUnhealthyResult(cnh *chmv1alpha1.CheckNodeHealth) bool {
 	for _, result := range cnh.Status.Results {
+		if r.isAdvisoryResult(cnh, result.Name) {
+			continue
+		}
 		if result.Status == chmv1alpha1.CheckStatusUnhealthy {
 			return true
 		}
@@ -414,11 +443,26 @@ func (r *CheckNodeHealthReconciler) hasUnhealthyResult(cnh *chmv1alpha1.CheckNod
 // allResultsHealthy verifies that all result reported by checker has Healthy status.
 func (r *CheckNodeHealthReconciler) allResultsHealthy(cnh *chmv1alpha1.CheckNodeHealth) bool {
 	for _, result := range cnh.Status.Results {
+		if r.isAdvisoryResult(cnh, result.Name) {
+			continue
+		}
 		if result.Status != chmv1alpha1.CheckStatusHealthy {
 			return false
 		}
 	}
 	return true
+}
+
+// isAdvisoryResult reports whether a result corresponds to a requested check with Advisory
+// enforcement, meaning it is recorded but excluded from the overall Healthy rollup. Results
+// not backed by a spec.Checks entry (the controller's built-in checks) are always enforcing.
+func (r *CheckNodeHealthReconciler) isAdvisoryResult(cnh *chmv1alpha1.CheckNodeHealth, name string) bool {
+	for _, c := range cnh.Spec.Checks {
+		if c.Name == name {
+			return c.Enforcement != chmv1alpha1.CheckEnforcementEnforcing
+		}
+	}
+	return false
 }
 
 // findResult searches for a result by name in the CheckNodeHealth status
