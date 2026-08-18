@@ -1,5 +1,8 @@
-# Build the clusterhealthmonitor binary
-FROM mcr.microsoft.com/oss/go/microsoft/golang:1.26.4 AS builder
+# Build the clusterhealthmonitor binary on the native runner architecture.
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/oss/go/microsoft/golang:1.26.4 AS builder
+
+ARG TARGETOS
+ARG TARGETARCH
 
 WORKDIR /workspace
 # Copy the Go Modules manifests
@@ -17,9 +20,9 @@ COPY apis/ apis/
 # Build
 # According to https://github.com/microsoft/go/tree/microsoft/main/eng/doc/fips#usage-common-configurations
 # CGO_ENABLED=0 GOEXPERIMENT=ms_nocgo_opensslcrypto is FIPS compliant with Go 1.26
-RUN CGO_ENABLED=0 GOEXPERIMENT=ms_nocgo_opensslcrypto go build -o clusterhealthmonitor cmd/clusterhealthmonitor/main.go
-RUN CGO_ENABLED=0 GOEXPERIMENT=ms_nocgo_opensslcrypto go build -o controller cmd/controller/checknodehealth/main.go
-RUN CGO_ENABLED=0 GOEXPERIMENT=ms_nocgo_opensslcrypto go build -o nodechecker cmd/nodechecker/main.go
+RUN CGO_ENABLED=0 GOEXPERIMENT=ms_nocgo_opensslcrypto GOOS=$TARGETOS GOARCH=$TARGETARCH go build -o clusterhealthmonitor cmd/clusterhealthmonitor/main.go
+RUN CGO_ENABLED=0 GOEXPERIMENT=ms_nocgo_opensslcrypto GOOS=$TARGETOS GOARCH=$TARGETARCH go build -o controller cmd/controller/checknodehealth/main.go
+RUN CGO_ENABLED=0 GOEXPERIMENT=ms_nocgo_opensslcrypto GOOS=$TARGETOS GOARCH=$TARGETARCH go build -o nodechecker cmd/nodechecker/main.go
 
 # Use distroless as minimal base image to package the clusterhealthmonitor binary
 # Using distroless/base instead of distroless/minimal because it comes with SymCrypt and SymCrypt-OpenSSL which are required FIPS/Azure compliance
