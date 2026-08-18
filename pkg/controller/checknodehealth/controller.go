@@ -33,7 +33,7 @@ const (
 
 	// PodTimeout is the maximum time the checker pod can run before being marked as completed.
 	// This applies to all non-terminal phases (Pending, Running, etc.).
-	PodTimeout = 30 * time.Second
+	PodTimeout = 2 * time.Minute
 
 	// CheckNodeHealthFinalizer is the finalizer used to ensure proper cleanup checker pods
 	CheckNodeHealthFinalizer = "checknodehealth.clusterhealthmonitor.azure.com/finalizer"

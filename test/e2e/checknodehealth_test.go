@@ -245,12 +245,33 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 	})
 
 	It("should handle pod timeout correctly", func() {
-		By("Creating a CheckNodeHealth CR with a non-existent node to trigger timeout")
-		cnhName = fmt.Sprintf("test-cnh-timeout-%d", time.Now().Unix())
-		nonExistentNode := "fake-nonexistent-node-12345"
-		err := createCheckNodeHealthCR(ctx, k8sClient, cnhName, nonExistentNode)
+		By("Creating a fake Node object so the checker pod stays Pending until PodTimeout")
+		// The node must exist as a Node object (but have no kubelet) so the pod is
+		// scheduled and remains Pending. Targeting a truly non-existent node causes
+		// the pod garbage collector to mark the orphaned pod Failed within ~1 minute,
+		// which completes the check as Unknown before PodTimeout (2m) is reached.
+		fakeNodeName := fmt.Sprintf("fake-node-timeout-test-%d", time.Now().Unix())
+		fakeNode := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: fakeNodeName,
+			},
+		}
+		err := k8sClient.Create(ctx, fakeNode)
 		Expect(err).NotTo(HaveOccurred())
-		GinkgoWriter.Printf("Created CheckNodeHealth CR: %s for non-existent node: %s\n", cnhName, nonExistentNode)
+		GinkgoWriter.Printf("Created fake Node: %s\n", fakeNodeName)
+
+		defer func() {
+			By("Cleaning up fake Node")
+			if err := k8sClient.Delete(ctx, fakeNode); err != nil {
+				GinkgoWriter.Printf("Warning: Failed to delete fake Node %s: %v\n", fakeNodeName, err)
+			}
+		}()
+
+		By("Creating a CheckNodeHealth CR targeting the fake node to trigger timeout")
+		cnhName = fmt.Sprintf("test-cnh-timeout-%d", time.Now().Unix())
+		err = createCheckNodeHealthCR(ctx, k8sClient, cnhName, fakeNodeName)
+		Expect(err).NotTo(HaveOccurred())
+		GinkgoWriter.Printf("Created CheckNodeHealth CR: %s for fake node: %s\n", cnhName, fakeNodeName)
 
 		By("Verifying that a health check pod is created")
 		Eventually(func() bool {
@@ -261,8 +282,8 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 				return false
 			}
 			pod := &podList.Items[0]
-			// Verify pod is bound to the non-existent node
-			return pod.Spec.NodeName == nonExistentNode
+			// Verify pod is bound to the fake node
+			return pod.Spec.NodeName == fakeNodeName
 		}, "30s", "2s").Should(BeTrue(), "Health check pod was not created")
 
 		By("Verifying pod remains stuck in Pending phase")
@@ -276,7 +297,7 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 			return podList.Items[0].Status.Phase
 		}, "20s", "5s").Should(Equal(corev1.PodPending), "Pod should remain in Pending state")
 
-		By("Waiting for pod timeout to be detected (PodTimeout = 30 seconds)")
+		By("Waiting for pod timeout to be detected (PodTimeout = 2 minutes)")
 		var cnh *chmv1alpha1.CheckNodeHealth
 		Eventually(func() bool {
 			cnh, err = getCheckNodeHealthCR(ctx, k8sClient, cnhName)
@@ -284,7 +305,7 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 				return false
 			}
 			return cnh.Status.FinishedAt != nil
-		}, "60s", "5s").Should(BeTrue(), "Pod timeout was not detected within 1 minutes")
+		}, "180s", "5s").Should(BeTrue(), "Pod timeout was not detected within 3 minutes")
 
 		By("Verifying timeout condition is set correctly")
 		Expect(cnh.Status.Conditions).To(HaveLen(1))
@@ -306,17 +327,28 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 		By("Verifying StartedAt timestamp is set")
 		Expect(cnh.Status.StartedAt).NotTo(BeNil())
 
-		By("Verifying the timed out pod is cleaned up")
-		Eventually(func() int {
+		By("Verifying the timed out pod is cleaned up (deleted or terminating)")
+		Eventually(func() bool {
 			podList, err := clientset.CoreV1().Pods(checkerNamespace).List(ctx, metav1.ListOptions{
 				LabelSelector: fmt.Sprintf("%s=%s", checknodehealth.CheckNodeHealthLabel, cnhName),
 			})
 			if err != nil {
 				GinkgoWriter.Printf("Failed to list pods: %v\n", err)
-				return -1
+				return false
 			}
-			return len(podList.Items)
-		}, "60s", "2s").Should(Equal(0), "Timed out pod was not cleaned up within timeout")
+			// The checker pod is bound to a kubelet-less fake node, so a deleted
+			// pod remains in Terminating state (DeletionTimestamp set) until it is
+			// force-removed. Treat "gone" or "all Terminating" as cleaned up.
+			if len(podList.Items) == 0 {
+				return true
+			}
+			for _, pod := range podList.Items {
+				if pod.DeletionTimestamp == nil {
+					return false
+				}
+			}
+			return true
+		}, "60s", "2s").Should(BeTrue(), "Timed out pod was not cleaned up within timeout")
 	})
 
 	It("should set NodeHealthy condition on node when health check fails", func() {
@@ -352,7 +384,7 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 				return false
 			}
 			return cnh.Status.FinishedAt != nil
-		}, "60s", "5s").Should(BeTrue(), "Pod timeout was not detected within 1 minute")
+		}, "180s", "5s").Should(BeTrue(), "Pod timeout was not detected within 3 minutes")
 
 		By("Verifying Healthy condition is False")
 		Expect(cnh.Status.Conditions).To(HaveLen(1))
