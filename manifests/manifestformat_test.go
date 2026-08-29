@@ -1,6 +1,7 @@
 package manifests
 
 import (
+	"bytes"
 	"fmt"
 	"io/fs"
 	"os"
@@ -11,6 +12,8 @@ import (
 	. "github.com/onsi/gomega"
 	"gopkg.in/yaml.v3"
 	corev1 "k8s.io/api/core/v1"
+	extensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	yamlutil "k8s.io/apimachinery/pkg/util/yaml"
 	kyaml "sigs.k8s.io/kustomize/kyaml/yaml"
 )
 
@@ -73,6 +76,23 @@ func Test_ValidateYamlFormat_AllFiles(t *testing.T) {
 		err := checkYamlFormat(path)
 		g.Expect(err).ToNot(HaveOccurred())
 	}
+}
+
+func Test_CheckNodeHealthCheckSuiteSchema(t *testing.T) {
+	g := NewWithT(t)
+	data, err := os.ReadFile("base/checknodehealth-controller/crd.yaml")
+	g.Expect(err).ToNot(HaveOccurred())
+
+	var crd extensionsv1.CustomResourceDefinition
+	err = yamlutil.NewYAMLToJSONDecoder(bytes.NewReader(data)).Decode(&crd)
+	g.Expect(err).ToNot(HaveOccurred())
+	g.Expect(crd.Spec.Versions).To(HaveLen(1))
+
+	schema := crd.Spec.Versions[0].Schema.OpenAPIV3Schema
+	spec := schema.Properties["spec"]
+	g.Expect(string(spec.Properties["checkSuite"].Default.Raw)).To(Equal(`"Core"`))
+	g.Expect(string(spec.Properties["failureAction"].Default.Raw)).To(Equal(`"MarkNodeUnhealthy"`))
+	g.Expect(string(spec.Properties["disruptionPolicy"].Default.Raw)).To(Equal(`"RunToCompletion"`))
 }
 
 func findYamlPaths(root string) ([]string, error) {

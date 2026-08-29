@@ -54,6 +54,33 @@ spec:
           spec:
             description: CheckNodeHealthSpec defines the desired state of CheckNodeHealth
             properties:
+              checkSuite:
+                default: Core
+                description: |-
+                  CheckSuite selects the controller-owned set of checks and execution environment.
+                  It defaults to Core for backward compatibility.
+                enum:
+                - Core
+                - GPU
+                type: string
+              disruptionPolicy:
+                default: RunToCompletion
+                description: |-
+                  DisruptionPolicy controls whether the check must finish or may yield to other
+                  workloads. It defaults to RunToCompletion.
+                enum:
+                - RunToCompletion
+                - YieldToWorkloads
+                type: string
+              failureAction:
+                default: MarkNodeUnhealthy
+                description: |-
+                  FailureAction controls how a failed check affects the node's health condition.
+                  It defaults to MarkNodeUnhealthy to preserve existing behavior.
+                enum:
+                - ReportOnly
+                - MarkNodeUnhealthy
+                type: string
               nodeRef:
                 description: NodeRef references the node to check
                 properties:
@@ -164,6 +191,51 @@ spec:
                       - Unhealthy
                       - Unknown
                       type: string
+                    subResults:
+                      description: SubResults contains results for the component checks
+                        performed by this check.
+                      items:
+                        description: SubCheckResult describes one component of a check
+                          result.
+                        properties:
+                          errorCode:
+                            description: ErrorCode is the specific error code if the
+                              status is not Healthy.
+                            maxLength: 253
+                            pattern: ^[A-Z][a-zA-Z0-9]*$
+                            type: string
+                          message:
+                            description: Message provides additional details about
+                              the component result.
+                            maxLength: 32768
+                            type: string
+                          name:
+                            description: Name uniquely identifies the component within
+                              its parent result.
+                            maxLength: 253
+                            pattern: ^[A-Z][a-zA-Z0-9]*$
+                            type: string
+                          observations:
+                            additionalProperties:
+                              type: string
+                            description: Observations contains measured values emitted
+                              by the check.
+                            type: object
+                          status:
+                            description: Status is the health status of this component.
+                            enum:
+                            - Healthy
+                            - Unhealthy
+                            - Unknown
+                            type: string
+                        required:
+                        - name
+                        - status
+                        type: object
+                      type: array
+                      x-kubernetes-list-map-keys:
+                      - name
+                      x-kubernetes-list-type: map
                   required:
                   - name
                   - status

@@ -27,7 +27,58 @@ type CheckNodeHealthSpec struct {
 	// NodeRef references the node to check
 	// +required
 	NodeRef NodeReference `json:"nodeRef"`
+
+	// CheckSuite selects the controller-owned set of checks and execution environment.
+	// It defaults to Core for backward compatibility.
+	// +optional
+	// +kubebuilder:validation:Enum=Core;GPU
+	// +kubebuilder:default=Core
+	CheckSuite CheckSuite `json:"checkSuite,omitempty"`
+
+	// FailureAction controls how a failed check affects the node's health condition.
+	// It defaults to MarkNodeUnhealthy to preserve existing behavior.
+	// +optional
+	// +kubebuilder:validation:Enum=ReportOnly;MarkNodeUnhealthy
+	// +kubebuilder:default=MarkNodeUnhealthy
+	FailureAction CheckFailureAction `json:"failureAction,omitempty"`
+
+	// DisruptionPolicy controls whether the check must finish or may yield to other
+	// workloads. It defaults to RunToCompletion.
+	// +optional
+	// +kubebuilder:validation:Enum=RunToCompletion;YieldToWorkloads
+	// +kubebuilder:default=RunToCompletion
+	DisruptionPolicy CheckDisruptionPolicy `json:"disruptionPolicy,omitempty"`
 }
+
+// CheckSuite selects a controller-owned set of checks and execution environment.
+type CheckSuite string
+
+const (
+	// CheckSuiteCore runs the built-in node health checks.
+	CheckSuiteCore CheckSuite = "Core"
+	// CheckSuiteGPU reserves GPU resources and configures the pod for GPU checks.
+	CheckSuiteGPU CheckSuite = "GPU"
+)
+
+// CheckFailureAction controls how a failed check affects the node's health condition.
+type CheckFailureAction string
+
+const (
+	// CheckFailureActionReportOnly records the failure without marking the node unhealthy.
+	CheckFailureActionReportOnly CheckFailureAction = "ReportOnly"
+	// CheckFailureActionMarkNodeUnhealthy marks the node unhealthy when the check fails.
+	CheckFailureActionMarkNodeUnhealthy CheckFailureAction = "MarkNodeUnhealthy"
+)
+
+// CheckDisruptionPolicy controls whether a check may yield to other workloads.
+type CheckDisruptionPolicy string
+
+const (
+	// CheckDisruptionPolicyRunToCompletion runs the check without voluntary interruption.
+	CheckDisruptionPolicyRunToCompletion CheckDisruptionPolicy = "RunToCompletion"
+	// CheckDisruptionPolicyYieldToWorkloads allows higher-priority workloads to displace the check.
+	CheckDisruptionPolicyYieldToWorkloads CheckDisruptionPolicy = "YieldToWorkloads"
+)
 
 // NodeReference contains a reference to a node
 type NodeReference struct {
@@ -104,6 +155,41 @@ type CheckResult struct {
 	// +kubebuilder:validation:Pattern=`^[A-Z][a-zA-Z0-9]*$`
 	// +kubebuilder:validation:MaxLength=253
 	ErrorCode string `json:"errorCode,omitempty"`
+
+	// SubResults contains results for the component checks performed by this check.
+	// +optional
+	// +listType=map
+	// +listMapKey=name
+	SubResults []SubCheckResult `json:"subResults,omitempty"`
+}
+
+// SubCheckResult describes one component of a check result.
+type SubCheckResult struct {
+	// Name uniquely identifies the component within its parent result.
+	// +required
+	// +kubebuilder:validation:Pattern=`^[A-Z][a-zA-Z0-9]*$`
+	// +kubebuilder:validation:MaxLength=253
+	Name string `json:"name"`
+
+	// Status is the health status of this component.
+	// +required
+	// +kubebuilder:validation:Enum=Healthy;Unhealthy;Unknown
+	Status CheckStatus `json:"status"`
+
+	// Message provides additional details about the component result.
+	// +optional
+	// +kubebuilder:validation:MaxLength=32768
+	Message string `json:"message,omitempty"`
+
+	// ErrorCode is the specific error code if the status is not Healthy.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^[A-Z][a-zA-Z0-9]*$`
+	// +kubebuilder:validation:MaxLength=253
+	ErrorCode string `json:"errorCode,omitempty"`
+
+	// Observations contains measured values emitted by the check.
+	// +optional
+	Observations map[string]string `json:"observations,omitempty"`
 }
 
 // +kubebuilder:object:root=true
