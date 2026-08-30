@@ -60,6 +60,18 @@ jobs:
         password: ${{ secrets.GITHUB_TOKEN }}
     
     - name: Build ${{ env.CLUSTER_HEALTH_MONITOR_IMAGE_NAME}}
+      id: build-and-publish
+      continue-on-error: true
+      uses: docker/build-push-action@v6
+      with:
+        context: .
+        file: docker/cluster-health-monitor.Dockerfile
+        platforms: linux/amd64,linux/arm64
+        push: true
+        tags: ${{ env.REGISTRY }}/${{ env.CLUSTER_HEALTH_MONITOR_IMAGE_NAME}}:${{ env.CLUSTER_HEALTH_MONITOR_IMAGE_VERSION }}
+
+    - name: Retry build ${{ env.CLUSTER_HEALTH_MONITOR_IMAGE_NAME}}
+      if: steps.build-and-publish.outcome == 'failure'
       uses: docker/build-push-action@v6
       with:
         context: .
