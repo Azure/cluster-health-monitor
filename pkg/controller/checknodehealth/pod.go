@@ -72,7 +72,7 @@ func (r *CheckNodeHealthReconciler) ensureHealthCheckPod(ctx context.Context, cn
 	}
 
 	// Create the pod
-	pod, err := r.buildHealthCheckPod(cnh)
+	pod, err := r.buildCoreCheckPod(cnh)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build health check pod: %w", err)
 	}
@@ -91,10 +91,11 @@ func (r *CheckNodeHealthReconciler) ensureHealthCheckPod(ctx context.Context, cn
 	return createdPod, nil
 }
 
-func (r *CheckNodeHealthReconciler) buildHealthCheckPod(cnh *chmv1alpha1.CheckNodeHealth) (*corev1.Pod, error) {
+func (r *CheckNodeHealthReconciler) buildCoreCheckPod(cnh *chmv1alpha1.CheckNodeHealth) (*corev1.Pod, error) {
 	podName := generateHealthCheckPodName(cnh)
 	labels := map[string]string{
 		CheckNodeHealthLabel: cnh.Name,
+		CheckSuiteLabel:      string(chmv1alpha1.CheckSuiteCore),
 	}
 
 	// Determine service account name from annotation or use default

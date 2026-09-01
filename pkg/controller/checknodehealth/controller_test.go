@@ -87,7 +87,7 @@ func TestReconcile(t *testing.T) {
 		expectedPodCreated  bool
 		expectedPodDeleted  bool
 		expectedPodNodeName string
-		expectedPodImage    string
+		expectedPodSuite    chmv1alpha1.CheckSuite
 		validateFunc        func(t *testing.T, fakeClient client.Client, cnh *chmv1alpha1.CheckNodeHealth)
 	}{
 		{
@@ -95,7 +95,8 @@ func TestReconcile(t *testing.T) {
 			existingCR: &chmv1alpha1.CheckNodeHealth{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-finalizer"},
 				Spec: chmv1alpha1.CheckNodeHealthSpec{
-					NodeRef: chmv1alpha1.NodeReference{Name: "test-node"},
+					NodeRef:    chmv1alpha1.NodeReference{Name: "test-node"},
+					CheckSuite: chmv1alpha1.CheckSuiteCore,
 				},
 			},
 			triggerDeletion:     false,
@@ -104,7 +105,7 @@ func TestReconcile(t *testing.T) {
 			expectedPodCreated:  true, // Pod is created after finalizer is added
 			expectedPodDeleted:  false,
 			expectedPodNodeName: "test-node",
-			expectedPodImage:    "ubuntu:latest",
+			expectedPodSuite:    chmv1alpha1.CheckSuiteCore,
 			validateFunc: func(t *testing.T, fakeClient client.Client, cnh *chmv1alpha1.CheckNodeHealth) {
 				// Fetch the updated CheckNodeHealth to verify finalizer
 				updatedCnh := &chmv1alpha1.CheckNodeHealth{}
@@ -126,6 +127,46 @@ func TestReconcile(t *testing.T) {
 				if !hasFinalizer {
 					t.Errorf("Expected finalizer %q to be added, but it wasn't. Finalizers: %v",
 						CheckNodeHealthFinalizer, updatedCnh.Finalizers)
+				}
+			},
+		},
+		{
+			name: "empty check suite creates core checker pod",
+			existingCR: &chmv1alpha1.CheckNodeHealth{
+				ObjectMeta: metav1.ObjectMeta{Name: "test"},
+				Spec: chmv1alpha1.CheckNodeHealthSpec{
+					NodeRef: chmv1alpha1.NodeReference{Name: "test-node"},
+				},
+			},
+			expectedResult:      ctrl.Result{RequeueAfter: 30 * time.Second},
+			expectedPodCreated:  true,
+			expectedPodNodeName: "test-node",
+			expectedPodSuite:    chmv1alpha1.CheckSuiteCore,
+		},
+		{
+			name: "unsupported suite completes without creating pod",
+			existingCR: &chmv1alpha1.CheckNodeHealth{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-unsupported-suite"},
+				Spec: chmv1alpha1.CheckNodeHealthSpec{
+					NodeRef:    chmv1alpha1.NodeReference{Name: "test-node"},
+					CheckSuite: "Unsupported",
+				},
+			},
+			expectedResult: ctrl.Result{},
+			validateFunc: func(t *testing.T, fakeClient client.Client, cnh *chmv1alpha1.CheckNodeHealth) {
+				updated := &chmv1alpha1.CheckNodeHealth{}
+				if err := fakeClient.Get(context.Background(), client.ObjectKey{Name: cnh.Name}, updated); err != nil {
+					t.Fatalf("Failed to get updated CheckNodeHealth: %v", err)
+				}
+				if updated.Status.FinishedAt == nil {
+					t.Fatal("Expected unsupported check suite to complete")
+				}
+				if len(updated.Status.Results) != 1 || updated.Status.Results[0].ErrorCode != ErrorCodeUnsupportedSuite {
+					t.Fatalf("Expected unsupported suite result, got %+v", updated.Status.Results)
+				}
+				condition := getHealthyCondition(updated.Status.Conditions)
+				if condition == nil || condition.Status != metav1.ConditionUnknown || condition.Reason != ReasonUnsupportedSuite {
+					t.Fatalf("Expected unsupported suite condition, got %+v", condition)
 				}
 			},
 		},
@@ -350,6 +391,52 @@ func TestReconcile(t *testing.T) {
 				}
 				if nodeCondition.Status != corev1.ConditionFalse {
 					t.Errorf("Expected node condition status False, got %v", nodeCondition.Status)
+				}
+			},
+		},
+		{
+			name: "report-only failure does not update node condition",
+			existingCR: &chmv1alpha1.CheckNodeHealth{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-report-only"},
+				Spec: chmv1alpha1.CheckNodeHealthSpec{
+					NodeRef:       chmv1alpha1.NodeReference{Name: "test-node"},
+					FailureAction: chmv1alpha1.CheckFailureActionReportOnly,
+				},
+			},
+			existingPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:              "check-node-health-test-report-only",
+					Namespace:         "default",
+					CreationTimestamp: metav1.NewTime(time.Now().Add(-2 * time.Minute)),
+					Labels: map[string]string{
+						CheckNodeHealthLabel: "test-report-only",
+					},
+				},
+				Status: corev1.PodStatus{Phase: corev1.PodPending},
+			},
+			existingNode: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-node"},
+			},
+			enableNodeCondition: true,
+			circuitBreaker:      NewNodeConditionCircuitBreaker(DefaultCircuitBreakerThreshold, DefaultCircuitBreakerWindow, DefaultCircuitBreakerCooldown),
+			expectedResult:      ctrl.Result{},
+			expectedPodDeleted:  true,
+			validateFunc: func(t *testing.T, fakeClient client.Client, cnh *chmv1alpha1.CheckNodeHealth) {
+				updatedCR := &chmv1alpha1.CheckNodeHealth{}
+				if err := fakeClient.Get(context.Background(), client.ObjectKey{Name: cnh.Name}, updatedCR); err != nil {
+					t.Fatalf("Failed to get updated CheckNodeHealth: %v", err)
+				}
+				condition := getHealthyCondition(updatedCR.Status.Conditions)
+				if condition == nil || condition.Status != metav1.ConditionFalse {
+					t.Fatalf("Expected failed CheckNodeHealth condition, got %+v", condition)
+				}
+
+				updatedNode := &corev1.Node{}
+				if err := fakeClient.Get(context.Background(), client.ObjectKey{Name: "test-node"}, updatedNode); err != nil {
+					t.Fatalf("Failed to get updated node: %v", err)
+				}
+				if condition := getNodeHealthyCondition(updatedNode.Status.Conditions); condition != nil {
+					t.Fatalf("Expected ReportOnly to leave node condition unchanged, got %+v", condition)
 				}
 			},
 		},
@@ -831,8 +918,8 @@ func TestReconcile(t *testing.T) {
 					if tt.expectedPodNodeName != "" && pod.Spec.NodeName != tt.expectedPodNodeName {
 						t.Errorf("Expected pod NodeName '%s', got '%s'", tt.expectedPodNodeName, pod.Spec.NodeName)
 					}
-					if tt.expectedPodImage != "" && pod.Spec.Containers[0].Image != tt.expectedPodImage {
-						t.Errorf("Expected pod image '%s', got '%s'", tt.expectedPodImage, pod.Spec.Containers[0].Image)
+					if tt.expectedPodSuite != "" && pod.Labels[CheckSuiteLabel] != string(tt.expectedPodSuite) {
+						t.Errorf("Expected pod check suite label %q, got %q", tt.expectedPodSuite, pod.Labels[CheckSuiteLabel])
 					}
 				}
 			}
@@ -979,4 +1066,3 @@ func TestDetermineHealthyCondition(t *testing.T) {
 		})
 	}
 }
-

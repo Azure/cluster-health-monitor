@@ -40,6 +40,8 @@ const (
 
 	// CheckNodeHealthLabel is the label key used to identify check node health pods
 	CheckNodeHealthLabel = "clusterhealthmonitor.azure.com/checknodehealth"
+	// CheckSuiteLabel identifies the check suite executed by a health check pod.
+	CheckSuiteLabel = "clusterhealthmonitor.azure.com/check-suite"
 
 	// DefaultCheckerServiceAccount is the default service account name for checker pods
 	DefaultCheckerServiceAccount = "checknodehealth-checker"
@@ -60,6 +62,10 @@ const (
 	ReasonCheckFailed       = "CheckFailed"
 	ReasonCheckUnknown      = "CheckUnknown"
 	ReasonPodStartupTimeout = "PodStartupTimeout"
+	ReasonUnsupportedSuite  = "UnsupportedCheckSuite"
+
+	// Check result error codes
+	ErrorCodeUnsupportedSuite = "UnsupportedCheckSuite"
 
 	// NodeConditionNodeHealthy is the condition type set on Node objects
 	// to report health status from CheckNodeHealth checks.
@@ -151,6 +157,23 @@ func (r *CheckNodeHealthReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return r.handleCompletion(ctx, cnh)
 	}
 
+	switch checkSuite(cnh) {
+	case chmv1alpha1.CheckSuiteCore:
+		return r.reconcileCoreCheckSuite(ctx, cnh)
+	default:
+		return r.completeUnsupportedCheckSuite(ctx, cnh)
+	}
+}
+
+// checkSuite returns the check suite or defaults to Core if none is specified.
+func checkSuite(cnh *chmv1alpha1.CheckNodeHealth) chmv1alpha1.CheckSuite {
+	if cnh.Spec.CheckSuite == "" {
+		return chmv1alpha1.CheckSuiteCore
+	}
+	return cnh.Spec.CheckSuite
+}
+
+func (r *CheckNodeHealthReconciler) reconcileCoreCheckSuite(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth) (ctrl.Result, error) {
 	// Check if pod exists and get its status, or create one if it doesn't exist
 	pod, err := r.ensureHealthCheckPod(ctx, cnh)
 	if err != nil {
@@ -173,6 +196,34 @@ func (r *CheckNodeHealthReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	return r.determineCheckResult(ctx, cnh, pod)
 }
 
+func (r *CheckNodeHealthReconciler) completeUnsupportedCheckSuite(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth) (ctrl.Result, error) {
+	now := metav1.Now()
+	if cnh.Status.StartedAt == nil {
+		cnh.Status.StartedAt = &now
+	}
+	cnh.Status.FinishedAt = &now
+	suite := checkSuite(cnh)
+	message := fmt.Sprintf("check suite %q is not supported by this controller", suite)
+	cnh.Status.Results = []chmv1alpha1.CheckResult{{
+		Name:      string(suite),
+		Status:    chmv1alpha1.CheckStatusUnknown,
+		Message:   message,
+		ErrorCode: ErrorCodeUnsupportedSuite,
+	}}
+	cnh.Status.Conditions = []metav1.Condition{{
+		Type:               ConditionTypeHealthy,
+		Status:             metav1.ConditionUnknown,
+		Reason:             ReasonUnsupportedSuite,
+		Message:            message,
+		LastTransitionTime: now,
+	}}
+
+	if err := r.Status().Update(ctx, cnh); err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to record unsupported check suite: %w", err)
+	}
+	return ctrl.Result{}, nil
+}
+
 func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, pod *corev1.Pod) (ctrl.Result, error) {
 	// Check if pod succeeded or failed (completed), or if it's timed out
 	isPodCompleted := pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed
@@ -192,7 +243,8 @@ func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cn
 		}
 
 		// Step 2: Update node condition based on health status
-		if r.EnableNodeCondition {
+		// TODOcarlosalv: Make shouldUpdateNodeCondition solely responsible for determining this
+		if r.EnableNodeCondition && shouldUpdateNodeCondition(cnh) {
 			if err := r.updateNodeCondition(ctx, cnh); err != nil {
 				klog.ErrorS(err, "Failed to update node condition, continuing with cleanup", "node", cnh.Spec.NodeRef.Name)
 			}
@@ -218,6 +270,10 @@ func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cn
 	// Other pod phases (Unknown, etc.)
 	klog.InfoS("Health check pod in unexpected phase", "phase", pod.Status.Phase)
 	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+}
+
+func shouldUpdateNodeCondition(cnh *chmv1alpha1.CheckNodeHealth) bool {
+	return cnh.Spec.FailureAction != chmv1alpha1.CheckFailureActionReportOnly
 }
 
 func (r *CheckNodeHealthReconciler) markStarted(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth) error {
