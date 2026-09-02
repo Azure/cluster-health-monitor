@@ -32,7 +32,7 @@ jobs:
       status_ref: ${{ steps.status_ref.outputs.STATUS_REF }}
     steps:
       # checkout repo so we can ls-remote. we can use main for this
-      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # get the ref of the merge commit. we want to get the full sha instead of the tag so we can guarantee
       # it won't change by a user pushing a new change
       - id: checkout_ref 
@@ -121,19 +121,19 @@ jobs:
       SUBSCRIPTION_ID: ${{ secrets.SUBSCRIPTION_ID }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.get_ref.outputs.checkout_ref }}
 
       - name: Azure Login
-        uses: azure/login@6c251865b4e6290e7b78be643ea2d005bc51f69a # v2.1.1
+        uses: azure/login@f5d393ae46f8fde4be8b75f32e3fc50e654ad0ca # v3.0.1
         with:
           client-id: ${{ secrets.CLIENT_ID }}
           tenant-id: ${{ secrets.TENANT_ID }}
           subscription-id: ${{ secrets.SUBSCRIPTION_ID }}
       
       - name: Create Resource Group
-        uses: Azure/CLI@9f7ce6f37c31b777ec6c6b6d1dfe7db79f497956 # v2.2.0
+        uses: Azure/CLI@9eb25b8360668fb0ecbafa808d40e2197b2f5f52 # v3.0.0
         with:
           azcliversion: latest
           inlineScript: |
@@ -143,7 +143,7 @@ jobs:
               --subscription "$SUBSCRIPTION_ID"
       
       - name: Create Azure Container Registry
-        uses: Azure/CLI@9f7ce6f37c31b777ec6c6b6d1dfe7db79f497956 # v2.2.0
+        uses: Azure/CLI@9eb25b8360668fb0ecbafa808d40e2197b2f5f52 # v3.0.0
         with:
           azcliversion: latest
           inlineScript: |
@@ -160,7 +160,7 @@ jobs:
               --anonymous-pull-enabled true
 
       - name: Build and Push Image to ACR
-        uses: Azure/CLI@9f7ce6f37c31b777ec6c6b6d1dfe7db79f497956 # v2.2.0
+        uses: Azure/CLI@9eb25b8360668fb0ecbafa808d40e2197b2f5f52 # v3.0.0
         with:
           azcliversion: latest
           inlineScript: |
@@ -172,7 +172,7 @@ jobs:
               .
       
       - name: Create AKS Cluster
-        uses: Azure/CLI@9f7ce6f37c31b777ec6c6b6d1dfe7db79f497956 # v2.2.0
+        uses: Azure/CLI@9eb25b8360668fb0ecbafa808d40e2197b2f5f52 # v3.0.0
         with:
           azcliversion: latest
           inlineScript: |
@@ -196,27 +196,27 @@ jobs:
       AZURE_CORE_OUTPUT: none
     steps:
       - name: Checkout code
-        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.get_ref.outputs.checkout_ref }}
 
       - name: Set up Kubectl
-        uses: azure/setup-kubectl@776406bce94f63e41d621b960d78ee25c8b76ede # v4.0.1
+        uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5.1.0
       
       - name: Set up kubelogin
-        uses: azure/use-kubelogin@76597ae0fcbaace21b05e13a2cbf8daee2c6e820 # v1.2
+        uses: azure/use-kubelogin@0ce7c36141aa27d4934872cf00b0120804c98a29 # v1.3
         with:
           kubelogin-version: 'v0.2.10'
       
       - name: Azure Login
-        uses: azure/login@6c251865b4e6290e7b78be643ea2d005bc51f69a # v2.1.1
+        uses: azure/login@f5d393ae46f8fde4be8b75f32e3fc50e654ad0ca # v3.0.1
         with:
           client-id: ${{ secrets.CLIENT_ID }}
           tenant-id: ${{ secrets.TENANT_ID }}
           subscription-id: ${{ secrets.SUBSCRIPTION_ID }}
       
       - name: Set AKS Context
-        uses: azure/aks-set-context@c7eb093e5a5d47caa333f64974d5fd1cd4bf069d # v4.0.3
+        uses: azure/aks-set-context@60623acbdcbbdcf799ad50a1adf8703874339f8b # v5.0.0
         with:
           cluster-name: "chme2e${{ github.run_id }}"
           resource-group: "chme2e${{ github.run_id }}"
@@ -236,7 +236,7 @@ jobs:
           cat /tmp/k8s-manifests.yaml
       
       - name: Deploy to AKS
-        uses: Azure/k8s-deploy@6f7c489cecd8da05646259d9fa3daae92e095c7b # v5.0.4
+        uses: Azure/k8s-deploy@51ca02a8b7225fbd0924aac359c5b336a5f1e5b4 # v7.0.0
         with:
           action: deploy
           manifests: |
@@ -258,32 +258,32 @@ jobs:
       E2E_SKIP_ALL_CLEANUP: "true" # Resource group will be deleted in later job which should clean up everything
     steps:
       - name: Checkout code
-        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.get_ref.outputs.checkout_ref }}
 
       - name: Set up Go
-        uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00 # v6.0.0
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: stable
 
       - name: Set up Kubectl
-        uses: azure/setup-kubectl@776406bce94f63e41d621b960d78ee25c8b76ede # v4.0.1
+        uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5.1.0
       
       - name: Set up kubelogin
-        uses: azure/use-kubelogin@76597ae0fcbaace21b05e13a2cbf8daee2c6e820 # v1.2
+        uses: azure/use-kubelogin@0ce7c36141aa27d4934872cf00b0120804c98a29 # v1.3
         with:
           kubelogin-version: 'v0.2.10'
       
       - name: Azure Login
-        uses: azure/login@6c251865b4e6290e7b78be643ea2d005bc51f69a # v2.1.1
+        uses: azure/login@f5d393ae46f8fde4be8b75f32e3fc50e654ad0ca # v3.0.1
         with:
           client-id: ${{ secrets.CLIENT_ID }}
           tenant-id: ${{ secrets.TENANT_ID }}
           subscription-id: ${{ secrets.SUBSCRIPTION_ID }}
       
       - name: Set AKS Context
-        uses: azure/aks-set-context@c7eb093e5a5d47caa333f64974d5fd1cd4bf069d # v4.0.3
+        uses: azure/aks-set-context@60623acbdcbbdcf799ad50a1adf8703874339f8b # v5.0.0
         with:
           cluster-name: "chme2e${{ github.run_id }}"
           resource-group: "chme2e${{ github.run_id }}"
@@ -310,14 +310,14 @@ jobs:
       SUBSCRIPTION_ID: ${{ secrets.SUBSCRIPTION_ID }}
     steps:
       - name: Azure Login
-        uses: azure/login@6c251865b4e6290e7b78be643ea2d005bc51f69a # v2.1.1
+        uses: azure/login@f5d393ae46f8fde4be8b75f32e3fc50e654ad0ca # v3.0.1
         with:
           client-id: ${{ secrets.CLIENT_ID }}
           tenant-id: ${{ secrets.TENANT_ID }}
           subscription-id: ${{ secrets.SUBSCRIPTION_ID }}
       
       - name: Cleanup Resources
-        uses: Azure/CLI@9f7ce6f37c31b777ec6c6b6d1dfe7db79f497956 # v2.2.0
+        uses: Azure/CLI@9eb25b8360668fb0ecbafa808d40e2197b2f5f52 # v3.0.0
         with:
           azcliversion: latest
           inlineScript: |
