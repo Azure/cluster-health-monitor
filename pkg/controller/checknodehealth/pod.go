@@ -165,6 +165,15 @@ func (r *CheckNodeHealthReconciler) updatePodstartCheckerResult(ctx context.Cont
 	// - If the pod remains in Pending state beyond the timeout, it indicates a persistent node-level
 	//   issue preventing container startup
 	if pod.Status.Phase == corev1.PodPending && r.isPodTimeout(pod) {
+		// Cross-check: if any checker-reported result already exists on the CR, the checker
+		// container demonstrably started and ran (the Node Checker pod writes its results via its
+		// own service account from inside the running container). In that case the pod's observed
+		// status is stale/unreliable — e.g. the kubelet reported the initial "waiting" state but
+		// never reported the "Running" transition to the API server on a freshly rebooted node — so
+		// treating this as a startup failure would be a false positive. Report PodStartup as Healthy.
+		if r.hasCheckerReportedResult(cnh) {
+			return r.markPodStartupResult(ctx, cnh, chmv1alpha1.CheckStatusHealthy, "Checker result reported despite stale pod status - containers started")
+		}
 		return r.markPodStartupResult(ctx, cnh, chmv1alpha1.CheckStatusUnhealthy, "Pod stuck in Pending state - timeout exceeded")
 	}
 
@@ -192,6 +201,20 @@ func (r *CheckNodeHealthReconciler) areAllContainersStarted(pod *corev1.Pod) boo
 		}
 	}
 	return true
+}
+
+// hasCheckerReportedResult returns true if the CheckNodeHealth CR already carries a result
+// reported by the Node Checker pod (i.e. any result other than the controller-owned "PodStartup").
+// Such a result can only be written from inside the running checker container via its service
+// account, so its presence is proof the container started — even when the observed pod status
+// (which can lag or be dropped by the kubelet on a rebooted node) still shows Pending.
+func (r *CheckNodeHealthReconciler) hasCheckerReportedResult(cnh *chmv1alpha1.CheckNodeHealth) bool {
+	for _, result := range cnh.Status.Results {
+		if result.Name != "PodStartup" {
+			return true
+		}
+	}
+	return false
 }
 
 // markPodStartupResult marks the CheckNodeHealth with a PodStartup check result
