@@ -76,6 +76,11 @@ var (
 	RequiredCheckResults = []string{"PodStartup", "PodNetwork"}
 )
 
+// CheckRunner reconciles additional checks and reports whether its work has completed.
+type CheckRunner interface {
+	Reconcile(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, node *corev1.Node) (bool, error)
+}
+
 // CheckNodeHealthReconciler reconciles a CheckNodeHealth object
 type CheckNodeHealthReconciler struct {
 	client.Client
@@ -84,6 +89,8 @@ type CheckNodeHealthReconciler struct {
 	CheckerPodLabel     string                       // Label to identify health check pods
 	CheckerPodImage     string                       // Image for the health check pod
 	CheckerPodNamespace string                       // Namespace to create pods in
+	EnableGPUChecks     bool                         // Whether GPU nodes run additional health checks
+	GPUCheckRunner      CheckRunner                  // Reconciles the separate GPU pod after Core completes
 	EnableNodeCondition bool                         // Whether to set NodeHealthy condition on the Node
 	CircuitBreaker      *NodeConditionCircuitBreaker // Circuit breaker for node condition updates
 }
@@ -145,17 +152,10 @@ func (r *CheckNodeHealthReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 
 	// Check if already completed - if so, cleanup pod and skip
-	// This case happens when pod deletion failed in determineCheckResult
+	// This case happens when pod deletion failed after status completion.
 	if isCompleted(cnh) {
 		klog.InfoS("CheckNodeHealth already completed", "name", cnh.Name)
 		return r.handleCompletion(ctx, cnh)
-	}
-
-	// Check if pod exists and get its status, or create one if it doesn't exist
-	pod, err := r.ensureHealthCheckPod(ctx, cnh)
-	if err != nil {
-		klog.ErrorS(err, "Failed to ensure health check pod")
-		return ctrl.Result{}, err
 	}
 
 	// Mark the CheckNodeHealth as started
@@ -164,60 +164,72 @@ func (r *CheckNodeHealthReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, err
 	}
 
-	if err := r.updatePodstartCheckerResult(ctx, cnh, pod); err != nil {
-		klog.ErrorS(err, "Failed to update PodStartup check result")
+	coreChecksDone, err := r.reconcileCoreChecks(ctx, cnh)
+	if err != nil {
 		return ctrl.Result{}, err
 	}
+	if !coreChecksDone {
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	}
 
-	// Determine the overall result based on pod status
-	return r.determineCheckResult(ctx, cnh, pod)
+	gpuChecksDone, err := r.reconcileGPUChecks(ctx, cnh)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+	if !gpuChecksDone {
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	}
+
+	return r.completeCheckNodeHealth(ctx, cnh)
 }
 
-func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, pod *corev1.Pod) (ctrl.Result, error) {
-	// Check if pod succeeded or failed (completed), or if it's timed out
-	isPodCompleted := pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed
+func (r *CheckNodeHealthReconciler) reconcileCoreChecks(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth) (bool, error) {
+	pod, err := r.ensureHealthCheckPod(ctx, cnh)
+	if err != nil {
+		return false, fmt.Errorf("failed to ensure Core health check pod: %w", err)
+	}
 
-	if isPodCompleted || r.isPodTimeout(pod) {
-		if isPodCompleted {
-			klog.InfoS("Health check pod completed, marking as completed", "phase", pod.Status.Phase)
+	if err := r.updatePodstartCheckerResult(ctx, cnh, pod); err != nil {
+		return false, fmt.Errorf("failed to update PodStartup check result: %w", err)
+	}
+
+	if pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
+		klog.InfoS("Core health check pod completed", "phase", pod.Status.Phase)
+		return true, nil
+	}
+	if r.isPodTimeout(pod) {
+		klog.InfoS("Core health check pod timed out", "timeout", PodTimeout, "phase", pod.Status.Phase)
+		return true, nil
+	}
+
+	return false, nil
+}
+
+func (r *CheckNodeHealthReconciler) completeCheckNodeHealth(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth) (ctrl.Result, error) {
+	healthyStatus, err := r.markCompleted(ctx, cnh)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to mark CheckNodeHealth as completed: %w", err)
+	}
+
+	if r.EnableNodeCondition {
+		if err := r.updateNodeCondition(ctx, cnh); err != nil {
+			klog.ErrorS(err, "Failed to update node condition, continuing with cleanup", "node", cnh.Spec.NodeRef.Name)
+		}
+
+		if healthyStatus == metav1.ConditionFalse {
+			r.CircuitBreaker.RecordUnhealthyNode()
 		} else {
-			klog.InfoS("Health check pod timeout, marking as completed", "timeout", PodTimeout, "phase", pod.Status.Phase)
+			r.CircuitBreaker.RecordHealthyNode()
 		}
+	}
 
-		// Step 1: Mark as completed (determines health based on Results)
-		healthyStatus, err := r.markCompleted(ctx, cnh)
-		if err != nil {
-			klog.ErrorS(err, "Failed to mark as completed")
-			return ctrl.Result{}, err
-		}
-
-		// Step 2: Update node condition based on health status
-		if r.EnableNodeCondition {
-			if err := r.updateNodeCondition(ctx, cnh); err != nil {
-				klog.ErrorS(err, "Failed to update node condition, continuing with cleanup", "node", cnh.Spec.NodeRef.Name)
-			}
-
-			// Track consecutive unhealthy/healthy results for circuit breaker
-			if healthyStatus == metav1.ConditionFalse {
-				r.CircuitBreaker.RecordUnhealthyNode()
-			} else {
-				r.CircuitBreaker.RecordHealthyNode()
-			}
-		}
-
-		// Step 3: Delete the pod
-		if err := r.cleanupPod(ctx, cnh); err != nil {
-			klog.ErrorS(err, "Failed to cleanup pod, will retry")
-			return ctrl.Result{}, nil
-		}
-
-		klog.InfoS("Successfully marked as completed and deleted pod")
+	if err := r.cleanupPod(ctx, cnh); err != nil {
+		klog.ErrorS(err, "Failed to cleanup pods, will retry")
 		return ctrl.Result{}, nil
 	}
 
-	// Other pod phases (Unknown, etc.)
-	klog.InfoS("Health check pod in unexpected phase", "phase", pod.Status.Phase)
-	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	klog.InfoS("Successfully completed CheckNodeHealth and deleted its pods")
+	return ctrl.Result{}, nil
 }
 
 func (r *CheckNodeHealthReconciler) markStarted(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth) error {

@@ -7,6 +7,7 @@ import (
 
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -50,25 +51,13 @@ func (r *CheckNodeHealthReconciler) cleanupPod(ctx context.Context, cnh *chmv1al
 }
 
 func (r *CheckNodeHealthReconciler) ensureHealthCheckPod(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth) (*corev1.Pod, error) {
-	// Check if pods already exist using label selector
-	podList := &corev1.PodList{}
-	listOpts := []client.ListOption{
-		client.InNamespace(r.CheckerPodNamespace),
-		client.MatchingLabels{CheckNodeHealthLabel: cnh.Name},
-	}
-
-	if err := r.List(ctx, podList, listOpts...); err != nil {
-		return nil, fmt.Errorf("failed to list existing pods: %w", err)
-	}
-
-	if len(podList.Items) > 0 {
-		// Pod already exists, return the first one
-		pod := &podList.Items[0]
-		if len(podList.Items) > 1 {
-			klog.InfoS("Multiple health check pods found, using first one", "count", len(podList.Items))
-		}
+	pod := &corev1.Pod{}
+	podKey := client.ObjectKey{Name: generateHealthCheckPodName(cnh), Namespace: r.CheckerPodNamespace}
+	if err := r.Get(ctx, podKey, pod); err == nil {
 		klog.InfoS("Health check pod already exists", "pod", pod.Name)
 		return pod, nil
+	} else if !apierrors.IsNotFound(err) {
+		return nil, fmt.Errorf("failed to get existing health check pod: %w", err)
 	}
 
 	// Create the pod
