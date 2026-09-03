@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	gpuResourceName     corev1.ResourceName = "nvidia.com/gpu"
-	gpuAcceleratorLabel string              = "kubernetes.azure.com/accelerator"
+	nvidiaGPUResourceName corev1.ResourceName = "nvidia.com/gpu"
+	gpuAcceleratorLabel   string              = "kubernetes.azure.com/accelerator"
 )
 
 // reconcileGPUChecks checks if the node is a GPU node and if so runs the GPU check runner. It returns true if the GPU checks are completed
@@ -33,7 +33,7 @@ func (r *CheckNodeHealthReconciler) reconcileGPUChecks(ctx context.Context, cnh 
 		}
 		return false, fmt.Errorf("failed to get node %s: %w", cnh.Spec.NodeRef.Name, err)
 	}
-	if !isGPUNode(node) {
+	if !isSupportedGPUNode(node) {
 		klog.V(3).InfoS("Skipping GPU checks because the target is not a GPU node", "checkNodeHealth", cnh.Name, "node", node.Name)
 		return true, nil
 	}
@@ -43,8 +43,12 @@ func (r *CheckNodeHealthReconciler) reconcileGPUChecks(ctx context.Context, cnh 
 	return r.GPUCheckRunner.Reconcile(ctx, cnh, node)
 }
 
-func isGPUNode(node *corev1.Node) bool {
+// isSupportedGPUNode determines if a node is a GPU node for which health checks are supported. Currently only nvidia GPUs will be supported
+// so this will return false for other types such as AMD. Support for these may be added in the future.
+func isSupportedGPUNode(node *corev1.Node) bool {
+	// TODO add checks for specific supported skus.
+
 	// GPU pools with a device plugin advertise the resource. Driver-only pools contain only the accelerator label.
-	_, advertisesGPUResource := node.Status.Allocatable[gpuResourceName]
-	return advertisesGPUResource || strings.EqualFold(node.Labels[gpuAcceleratorLabel], "nvidia")
+	_, advertisesNvidiaGPUResource := node.Status.Allocatable[nvidiaGPUResourceName]
+	return advertisesNvidiaGPUResource || strings.EqualFold(node.Labels[gpuAcceleratorLabel], "nvidia")
 }

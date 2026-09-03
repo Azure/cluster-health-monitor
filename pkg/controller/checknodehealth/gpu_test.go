@@ -24,7 +24,7 @@ func (f *fakeGPUCheckRunner) Reconcile(_ context.Context, _ *chmv1alpha1.CheckNo
 	return f.done, nil
 }
 
-func TestIsGPUNode(t *testing.T) {
+func TestIsSupportedGPUNode(t *testing.T) {
 	tests := []struct {
 		name string
 		node *corev1.Node
@@ -43,7 +43,7 @@ func TestIsGPUNode(t *testing.T) {
 		{
 			name: "unlabeled node with allocatable NVIDIA GPU",
 			node: &corev1.Node{Status: corev1.NodeStatus{
-				Allocatable: corev1.ResourceList{gpuResourceName: resource.MustParse("8")},
+				Allocatable: corev1.ResourceList{nvidiaGPUResourceName: resource.MustParse("8")},
 			}},
 			want: true,
 		},
@@ -59,7 +59,7 @@ func TestIsGPUNode(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if got := isGPUNode(test.node); got != test.want {
+			if got := isSupportedGPUNode(test.node); got != test.want {
 				t.Errorf("isGPUNode() = %t, want %t", got, test.want)
 			}
 		})
@@ -262,7 +262,7 @@ func fullyManagedGPUNode(name string) *corev1.Node {
 			Labels: map[string]string{gpuAcceleratorLabel: "nvidia"},
 		},
 		Status: corev1.NodeStatus{
-			Allocatable: corev1.ResourceList{gpuResourceName: resource.MustParse("8")},
+			Allocatable: corev1.ResourceList{nvidiaGPUResourceName: resource.MustParse("8")},
 		},
 	}
 }
