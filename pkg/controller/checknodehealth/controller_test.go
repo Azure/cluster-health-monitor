@@ -2,6 +2,7 @@ package checknodehealth
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -115,6 +116,58 @@ func TestValidate(t *testing.T) {
 				t.Fatalf("validate() error = %q, want %q", err, test.wantErrText)
 			}
 		})
+	}
+}
+
+func TestCompleteCheckNodeHealthReturnsCleanupError(t *testing.T) {
+	reconciler, _, scheme := setupTest()
+	deleteErr := errors.New("delete failed")
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&chmv1alpha1.CheckNodeHealth{}, &corev1.Node{}).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Delete: func(_ context.Context, _ client.WithWatch, _ client.Object, _ ...client.DeleteOption) error {
+				return deleteErr
+			},
+		}).
+		Build()
+	reconciler.Client = fakeClient
+
+	cnh := &chmv1alpha1.CheckNodeHealth{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-cleanup-failure"},
+		Status: chmv1alpha1.CheckNodeHealthStatus{Results: []chmv1alpha1.CheckResult{
+			{Name: "PodStartup", Status: chmv1alpha1.CheckStatusHealthy},
+			{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusHealthy},
+		}},
+	}
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+		Name:      "check-node-health-test-cleanup-failure",
+		Namespace: reconciler.CheckerPodNamespace,
+		Labels:    map[string]string{CheckNodeHealthLabel: cnh.Name},
+	}}
+	ctx := context.Background()
+	if err := fakeClient.Create(ctx, cnh); err != nil {
+		t.Fatal(err)
+	}
+	if err := fakeClient.Create(ctx, pod); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := reconciler.completeCheckNodeHealth(ctx, cnh)
+	if result != (ctrl.Result{}) {
+		t.Errorf("completeCheckNodeHealth() result = %v, want empty result", result)
+	}
+	wantErr := "failed to cleanup pods: failed to delete pod check-node-health-test-cleanup-failure: delete failed"
+	if err == nil || err.Error() != wantErr {
+		t.Fatalf("completeCheckNodeHealth() error = %q, want %q", err, wantErr)
+	}
+
+	completed := &chmv1alpha1.CheckNodeHealth{}
+	if err := fakeClient.Get(ctx, client.ObjectKey{Name: cnh.Name}, completed); err != nil {
+		t.Fatal(err)
+	}
+	if completed.Status.FinishedAt == nil {
+		t.Fatal("CheckNodeHealth was not marked complete before cleanup failed")
 	}
 }
 

@@ -243,8 +243,7 @@ func (r *CheckNodeHealthReconciler) completeCheckNodeHealth(ctx context.Context,
 	}
 
 	if err := r.cleanupPod(ctx, cnh); err != nil {
-		klog.ErrorS(err, "Failed to cleanup pods, will retry")
-		return ctrl.Result{}, nil
+		return ctrl.Result{}, fmt.Errorf("failed to cleanup pods: %w", err)
 	}
 
 	klog.InfoS("Successfully completed CheckNodeHealth and deleted its pods")
