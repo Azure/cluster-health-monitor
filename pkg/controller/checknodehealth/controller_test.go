@@ -2,6 +2,7 @@ package checknodehealth
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -51,6 +52,123 @@ func setupTest() (*CheckNodeHealthReconciler, client.Client, *runtime.Scheme) {
 	}
 
 	return reconciler, fakeClient, scheme
+}
+
+func TestValidate(t *testing.T) {
+	tests := []struct {
+		name        string
+		mutate      func(*CheckNodeHealthReconciler)
+		wantErrText string
+	}{
+		{name: "valid: only core checks"},
+		{
+			name:        "invalid: empty checker pod image",
+			mutate:      func(r *CheckNodeHealthReconciler) { r.CheckerPodImage = "" },
+			wantErrText: "checker pod image must not be empty",
+		},
+		{
+			name:        "invalid: empty checker pod namespace",
+			mutate:      func(r *CheckNodeHealthReconciler) { r.CheckerPodNamespace = "" },
+			wantErrText: "checker pod namespace must not be empty",
+		},
+		{
+			name: "valid: GPU checks enabled",
+			mutate: func(r *CheckNodeHealthReconciler) {
+				r.EnableGPUChecks = true
+				r.GPUCheckRunner = &fakeGPUCheckRunner{}
+			},
+		},
+		{
+			name:        "invalid: GPU checks enabled without runner",
+			mutate:      func(r *CheckNodeHealthReconciler) { r.EnableGPUChecks = true },
+			wantErrText: "GPU checks are enabled but no GPU check runner is configured",
+		},
+		{
+			name: "invalid: all errors are returned when there are multiple",
+			mutate: func(r *CheckNodeHealthReconciler) {
+				r.CheckerPodImage = ""
+				r.CheckerPodNamespace = ""
+				r.EnableGPUChecks = true
+			},
+			wantErrText: "checker pod image must not be empty\n" +
+				"checker pod namespace must not be empty\n" +
+				"GPU checks are enabled but no GPU check runner is configured",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			reconciler := &CheckNodeHealthReconciler{
+				CheckerPodImage:     "checker:latest",
+				CheckerPodNamespace: "kube-system",
+			}
+			if test.mutate != nil {
+				test.mutate(reconciler)
+			}
+			err := reconciler.validate()
+			if test.wantErrText == "" {
+				if err != nil {
+					t.Fatalf("validate() error = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || err.Error() != test.wantErrText {
+				t.Fatalf("validate() error = %q, want %q", err, test.wantErrText)
+			}
+		})
+	}
+}
+
+func TestCompleteCheckNodeHealthReturnsCleanupError(t *testing.T) {
+	reconciler, _, scheme := setupTest()
+	deleteErr := errors.New("delete failed")
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&chmv1alpha1.CheckNodeHealth{}, &corev1.Node{}).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Delete: func(_ context.Context, _ client.WithWatch, _ client.Object, _ ...client.DeleteOption) error {
+				return deleteErr
+			},
+		}).
+		Build()
+	reconciler.Client = fakeClient
+
+	cnh := &chmv1alpha1.CheckNodeHealth{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-cleanup-failure"},
+		Status: chmv1alpha1.CheckNodeHealthStatus{Results: []chmv1alpha1.CheckResult{
+			{Name: "PodStartup", Status: chmv1alpha1.CheckStatusHealthy},
+			{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusHealthy},
+		}},
+	}
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+		Name:      "check-node-health-test-cleanup-failure",
+		Namespace: reconciler.CheckerPodNamespace,
+		Labels:    map[string]string{CheckNodeHealthLabel: cnh.Name},
+	}}
+	ctx := context.Background()
+	if err := fakeClient.Create(ctx, cnh); err != nil {
+		t.Fatal(err)
+	}
+	if err := fakeClient.Create(ctx, pod); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := reconciler.completeCheckNodeHealth(ctx, cnh)
+	if result != (ctrl.Result{}) {
+		t.Errorf("completeCheckNodeHealth() result = %v, want empty result", result)
+	}
+	wantErr := "failed to cleanup pods: failed to delete pod check-node-health-test-cleanup-failure: delete failed"
+	if err == nil || err.Error() != wantErr {
+		t.Fatalf("completeCheckNodeHealth() error = %q, want %q", err, wantErr)
+	}
+
+	completed := &chmv1alpha1.CheckNodeHealth{}
+	if err := fakeClient.Get(ctx, client.ObjectKey{Name: cnh.Name}, completed); err != nil {
+		t.Fatal(err)
+	}
+	if completed.Status.FinishedAt == nil {
+		t.Fatal("CheckNodeHealth was not marked complete before cleanup failed")
+	}
 }
 
 // getHealthyCondition retrieves the Healthy condition from CheckNodeHealth status
@@ -979,4 +1097,3 @@ func TestDetermineHealthyCondition(t *testing.T) {
 		})
 	}
 }
-
