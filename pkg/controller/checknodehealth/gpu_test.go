@@ -212,7 +212,7 @@ func TestReconcileWaitsForGPUChecks(t *testing.T) {
 	}
 }
 
-func TestReconcileRunsCoreBeforeGPUChecks(t *testing.T) {
+func TestReconcileDoesNotStartGPUChecksBeforeCoreCompletes(t *testing.T) {
 	reconciler, fakeClient, _ := setupTest()
 	runner := &fakeGPUCheckRunner{done: true}
 	reconciler.EnableGPUChecks = true
