@@ -53,6 +53,71 @@ func setupTest() (*CheckNodeHealthReconciler, client.Client, *runtime.Scheme) {
 	return reconciler, fakeClient, scheme
 }
 
+func TestValidate(t *testing.T) {
+	tests := []struct {
+		name        string
+		mutate      func(*CheckNodeHealthReconciler)
+		wantErrText string
+	}{
+		{name: "valid: only core checks"},
+		{
+			name:        "invalid: empty checker pod image",
+			mutate:      func(r *CheckNodeHealthReconciler) { r.CheckerPodImage = "" },
+			wantErrText: "checker pod image must not be empty",
+		},
+		{
+			name:        "invalid: empty checker pod namespace",
+			mutate:      func(r *CheckNodeHealthReconciler) { r.CheckerPodNamespace = "" },
+			wantErrText: "checker pod namespace must not be empty",
+		},
+		{
+			name: "valid: GPU checks enabled",
+			mutate: func(r *CheckNodeHealthReconciler) {
+				r.EnableGPUChecks = true
+				r.GPUCheckRunner = &fakeGPUCheckRunner{}
+			},
+		},
+		{
+			name:        "invalid: GPU checks enabled without runner",
+			mutate:      func(r *CheckNodeHealthReconciler) { r.EnableGPUChecks = true },
+			wantErrText: "GPU checks are enabled but no GPU check runner is configured",
+		},
+		{
+			name: "invalid: all errors are returned when there are multiple",
+			mutate: func(r *CheckNodeHealthReconciler) {
+				r.CheckerPodImage = ""
+				r.CheckerPodNamespace = ""
+				r.EnableGPUChecks = true
+			},
+			wantErrText: "checker pod image must not be empty\n" +
+				"checker pod namespace must not be empty\n" +
+				"GPU checks are enabled but no GPU check runner is configured",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			reconciler := &CheckNodeHealthReconciler{
+				CheckerPodImage:     "checker:latest",
+				CheckerPodNamespace: "kube-system",
+			}
+			if test.mutate != nil {
+				test.mutate(reconciler)
+			}
+			err := reconciler.validate()
+			if test.wantErrText == "" {
+				if err != nil {
+					t.Fatalf("validate() error = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || err.Error() != test.wantErrText {
+				t.Fatalf("validate() error = %q, want %q", err, test.wantErrText)
+			}
+		})
+	}
+}
+
 // getHealthyCondition retrieves the Healthy condition from CheckNodeHealth status
 func getHealthyCondition(conditions []metav1.Condition) *metav1.Condition {
 	for i, condition := range conditions {
@@ -979,4 +1044,3 @@ func TestDetermineHealthyCondition(t *testing.T) {
 		})
 	}
 }
-

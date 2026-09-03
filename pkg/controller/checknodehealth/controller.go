@@ -2,6 +2,7 @@ package checknodehealth
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -103,6 +104,10 @@ type CheckNodeHealthReconciler struct {
 
 // SetupWithManager sets up the controller with the Manager
 func (r *CheckNodeHealthReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	if err := r.validate(); err != nil {
+		return err
+	}
+
 	// Only watch pods in the same namespace where we create them
 	podPredicate := predicate.NewPredicateFuncs(func(obj client.Object) bool {
 		return obj.GetNamespace() == r.CheckerPodNamespace
@@ -111,6 +116,20 @@ func (r *CheckNodeHealthReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&chmv1alpha1.CheckNodeHealth{}).
 		Owns(&corev1.Pod{}, builder.WithPredicates(podPredicate)).
 		Complete(r)
+}
+
+func (r *CheckNodeHealthReconciler) validate() error {
+	var errs []error
+	if r.CheckerPodImage == "" {
+		errs = append(errs, errors.New("checker pod image must not be empty"))
+	}
+	if r.CheckerPodNamespace == "" {
+		errs = append(errs, errors.New("checker pod namespace must not be empty"))
+	}
+	if r.EnableGPUChecks && r.GPUCheckRunner == nil {
+		errs = append(errs, errors.New("GPU checks are enabled but no GPU check runner is configured"))
+	}
+	return errors.Join(errs...)
 }
 
 // Reconcile is part of the main kubernetes reconciliation loop
