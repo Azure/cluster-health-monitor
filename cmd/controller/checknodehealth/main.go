@@ -50,6 +50,7 @@ func main() {
 	var enableNodeRebootCheck bool
 	var enableHealthCheckRequest bool
 	var enableNodeCondition bool
+	var enableGPUChecks bool
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to")
@@ -63,6 +64,9 @@ func main() {
 			"The HealthCheckRequest CRD must be installed in the cluster by the AKS health signal component.")
 	flag.BoolVar(&enableNodeCondition, "enable-node-condition", false,
 		"Enable setting the NodeHealthy condition on Node objects when health checks fail.")
+	flag.BoolVar(&enableGPUChecks, "enable-gpu-checks", false,
+		"Enable intrusive GPU checks on CheckNodeHealth targets that are GPU nodes. "+
+			"Requires GPU_CHECKER_POD_IMAGE to be set.")
 
 	// Set up logging configuration with JSON format (no CLI override needed)
 	logConfig := logsapi.NewLoggingConfiguration()
@@ -90,6 +94,17 @@ func main() {
 		klog.FlushAndExit(klog.ExitFlushTimeout, 1)
 	}
 	klog.InfoS("Using checker pod image from CHECKER_POD_IMAGE", "image", checkerPodImage)
+
+	// The GPU checker runs from a separate image variant carrying the CUDA payload, so it is
+	// only required when GPU checks are enabled.
+	gpuCheckerPodImage := os.Getenv("GPU_CHECKER_POD_IMAGE")
+	if enableGPUChecks {
+		if gpuCheckerPodImage == "" {
+			klog.ErrorS(nil, "GPU_CHECKER_POD_IMAGE environment variable is not set but --enable-gpu-checks is true")
+			klog.FlushAndExit(klog.ExitFlushTimeout, 1)
+		}
+		klog.InfoS("GPU checks enabled", "image", gpuCheckerPodImage)
+	}
 
 	// Get Kubernetes config
 	cfg, err := ctrl.GetConfig()
@@ -192,6 +207,8 @@ func main() {
 		CheckerPodNamespace: checkerPodNamespace,
 		EnableNodeCondition: enableNodeCondition,
 		CircuitBreaker:      circuitBreaker,
+		EnableGPUChecks:     enableGPUChecks,
+		GPUCheckerPodImage:  gpuCheckerPodImage,
 	}).SetupWithManager(mgr); err != nil {
 		klog.ErrorS(err, "Unable to create controller", "controller", "CheckNodeHealth")
 		klog.FlushAndExit(klog.ExitFlushTimeout, 1)

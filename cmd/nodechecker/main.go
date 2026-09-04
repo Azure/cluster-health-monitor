@@ -22,8 +22,16 @@ func init() {
 
 func main() {
 	var name string
+	var enableGPUChecks bool
+	var sku string
+	var gpuCount int
 
 	flag.StringVar(&name, "name", "", "Name of the CheckNodeHealth resource (required)")
+	flag.BoolVar(&enableGPUChecks, "enable-gpu-checks", false,
+		"Run the intrusive GPU benchmarks in addition to the standard node checks. "+
+			"Only valid in the GPU image variant.")
+	flag.StringVar(&sku, "sku", "", "VM SKU of the target node, used to select GPU bandwidth thresholds")
+	flag.IntVar(&gpuCount, "gpu-count", 0, "Number of GPUs granted to this pod; 0 means detect")
 	flag.Parse()
 	defer klog.Flush()
 
@@ -32,7 +40,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	klog.InfoS("Starting node-checker", "name", name)
+	klog.InfoS("Starting node-checker", "name", name, "gpuChecks", enableGPUChecks, "sku", sku, "gpuCount", gpuCount)
 
 	// We don't need a timeout context here because the controller will handle timeouts
 	ctx := context.Background()
@@ -53,7 +61,13 @@ func main() {
 	klog.InfoS("Retrieved node name from CR", "node", nodeName, "name", name)
 
 	// Create runner and execute all checkers
-	runner := nodecheckerrunner.NewRunner(clientset, crClient, nodeName, name)
+	runner := nodecheckerrunner.NewRunner(clientset, crClient, nodecheckerrunner.Options{
+		NodeName:        nodeName,
+		CRName:          name,
+		EnableGPUChecks: enableGPUChecks,
+		SKU:             sku,
+		GPUCount:        gpuCount,
+	})
 	if err := runner.Run(ctx); err != nil {
 		klog.ErrorS(err, "Failed to run node checkers")
 		os.Exit(1)

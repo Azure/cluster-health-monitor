@@ -6,7 +6,9 @@ import (
 	"time"
 
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
+	"github.com/Azure/cluster-health-monitor/pkg/cnhstatus"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -49,7 +51,7 @@ func (r *CheckNodeHealthReconciler) cleanupPod(ctx context.Context, cnh *chmv1al
 	return nil
 }
 
-func (r *CheckNodeHealthReconciler) ensureHealthCheckPod(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth) (*corev1.Pod, error) {
+func (r *CheckNodeHealthReconciler) ensureHealthCheckPod(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, info gpuNodeInfo) (*corev1.Pod, error) {
 	// Check if pods already exist using label selector
 	podList := &corev1.PodList{}
 	listOpts := []client.ListOption{
@@ -72,7 +74,7 @@ func (r *CheckNodeHealthReconciler) ensureHealthCheckPod(ctx context.Context, cn
 	}
 
 	// Create the pod
-	pod, err := r.buildHealthCheckPod(cnh)
+	pod, err := r.buildHealthCheckPod(cnh, info)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build health check pod: %w", err)
 	}
@@ -91,7 +93,7 @@ func (r *CheckNodeHealthReconciler) ensureHealthCheckPod(ctx context.Context, cn
 	return createdPod, nil
 }
 
-func (r *CheckNodeHealthReconciler) buildHealthCheckPod(cnh *chmv1alpha1.CheckNodeHealth) (*corev1.Pod, error) {
+func (r *CheckNodeHealthReconciler) buildHealthCheckPod(cnh *chmv1alpha1.CheckNodeHealth, info gpuNodeInfo) (*corev1.Pod, error) {
 	podName := generateHealthCheckPodName(cnh)
 	labels := map[string]string{
 		CheckNodeHealthLabel: cnh.Name,
@@ -101,6 +103,30 @@ func (r *CheckNodeHealthReconciler) buildHealthCheckPod(cnh *chmv1alpha1.CheckNo
 	serviceAccountName := DefaultCheckerServiceAccount
 	if sa, ok := cnh.Annotations[AnnotationCheckerServiceAccount]; ok && sa != "" {
 		serviceAccountName = sa
+	}
+
+	container := corev1.Container{
+		Name:    "node-health-checker",
+		Image:   r.CheckerPodImage,
+		Command: []string{"/nodechecker"},
+		Args:    []string{fmt.Sprintf("--name=%s", cnh.Name)},
+	}
+
+	// NoExecute taints are enforced by the node lifecycle controller even when NodeName is
+	// pre-set (bypassing the scheduler), so an explicit toleration is required to prevent
+	// eviction from nodes tainted with CriticalAddonsOnly.
+	tolerations := []corev1.Toleration{
+		{
+			Key:      "CriticalAddonsOnly",
+			Operator: corev1.TolerationOpEqual,
+			Value:    "true",
+			Effect:   corev1.TaintEffectNoExecute,
+		},
+	}
+	var volumes []corev1.Volume
+
+	if info.isGPUNode {
+		applyGPUCheckerShape(&container, &tolerations, &volumes, r.GPUCheckerPodImage, info)
 	}
 
 	pod := &corev1.Pod{
@@ -113,25 +139,9 @@ func (r *CheckNodeHealthReconciler) buildHealthCheckPod(cnh *chmv1alpha1.CheckNo
 			ServiceAccountName: serviceAccountName,
 			RestartPolicy:      corev1.RestartPolicyNever,
 			NodeName:           cnh.Spec.NodeRef.Name, // Schedule on specific node
-			Tolerations: []corev1.Toleration{
-				// NoExecute taints are enforced by the node lifecycle controller even when
-				// NodeName is pre-set (bypassing the scheduler), so an explicit toleration
-				// is required to prevent eviction from nodes tainted with CriticalAddonsOnly.
-				{
-					Key:      "CriticalAddonsOnly",
-					Operator: corev1.TolerationOpEqual,
-					Value:    "true",
-					Effect:   corev1.TaintEffectNoExecute,
-				},
-			},
-			Containers: []corev1.Container{
-				{
-					Name:    "node-health-checker",
-					Image:   r.CheckerPodImage,
-					Command: []string{"/nodechecker"},
-					Args:    []string{fmt.Sprintf("--name=%s", cnh.Name)},
-				},
-			},
+			Tolerations:        tolerations,
+			Volumes:            volumes,
+			Containers:         []corev1.Container{container},
 		},
 	}
 
@@ -147,7 +157,63 @@ func (r *CheckNodeHealthReconciler) buildHealthCheckPod(cnh *chmv1alpha1.CheckNo
 	return pod, nil
 }
 
-func (r *CheckNodeHealthReconciler) updatePodstartCheckerResult(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, pod *corev1.Pod) error {
+// applyGPUCheckerShape switches the checker pod to the GPU image and gives it what the intrusive
+// benchmarks need. GPU devices and driver libraries are injected by the device plugin and the
+// NVIDIA container runtime, so no elevated privileges are required.
+func applyGPUCheckerShape(container *corev1.Container, tolerations *[]corev1.Toleration, volumes *[]corev1.Volume, image string, info gpuNodeInfo) {
+	container.Image = image
+	container.Args = append(container.Args,
+		"--enable-gpu-checks",
+		fmt.Sprintf("--sku=%s", info.sku),
+		fmt.Sprintf("--gpu-count=%d", info.gpuCount),
+	)
+
+	allowPrivilegeEscalation := false
+	runAsNonRoot := true
+	uid := checkerUID
+	container.SecurityContext = &corev1.SecurityContext{
+		AllowPrivilegeEscalation: &allowPrivilegeEscalation,
+		RunAsNonRoot:             &runAsNonRoot,
+		RunAsUser:                &uid,
+		Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+		SeccompProfile:           &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
+	}
+	container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{Name: "dshm", MountPath: "/dev/shm"})
+
+	if info.gpuCount > 0 {
+		// Requesting every GPU on the node keeps customer GPU workloads from scheduling
+		// alongside the benchmarks. Extended resources require request == limit.
+		quantity := resource.NewQuantity(info.gpuCount, resource.DecimalSI)
+		container.Resources = corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{GPUResourceName: *quantity},
+			Limits:   corev1.ResourceList{GPUResourceName: *quantity},
+		}
+	} else {
+		// Driver-only pool: no device plugin advertises GPUs, so ask the NVIDIA container
+		// runtime to expose them directly.
+		container.Env = append(container.Env,
+			corev1.EnvVar{Name: "NVIDIA_VISIBLE_DEVICES", Value: "all"},
+			corev1.EnvVar{Name: "NVIDIA_DRIVER_CAPABILITIES", Value: "compute,utility"},
+		)
+	}
+
+	// GPU nodes commonly carry scheduling and NoExecute taints that would otherwise evict the
+	// NodeName-pinned pod.
+	*tolerations = []corev1.Toleration{{Operator: corev1.TolerationOpExists}}
+
+	shmSize := resource.MustParse(gpuShmSize)
+	*volumes = append(*volumes, corev1.Volume{
+		Name: "dshm",
+		VolumeSource: corev1.VolumeSource{
+			EmptyDir: &corev1.EmptyDirVolumeSource{
+				Medium:    corev1.StorageMediumMemory,
+				SizeLimit: &shmSize,
+			},
+		},
+	})
+}
+
+func (r *CheckNodeHealthReconciler) updatePodstartCheckerResult(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, pod *corev1.Pod, timeout time.Duration) error {
 	// PodStartup checker evaluates whether containers can successfully start on the node.
 
 	// Case 1: All containers have started successfully
@@ -164,7 +230,7 @@ func (r *CheckNodeHealthReconciler) updatePodstartCheckerResult(ctx context.Cont
 	// - The only reliable way to detect pod startup failure is by waiting for a timeout
 	// - If the pod remains in Pending state beyond the timeout, it indicates a persistent node-level
 	//   issue preventing container startup
-	if pod.Status.Phase == corev1.PodPending && r.isPodTimeout(pod) {
+	if pod.Status.Phase == corev1.PodPending && isPodTimeout(pod, timeout) {
 		return r.markPodStartupResult(ctx, cnh, chmv1alpha1.CheckStatusUnhealthy, "Pod stuck in Pending state - timeout exceeded")
 	}
 
@@ -196,44 +262,26 @@ func (r *CheckNodeHealthReconciler) areAllContainersStarted(pod *corev1.Pod) boo
 
 // markPodStartupResult marks the CheckNodeHealth with a PodStartup check result
 func (r *CheckNodeHealthReconciler) markPodStartupResult(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, status chmv1alpha1.CheckStatus, message string) error {
-	// Create or update the PodStartup result
 	result := chmv1alpha1.CheckResult{
 		Name:    "PodStartup",
 		Status:  status,
 		Message: message,
 	}
 
-	// Update or append the result
-	r.updateCheckResult(cnh, result)
-
-	// Update the status
-	if err := r.Status().Update(ctx, cnh); err != nil {
+	// Checker pods write into the same results list, so this has to be an upsert under
+	// optimistic concurrency rather than an update of the object read at reconcile start.
+	if err := cnhstatus.UpsertResults(ctx, r.Client, cnh.Name, result); err != nil {
 		return fmt.Errorf("failed to update CheckNodeHealth status: %w", err)
 	}
+	cnhstatus.UpsertResult(&cnh.Status, result)
 
 	klog.InfoS("PodStartup check result recorded", "cr", cnh.Name, "status", status, "message", message)
 	return nil
 }
 
-// updateCheckResult updates or appends a check result to the CheckNodeHealth status
-func (r *CheckNodeHealthReconciler) updateCheckResult(cnh *chmv1alpha1.CheckNodeHealth, newResult chmv1alpha1.CheckResult) {
-	// Find existing result for this checker
-	for i, result := range cnh.Status.Results {
-		if result.Name == newResult.Name {
-			// Update existing result
-			cnh.Status.Results[i] = newResult
-			return
-		}
-	}
-
-	// Append new result if not found
-	cnh.Status.Results = append(cnh.Status.Results, newResult)
-}
-
 // isPodTimeout checks if the pod has been running for too long without completing
-func (r *CheckNodeHealthReconciler) isPodTimeout(pod *corev1.Pod) bool {
-	duration := time.Since(pod.CreationTimestamp.Time)
-	return duration > PodTimeout
+func isPodTimeout(pod *corev1.Pod, timeout time.Duration) bool {
+	return time.Since(pod.CreationTimestamp.Time) > timeout
 }
 
 func generateHealthCheckPodName(cnh *chmv1alpha1.CheckNodeHealth) string {

@@ -1,0 +1,19 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Layered on the AKS test overlay to enable intrusive GPU checks for manual validation.
+# The GPU checker runs from the `gpu` image variant, which is built and pushed separately:
+#
+#   make push REGISTRY=<acr>.azurecr.io TAG=<tag>
+#   make push-gpu REGISTRY=<acr>.azurecr.io TAG=<tag>
+#
+# Replace the image references below with the pushed tags before applying.
+resources:
+  - ../test-aks
+
+patches:
+  - path: checknodehealth-controller/enable-gpu-checks.patch.yaml
+    target:
+      kind: Deployment
+      name: checknodehealth-controller
+      namespace: kube-system

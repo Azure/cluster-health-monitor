@@ -979,4 +979,3 @@ func TestDetermineHealthyCondition(t *testing.T) {
 		})
 	}
 }
-

@@ -9,6 +9,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -86,6 +87,8 @@ type CheckNodeHealthReconciler struct {
 	CheckerPodNamespace string                       // Namespace to create pods in
 	EnableNodeCondition bool                         // Whether to set NodeHealthy condition on the Node
 	CircuitBreaker      *NodeConditionCircuitBreaker // Circuit breaker for node condition updates
+	EnableGPUChecks     bool                         // Whether to run GPU checks on supported GPU nodes
+	GPUCheckerPodImage  string                       // Image for the GPU check pod
 }
 
 // +kubebuilder:rbac:groups=clusterhealthmonitor.azure.com,resources=checknodehealths,verbs=get;list;watch;create;update;patch;delete
@@ -151,8 +154,15 @@ func (r *CheckNodeHealthReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return r.handleCompletion(ctx, cnh)
 	}
 
+	// GPU applicability is determined from the node, so every creation path behaves the same.
+	info, err := r.gpuNodeInfoFor(ctx, cnh.Spec.NodeRef.Name)
+	if err != nil {
+		klog.ErrorS(err, "Failed to read target node", "node", cnh.Spec.NodeRef.Name)
+		return ctrl.Result{}, err
+	}
+
 	// Check if pod exists and get its status, or create one if it doesn't exist
-	pod, err := r.ensureHealthCheckPod(ctx, cnh)
+	pod, err := r.ensureHealthCheckPod(ctx, cnh, info)
 	if err != nil {
 		klog.ErrorS(err, "Failed to ensure health check pod")
 		return ctrl.Result{}, err
@@ -164,60 +174,76 @@ func (r *CheckNodeHealthReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, err
 	}
 
-	if err := r.updatePodstartCheckerResult(ctx, cnh, pod); err != nil {
+	timeout := podTimeoutFor(info)
+	if err := r.updatePodstartCheckerResult(ctx, cnh, pod, timeout); err != nil {
 		klog.ErrorS(err, "Failed to update PodStartup check result")
 		return ctrl.Result{}, err
 	}
 
 	// Determine the overall result based on pod status
-	return r.determineCheckResult(ctx, cnh, pod)
+	return r.determineCheckResult(ctx, cnh, pod, info)
 }
 
-func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, pod *corev1.Pod) (ctrl.Result, error) {
+func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, pod *corev1.Pod, info gpuNodeInfo) (ctrl.Result, error) {
 	// Check if pod succeeded or failed (completed), or if it's timed out
 	isPodCompleted := pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed
+	timeout := podTimeoutFor(info)
+	isTimedOut := isPodTimeout(pod, timeout)
 
-	if isPodCompleted || r.isPodTimeout(pod) {
+	if !isPodCompleted && !isTimedOut {
+		// Still running. Poll so the timeout is enforced even if the pod stops emitting events,
+		// which matters most for the long-running GPU benchmarks.
+		klog.InfoS("Waiting for health check pod", "phase", pod.Status.Phase, "timeout", timeout)
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	}
+
+	if isPodCompleted {
+		klog.InfoS("Health check pod completed, marking as completed", "phase", pod.Status.Phase)
+	} else {
+		klog.InfoS("Health check pod timeout, marking as completed", "timeout", timeout, "phase", pod.Status.Phase)
+	}
+
+	// The pod reports its own GPU results; anything still missing means it never got there.
+	if info.isGPUNode {
+		errorCode, message := ErrorCodeGPUTimeout, fmt.Sprintf("checker pod exceeded timeout %s", timeout)
 		if isPodCompleted {
-			klog.InfoS("Health check pod completed, marking as completed", "phase", pod.Status.Phase)
-		} else {
-			klog.InfoS("Health check pod timeout, marking as completed", "timeout", PodTimeout, "phase", pod.Status.Phase)
+			errorCode, message = ErrorCodeGPUPodFailed, fmt.Sprintf("checker pod did not report this result: %s", podFailureMessage(pod))
 		}
-
-		// Step 1: Mark as completed (determines health based on Results)
-		healthyStatus, err := r.markCompleted(ctx, cnh)
-		if err != nil {
-			klog.ErrorS(err, "Failed to mark as completed")
+		if err := r.fillMissingGPUResults(ctx, cnh, errorCode, message); err != nil {
+			klog.ErrorS(err, "Failed to record missing GPU results")
 			return ctrl.Result{}, err
 		}
+	}
 
-		// Step 2: Update node condition based on health status
-		if r.EnableNodeCondition {
-			if err := r.updateNodeCondition(ctx, cnh); err != nil {
-				klog.ErrorS(err, "Failed to update node condition, continuing with cleanup", "node", cnh.Spec.NodeRef.Name)
-			}
+	// Step 1: Mark as completed (determines health based on Results)
+	healthyStatus, err := r.markCompleted(ctx, cnh)
+	if err != nil {
+		klog.ErrorS(err, "Failed to mark as completed")
+		return ctrl.Result{}, err
+	}
 
-			// Track consecutive unhealthy/healthy results for circuit breaker
-			if healthyStatus == metav1.ConditionFalse {
-				r.CircuitBreaker.RecordUnhealthyNode()
-			} else {
-				r.CircuitBreaker.RecordHealthyNode()
-			}
+	// Step 2: Update node condition based on health status
+	if r.EnableNodeCondition {
+		if err := r.updateNodeCondition(ctx, cnh); err != nil {
+			klog.ErrorS(err, "Failed to update node condition, continuing with cleanup", "node", cnh.Spec.NodeRef.Name)
 		}
 
-		// Step 3: Delete the pod
-		if err := r.cleanupPod(ctx, cnh); err != nil {
-			klog.ErrorS(err, "Failed to cleanup pod, will retry")
-			return ctrl.Result{}, nil
+		// Track consecutive unhealthy/healthy results for circuit breaker
+		if healthyStatus == metav1.ConditionFalse {
+			r.CircuitBreaker.RecordUnhealthyNode()
+		} else {
+			r.CircuitBreaker.RecordHealthyNode()
 		}
+	}
 
-		klog.InfoS("Successfully marked as completed and deleted pod")
+	// Step 3: Delete the pod
+	if err := r.cleanupPod(ctx, cnh); err != nil {
+		klog.ErrorS(err, "Failed to cleanup pod, will retry")
 		return ctrl.Result{}, nil
 	}
 
-	// Other pod phases (Unknown, etc.)
-	klog.InfoS("Health check pod in unexpected phase", "phase", pod.Status.Phase)
-	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	klog.InfoS("Successfully marked as completed and deleted pod")
+	return ctrl.Result{}, nil
 }
 
 func (r *CheckNodeHealthReconciler) markStarted(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth) error {
@@ -245,24 +271,41 @@ func (r *CheckNodeHealthReconciler) markStarted(ctx context.Context, cnh *chmv1a
 }
 
 func (r *CheckNodeHealthReconciler) markCompleted(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth) (metav1.ConditionStatus, error) {
-	now := metav1.Now()
-	cnh.Status.FinishedAt = &now
-	healthyStatus, reason, message := r.determineHealthyCondition(cnh)
-	cnh.Status.Conditions = []metav1.Condition{
-		{
-			Type:               ConditionTypeHealthy,
-			Status:             healthyStatus,
-			LastTransitionTime: now,
-			Reason:             reason,
-			Message:            message,
-		},
-	}
+	var healthyStatus metav1.ConditionStatus
+	var reason, message string
 
-	klog.InfoS("CheckNodeHealth Result", "name", cnh.Name, "nodeName", cnh.Spec.NodeRef.Name, "status", healthyStatus, "reason", reason, "message", message)
-	if err := r.Status().Update(ctx, cnh); err != nil {
+	// Refetch on every attempt: checker pods write results concurrently, so the health verdict
+	// must be computed from the server's view rather than the object read at reconcile start.
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		latest := &chmv1alpha1.CheckNodeHealth{}
+		if err := r.Get(ctx, client.ObjectKey{Name: cnh.Name}, latest); err != nil {
+			return err
+		}
+
+		now := metav1.Now()
+		latest.Status.FinishedAt = &now
+		healthyStatus, reason, message = r.determineHealthyCondition(latest)
+		latest.Status.Conditions = []metav1.Condition{
+			{
+				Type:               ConditionTypeHealthy,
+				Status:             healthyStatus,
+				LastTransitionTime: now,
+				Reason:             reason,
+				Message:            message,
+			},
+		}
+
+		if err := r.Status().Update(ctx, latest); err != nil {
+			return err
+		}
+		latest.DeepCopyInto(cnh)
+		return nil
+	})
+	if err != nil {
 		return healthyStatus, fmt.Errorf("failed to update status: %w", err)
 	}
 
+	klog.InfoS("CheckNodeHealth Result", "name", cnh.Name, "nodeName", cnh.Spec.NodeRef.Name, "status", healthyStatus, "reason", reason, "message", message)
 	return healthyStatus, nil
 }
 

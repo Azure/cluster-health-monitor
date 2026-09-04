@@ -1,0 +1,19 @@
+- op: test
+  path: /spec/template/spec/containers/0/name
+  value: controller
+- op: add
+  path: /spec/template/spec/containers/0/args/-
+  value: "-enable-gpu-checks"
+- op: replace
+  path: /spec/template/spec/containers/0/image
+  value: carlostest3acr.azurecr.io/cluster-health-monitor:gpu-poc3
+# CHECKER_POD_IMAGE is env[0]; see the base deployment.
+- op: replace
+  path: /spec/template/spec/containers/0/env/0/value
+  value: carlostest3acr.azurecr.io/cluster-health-monitor:gpu-poc3
+# The GPU variant of the same commit, built by `make push-gpu`.
+- op: add
+  path: /spec/template/spec/containers/0/env/-
+  value:
+    name: GPU_CHECKER_POD_IMAGE
+    value: carlostest3acr.azurecr.io/cluster-health-monitor-gpu:gpu-poc3

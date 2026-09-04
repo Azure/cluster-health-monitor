@@ -12,7 +12,9 @@ import (
 
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
 	"github.com/Azure/cluster-health-monitor/pkg/checker"
+	"github.com/Azure/cluster-health-monitor/pkg/checker/gpu"
 	"github.com/Azure/cluster-health-monitor/pkg/checker/podnetwork"
+	"github.com/Azure/cluster-health-monitor/pkg/cnhstatus"
 )
 
 const (
@@ -37,13 +39,28 @@ type Runner struct {
 	checkers  []NodeChecker
 }
 
+// Options configures a Runner.
+type Options struct {
+	// NodeName is the node the checks run against.
+	NodeName string
+	// CRName is the CheckNodeHealth resource to report into.
+	CRName string
+	// EnableGPUChecks adds the intrusive GPU benchmarks. Only valid in the GPU image variant,
+	// which ships the benchmark binaries and the CUDA runtime.
+	EnableGPUChecks bool
+	// SKU is the node's VM size, used to select GPU bandwidth thresholds.
+	SKU string
+	// GPUCount is the number of GPUs granted to the pod; zero means the pod detects it itself.
+	GPUCount int
+}
+
 // NewRunner creates a new Runner instance
-func NewRunner(clientset kubernetes.Interface, chmClient chmclient.Client, nodeName, crName string) *Runner {
+func NewRunner(clientset kubernetes.Interface, chmClient chmclient.Client, opts Options) *Runner {
 	return &Runner{
 		chmClient: chmClient,
-		nodeName:  nodeName,
-		crName:    crName,
-		checkers:  initializeCheckers(clientset, nodeName),
+		nodeName:  opts.NodeName,
+		crName:    opts.CRName,
+		checkers:  initializeCheckers(clientset, opts),
 	}
 }
 
@@ -61,9 +78,13 @@ func (r *Runner) Run(ctx context.Context) error {
 }
 
 // initializeCheckers creates and returns a list of all checkers to run
-func initializeCheckers(clientset kubernetes.Interface, nodeName string) []NodeChecker {
+func initializeCheckers(clientset kubernetes.Interface, opts Options) []NodeChecker {
 	checkers := []NodeChecker{}
-	checkers = append(checkers, podnetwork.NewPodNetworkChecker(clientset, nodeName))
+	checkers = append(checkers, podnetwork.NewPodNetworkChecker(clientset, opts.NodeName))
+	if opts.EnableGPUChecks {
+		cfg := gpu.Config{SKU: opts.SKU, GPUCount: opts.GPUCount}
+		checkers = append(checkers, gpu.NewNCCLChecker(cfg), gpu.NewBandwidthChecker(cfg))
+	}
 	return checkers
 }
 
@@ -113,25 +134,19 @@ func (r *Runner) runCheckers(ctx context.Context) error {
 
 // updateCheckNodeHealthStatus updates the CheckNodeHealth CR with all checker results
 func (r *Runner) updateCheckNodeHealthStatus(ctx context.Context, results map[string]*checker.Result) error {
-	// Get the CheckNodeHealth CR
-	cnh := &chmv1alpha1.CheckNodeHealth{}
-	if err := r.chmClient.Get(ctx, chmclient.ObjectKey{Name: r.crName}, cnh); err != nil {
-		return fmt.Errorf("failed to get CheckNodeHealth CR: %w", err)
-	}
-
-	// Convert all checker results to CheckResults
+	checkResults := make([]chmv1alpha1.CheckResult, 0, len(results))
 	for checkerName, result := range results {
-		checkResult := chmv1alpha1.CheckResult{
+		checkResults = append(checkResults, chmv1alpha1.CheckResult{
 			Name:      checkerName,
 			Status:    convertStatus(result.Status),
 			Message:   result.Detail.Message,
 			ErrorCode: result.Detail.Code,
-		}
-		cnh.Status.Results = append(cnh.Status.Results, checkResult)
+		})
 	}
 
-	// Update the status once with all results
-	if err := r.chmClient.Status().Update(ctx, cnh); err != nil {
+	// The controller and the GPU checker pod write into the same results list, so this must be
+	// an upsert under optimistic concurrency rather than a read-append-update.
+	if err := cnhstatus.UpsertResults(ctx, r.chmClient, r.crName, checkResults...); err != nil {
 		return fmt.Errorf("failed to update status: %w", err)
 	}
 
