@@ -4,6 +4,8 @@ ifndef TAG
 endif
 CLUSTER_HEALTH_MONITOR_IMAGE_VERSION ?= $(TAG)
 CLUSTER_HEALTH_MONITOR_IMAGE_NAME ?= cluster-health-monitor
+# The GPU variant carries the CUDA payload, so it ships under its own name and non-GPU nodes never pull it.
+GPU_IMAGE_NAME ?= $(CLUSTER_HEALTH_MONITOR_IMAGE_NAME)-gpu
 
 ## --------------------------------------
 ## Build
@@ -26,10 +28,16 @@ BUILDX_BUILDER_NAME ?= img-builder
 QEMU_VERSION ?= 7.2.0-1
 BUILDKIT_VERSION ?= v0.18.1
 PLATFORM ?= linux/amd64,linux/arm64
+# The CUDA payload is amd64-only.
+GPU_PLATFORM ?= linux/amd64
 
 .PHONY: push
 push:
 	$(MAKE) OUTPUT_TYPE="type=registry" docker-build-cluster-health-monitor
+
+.PHONY: push-gpu
+push-gpu:
+	$(MAKE) OUTPUT_TYPE="type=registry" docker-build-cluster-health-monitor-gpu
 
 # By default, docker buildx create will pull image moby/buildkit:buildx-stable-1 and hit the too many requests error
 .PHONY: docker-buildx-builder
@@ -46,8 +54,19 @@ docker-build-cluster-health-monitor: docker-buildx-builder
 		--file docker/$(CLUSTER_HEALTH_MONITOR_IMAGE_NAME).Dockerfile \
 		--output=$(OUTPUT_TYPE) \
 		--platform="$(PLATFORM)" \
+		--target default \
 		--pull \
 		--tag $(REGISTRY)/$(CLUSTER_HEALTH_MONITOR_IMAGE_NAME):$(CLUSTER_HEALTH_MONITOR_IMAGE_VERSION) .
+
+.PHONY: docker-build-cluster-health-monitor-gpu
+docker-build-cluster-health-monitor-gpu: docker-buildx-builder
+	docker buildx build \
+		--file docker/$(CLUSTER_HEALTH_MONITOR_IMAGE_NAME).Dockerfile \
+		--output=$(OUTPUT_TYPE) \
+		--platform="$(GPU_PLATFORM)" \
+		--target gpu \
+		--pull \
+		--tag $(REGISTRY)/$(GPU_IMAGE_NAME):$(CLUSTER_HEALTH_MONITOR_IMAGE_VERSION) .
 
 ## -----------------------------------
 ## Tests
@@ -95,6 +114,7 @@ kind-create-cluster:
 kind-build-image:
 	docker build \
 		--file ${GIT_ROOT}/docker/$(LOCAL_IMAGE_NAME).Dockerfile \
+		--target default \
 		--tag $(LOCAL_IMAGE_NAME):$(LOCAL_IMAGE_TAG) .
 
 .PHONY: kind-load-image
