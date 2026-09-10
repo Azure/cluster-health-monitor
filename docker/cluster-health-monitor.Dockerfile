@@ -92,6 +92,10 @@ ENV LD_LIBRARY_PATH=/usr/lib/x86_64-linux-gnu:/usr/lib64:/usr/lib
 USER 65532:65532
 ENTRYPOINT ["/nodechecker"]
 
+# ---------------------------------------------------------------------------------------------
+# Default image variant (--target default).
+# ---------------------------------------------------------------------------------------------
+
 # Use distroless as minimal base image to package the clusterhealthmonitor binary. Using distroless/base 
 # instead of distroless/minimal because it comes with SymCrypt and SymCrypt-OpenSSL which are required for 
 # FIPS/Azure compliance. Refer to https://mcr.microsoft.com/en-us/artifact/mar/azurelinux/distroless/base/about 
