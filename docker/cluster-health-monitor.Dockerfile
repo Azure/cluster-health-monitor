@@ -53,9 +53,9 @@ RUN git clone --depth 1 --branch ${NCCL_TESTS_REF} https://github.com/NVIDIA/ncc
     && make -C /nccl-tests -j"$(nproc)"
 
 ARG NVBANDWIDTH_REF=v0.10.0
-# CMake cannot detect an architecture without a GPU present and falls back to a list including
-# sm_100, which CUDA 12.6 cannot compile. Pin the architectures AKS GPU SKUs actually use
-# (V100/T4/A100/A10/L40S/H100/H200).
+# nvbandwidth only: CMake cannot detect an arch without a GPU present and falls back to a list
+# including sm_100, which CUDA 12.6 cannot compile. Covers V100/T4/A100/A10/L40S/H100/H200.
+# nccl-tests ignores this and uses its own defaults, sm_60/61/70/80/90, so no T4, A10 or L40S.
 ARG CUDA_ARCHS="70;75;80;86;89;90"
 RUN git clone --depth 1 --branch ${NVBANDWIDTH_REF} https://github.com/NVIDIA/nvbandwidth.git /nvbandwidth \
     && cmake -S /nvbandwidth -B /nvbandwidth/build -DCMAKE_CUDA_ARCHITECTURES="${CUDA_ARCHS}" \
