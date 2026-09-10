@@ -3,6 +3,7 @@ package checknodehealth
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -50,7 +51,7 @@ func (r *CheckNodeHealthReconciler) gpuNodeInfoFor(ctx context.Context, nodeName
 	}
 
 	return gpuNodeInfo{
-		isGPUNode: allocatable > 0 || node.Labels[gpuAcceleratorLabel] == "nvidia",
+		isGPUNode: allocatable > 0 || strings.EqualFold(node.Labels[gpuAcceleratorLabel], "nvidia"),
 		gpuCount:  allocatable,
 		sku:       node.Labels[instanceTypeLabel],
 	}, nil

@@ -59,6 +59,18 @@ func TestGPUNodeInfoFor(t *testing.T) {
 			wantSKU:       "Standard_ND96isr_H100_v5",
 		},
 		{
+			name: "accelerator label value is case insensitive",
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "mixed-case-label",
+					Labels: map[string]string{
+						gpuAcceleratorLabel: "Nvidia",
+					},
+				},
+			},
+			wantIsGPUNode: true,
+		},
+		{
 			name: "non-GPU node",
 			node: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
