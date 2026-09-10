@@ -86,6 +86,7 @@ type CheckNodeHealthReconciler struct {
 	CheckerPodNamespace string                       // Namespace to create pods in
 	EnableNodeCondition bool                         // Whether to set NodeHealthy condition on the Node
 	CircuitBreaker      *NodeConditionCircuitBreaker // Circuit breaker for node condition updates
+	EnableGPUChecks     bool                         // Whether to run GPU checks on supported GPU nodes
 }
 
 // +kubebuilder:rbac:groups=clusterhealthmonitor.azure.com,resources=checknodehealths,verbs=get;list;watch;create;update;patch;delete
@@ -149,6 +150,18 @@ func (r *CheckNodeHealthReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	if isCompleted(cnh) {
 		klog.InfoS("CheckNodeHealth already completed", "name", cnh.Name)
 		return r.handleCompletion(ctx, cnh)
+	}
+
+	// GPU applicability is determined from the node, so every creation path behaves the same.
+	info, err := r.gpuNodeInfoFor(ctx, cnh.Spec.NodeRef.Name)
+	if err != nil {
+		klog.ErrorS(err, "Failed to read target node", "node", cnh.Spec.NodeRef.Name)
+		return ctrl.Result{}, err
+	}
+	if info.isGPUNode {
+		// TODO: shape the checker pod for GPU nodes and run the GPU checks.
+		klog.InfoS("Detected GPU node, GPU checks not yet implemented",
+			"name", cnh.Name, "node", cnh.Spec.NodeRef.Name, "gpuCount", info.gpuCount, "sku", info.sku)
 	}
 
 	// Check if pod exists and get its status, or create one if it doesn't exist

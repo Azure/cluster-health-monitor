@@ -50,6 +50,7 @@ func main() {
 	var enableNodeRebootCheck bool
 	var enableHealthCheckRequest bool
 	var enableNodeCondition bool
+	var enableGPUChecks bool
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to")
@@ -63,6 +64,9 @@ func main() {
 			"The HealthCheckRequest CRD must be installed in the cluster by the AKS health signal component.")
 	flag.BoolVar(&enableNodeCondition, "enable-node-condition", false,
 		"Enable setting the NodeHealthy condition on Node objects when health checks fail.")
+	flag.BoolVar(&enableGPUChecks, "enable-gpu-checks", false,
+		"Enable intrusive GPU checks on CheckNodeHealth targets that are GPU nodes. "+
+			"Detection only for now; the checks themselves are not implemented yet.")
 
 	// Set up logging configuration with JSON format (no CLI override needed)
 	logConfig := logsapi.NewLoggingConfiguration()
@@ -192,6 +196,7 @@ func main() {
 		CheckerPodNamespace: checkerPodNamespace,
 		EnableNodeCondition: enableNodeCondition,
 		CircuitBreaker:      circuitBreaker,
+		EnableGPUChecks:     enableGPUChecks,
 	}).SetupWithManager(mgr); err != nil {
 		klog.ErrorS(err, "Unable to create controller", "controller", "CheckNodeHealth")
 		klog.FlushAndExit(klog.ExitFlushTimeout, 1)
