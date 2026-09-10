@@ -33,7 +33,7 @@ type gpuNodeInfo struct {
 // gpuNodeInfoFor reads the target node through the uncached reader so allocatable GPU
 // resources and labels are current. A node counts as a GPU node when it advertises
 // allocatable nvidia GPUs or carries the accelerator label with value "nvidia". AMD GPUs
-// are currenty not supported.
+// are currently not supported.
 func (r *CheckNodeHealthReconciler) gpuNodeInfoFor(ctx context.Context, nodeName string) (gpuNodeInfo, error) {
 	if !r.EnableGPUChecks {
 		return gpuNodeInfo{}, nil
