@@ -53,17 +53,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # including sm_100, which CUDA 12.6 cannot compile. Covers V100/T4/A100/A10/L40S/H100/H200.
 ARG CUDA_ARCHS="70;75;80;86;89;90"
 
-ARG NCCL_TESTS_REF=v2.19.7
+# v2.19.7
+ARG NCCL_TESTS_REF=1a65d7f0514b8da6a61ae235d1c5f38549478e29
 RUN set -eu; \
-    git clone --depth 1 --branch ${NCCL_TESTS_REF} https://github.com/NVIDIA/nccl-tests.git /nccl-tests; \
+    git clone -q https://github.com/NVIDIA/nccl-tests.git /nccl-tests; \
+    git -C /nccl-tests checkout -q ${NCCL_TESTS_REF}; \
     gencode=""; \
     for arch in $(echo "${CUDA_ARCHS}" | tr ';' ' '); do \
         gencode="$gencode -gencode=arch=compute_$arch,code=sm_$arch"; \
     done; \
     make -C /nccl-tests -j"$(nproc)" NVCC_GENCODE="$gencode"
 
-ARG NVBANDWIDTH_REF=v0.10.0
-RUN git clone --depth 1 --branch ${NVBANDWIDTH_REF} https://github.com/NVIDIA/nvbandwidth.git /nvbandwidth \
+# v0.10.0
+ARG NVBANDWIDTH_REF=82fc4e8c6afa0babb8687793678f615b3b8d793e
+RUN git clone -q https://github.com/NVIDIA/nvbandwidth.git /nvbandwidth \
+    && git -C /nvbandwidth checkout -q ${NVBANDWIDTH_REF} \
     && cmake -S /nvbandwidth -B /nvbandwidth/build -DCMAKE_CUDA_ARCHITECTURES="${CUDA_ARCHS}" \
     && cmake --build /nvbandwidth/build -j"$(nproc)"
 
