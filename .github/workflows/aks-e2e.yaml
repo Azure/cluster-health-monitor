@@ -169,6 +169,7 @@ jobs:
               --registry "chme2e${{ github.run_id }}" \
               --image "cluster-health-monitor:${{ github.sha }}" \
               --file "docker/cluster-health-monitor.Dockerfile" \
+              --target default \
               .
       
       - name: Create AKS Cluster
