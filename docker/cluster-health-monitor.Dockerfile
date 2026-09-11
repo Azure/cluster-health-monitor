@@ -71,16 +71,16 @@ WORKDIR /
 # Copy required libraries. Azure Linux resolves libraries from /usr/lib, so the copied .so 
 # files need no extra config. libcuda, libnvidia-ml and nvidia-smi are intentionally absent
 # because the NVIDIA container runtime injects them from the host driver.
-COPY --from=cudart /usr/local/cuda/targets/x86_64-linux/lib/libcudart.so.12* /usr/lib/
-COPY --from=cudart /usr/lib/x86_64-linux-gnu/libnccl.so.2* /usr/lib/
-COPY --from=cudart /usr/lib/x86_64-linux-gnu/libstdc++.so.6* /usr/lib/
+#
+# Not a glob: these are symlinks and COPY dereferences them, so libnccl.so.2* would ship it twice.
+COPY --from=cudart /usr/local/cuda/targets/x86_64-linux/lib/libcudart.so.12 /usr/lib/
+COPY --from=cudart /usr/lib/x86_64-linux-gnu/libnccl.so.2 /usr/lib/
+COPY --from=cudart /usr/lib/x86_64-linux-gnu/libstdc++.so.6 /usr/lib/
 
 # Copy the binaries into the final image
 COPY --from=gpu-tools-builder /nccl-tests/build/all_reduce_perf /usr/local/bin/all_reduce_perf
 COPY --from=gpu-tools-builder /nvbandwidth/build/nvbandwidth /usr/local/bin/nvbandwidth
-
-COPY --from=builder /workspace/clusterhealthmonitor .
-COPY --from=builder /workspace/controller .
+ 
 COPY --from=builder /workspace/nodechecker .
 
 # `compute` is required for running CUDA kernels, and `utility` brings in nvidia-smi so we can 
