@@ -48,15 +48,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         git ca-certificates build-essential cmake libboost-program-options-dev \
     && rm -rf /var/lib/apt/lists/*
 
+# Both tools are built for this arch list so their GPU coverage cannot diverge. nvbandwidth also
+# needs it because CMake cannot detect an arch without a GPU present and falls back to a list
+# including sm_100, which CUDA 12.6 cannot compile. Covers V100/T4/A100/A10/L40S/H100/H200.
+ARG CUDA_ARCHS="70;75;80;86;89;90"
+
 ARG NCCL_TESTS_REF=v2.19.7
-RUN git clone --depth 1 --branch ${NCCL_TESTS_REF} https://github.com/NVIDIA/nccl-tests.git /nccl-tests \
-    && make -C /nccl-tests -j"$(nproc)"
+RUN set -eu; \
+    git clone --depth 1 --branch ${NCCL_TESTS_REF} https://github.com/NVIDIA/nccl-tests.git /nccl-tests; \
+    gencode=""; \
+    for arch in $(echo "${CUDA_ARCHS}" | tr ';' ' '); do \
+        gencode="$gencode -gencode=arch=compute_$arch,code=sm_$arch"; \
+    done; \
+    make -C /nccl-tests -j"$(nproc)" NVCC_GENCODE="$gencode"
 
 ARG NVBANDWIDTH_REF=v0.10.0
-# nvbandwidth only: CMake cannot detect an arch without a GPU present and falls back to a list
-# including sm_100, which CUDA 12.6 cannot compile. Covers V100/T4/A100/A10/L40S/H100/H200.
-# nccl-tests ignores this and uses its own defaults, sm_60/61/70/80/90, so no T4, A10 or L40S.
-ARG CUDA_ARCHS="70;75;80;86;89;90"
 RUN git clone --depth 1 --branch ${NVBANDWIDTH_REF} https://github.com/NVIDIA/nvbandwidth.git /nvbandwidth \
     && cmake -S /nvbandwidth -B /nvbandwidth/build -DCMAKE_CUDA_ARCHITECTURES="${CUDA_ARCHS}" \
     && cmake --build /nvbandwidth/build -j"$(nproc)"
