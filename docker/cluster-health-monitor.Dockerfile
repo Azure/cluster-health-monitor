@@ -84,6 +84,8 @@ COPY --from=builder /workspace/nodechecker .
 # for every pinned arch.
 COPY --from=gpu-tools-builder /nccl-tests/build/all_reduce_perf /usr/local/bin/all_reduce_perf
 COPY --from=gpu-tools-builder /nvbandwidth/build/nvbandwidth /usr/local/bin/nvbandwidth
+# Keep the NCCL redistribution terms with the image that carries the NCCL benchmark binary.
+COPY licenses/LICENSE-NCCL.txt /licenses/LICENSE-NCCL.txt
 
 USER 65532:65532
 ENTRYPOINT ["/nodechecker"]
