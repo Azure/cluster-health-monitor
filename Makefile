@@ -54,17 +54,15 @@ docker-build-cluster-health-monitor: docker-buildx-builder
 		--file docker/$(CLUSTER_HEALTH_MONITOR_IMAGE_NAME).Dockerfile \
 		--output=$(OUTPUT_TYPE) \
 		--platform="$(PLATFORM)" \
-		--target default \
 		--pull \
 		--tag $(REGISTRY)/$(CLUSTER_HEALTH_MONITOR_IMAGE_NAME):$(CLUSTER_HEALTH_MONITOR_IMAGE_VERSION) .
 
 .PHONY: docker-build-cluster-health-monitor-gpu
 docker-build-cluster-health-monitor-gpu: docker-buildx-builder
 	docker buildx build \
-		--file docker/$(CLUSTER_HEALTH_MONITOR_IMAGE_NAME).Dockerfile \
+		--file docker/$(GPU_IMAGE_NAME).Dockerfile \
 		--output=$(OUTPUT_TYPE) \
 		--platform="$(GPU_PLATFORM)" \
-		--target gpu \
 		--pull \
 		--tag $(REGISTRY)/$(GPU_IMAGE_NAME):$(CLUSTER_HEALTH_MONITOR_IMAGE_VERSION) .
 
@@ -114,7 +112,6 @@ kind-create-cluster:
 kind-build-image:
 	docker build \
 		--file ${GIT_ROOT}/docker/$(LOCAL_IMAGE_NAME).Dockerfile \
-		--target default \
 		--tag $(LOCAL_IMAGE_NAME):$(LOCAL_IMAGE_TAG) .
 
 .PHONY: kind-load-image
