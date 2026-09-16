@@ -12,7 +12,7 @@ import (
 
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
 	"github.com/Azure/cluster-health-monitor/pkg/checker"
-	"github.com/Azure/cluster-health-monitor/pkg/checker/podnetwork"
+	"github.com/Azure/cluster-health-monitor/pkg/nodecheckerrunner/checkers/podnetwork"
 )
 
 const (
