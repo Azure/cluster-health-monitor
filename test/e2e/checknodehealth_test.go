@@ -422,6 +422,71 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 			fakeNodeName, nodeCondition.Status, nodeCondition.Reason, nodeCondition.Message)
 	})
 
+	It("should not act on Windows nodes", func() {
+		// The cluster health monitor only supports Linux. The checker pod runs a Linux
+		// binary and is force-scheduled via NodeName, so on a Windows node it would be
+		// stuck Pending, time out, and deterministically flag NodeHealthy=False on an
+		// otherwise-healthy node. The controller must skip Windows nodes entirely: no
+		// checker pod, and no NodeHealthy condition on the node.
+		By("Creating a fake Windows Node object")
+		fakeNodeName := fmt.Sprintf("fake-node-windows-test-%d", time.Now().Unix())
+		fakeNode := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: fakeNodeName,
+				Labels: map[string]string{
+					"kubernetes.io/os": "windows",
+				},
+			},
+		}
+		err := k8sClient.Create(ctx, fakeNode)
+		Expect(err).NotTo(HaveOccurred())
+		GinkgoWriter.Printf("Created fake Windows Node: %s\n", fakeNodeName)
+
+		// Also set NodeInfo.OperatingSystem via status so both detection paths are covered.
+		fakeNode.Status.NodeInfo.OperatingSystem = "windows"
+		err = k8sClient.Status().Update(ctx, fakeNode)
+		Expect(err).NotTo(HaveOccurred())
+
+		defer func() {
+			By("Cleaning up fake Windows Node")
+			if err := k8sClient.Delete(ctx, fakeNode); err != nil {
+				GinkgoWriter.Printf("Warning: Failed to delete fake Node %s: %v\n", fakeNodeName, err)
+			}
+		}()
+
+		By("Creating a CheckNodeHealth CR targeting the Windows node")
+		cnhName = fmt.Sprintf("test-cnh-windows-%d", time.Now().Unix())
+		err = createCheckNodeHealthCR(ctx, k8sClient, cnhName, fakeNodeName)
+		Expect(err).NotTo(HaveOccurred())
+		GinkgoWriter.Printf("Created CheckNodeHealth CR: %s for Windows node: %s\n", cnhName, fakeNodeName)
+
+		By("Verifying no health check pod is ever created for the Windows node")
+		Consistently(func() int {
+			podList, err := clientset.CoreV1().Pods(checkerNamespace).List(ctx, metav1.ListOptions{
+				LabelSelector: fmt.Sprintf("%s=%s", checknodehealth.CheckNodeHealthLabel, cnhName),
+			})
+			if err != nil {
+				GinkgoWriter.Printf("Failed to list pods: %v\n", err)
+				return -1
+			}
+			return len(podList.Items)
+		}, "30s", "2s").Should(Equal(0), "No checker pod should be created for a Windows node")
+
+		By("Verifying NodeHealthy condition is never set on the Windows node")
+		Consistently(func() *corev1.NodeCondition {
+			node := &corev1.Node{}
+			if err := k8sClient.Get(ctx, client.ObjectKey{Name: fakeNodeName}, node); err != nil {
+				return nil
+			}
+			for i, c := range node.Status.Conditions {
+				if c.Type == checknodehealth.NodeConditionNodeHealthy {
+					return &node.Status.Conditions[i]
+				}
+			}
+			return nil
+		}, "30s", "2s").Should(BeNil(), "NodeHealthy condition should not be set on a Windows node")
+	})
+
 	It("should cleanup pod when CR is deleted", func() {
 		By("Creating a CheckNodeHealth CR with non-existent node")
 		cnhName = fmt.Sprintf("test-cnh-deletion-%d", time.Now().Unix())
