@@ -82,7 +82,11 @@ func (c *NCCLChecker) Run(ctx context.Context) (*checker.Result, error) {
 			},
 		}, nil
 	}
-	defer os.RemoveAll(dir)
+	defer func() {
+		if err := os.RemoveAll(dir); err != nil {
+			klog.ErrorS(err, "Could not remove the nccl-tests report directory", "path", dir)
+		}
+	}()
 	reportPath := filepath.Join(dir, "all_reduce.json")
 
 	output, err := runTool(ctx, mpirunPath, c.cfg.ToolTimeout, ncclArgs(gpuCount, reportPath, profile)...)
