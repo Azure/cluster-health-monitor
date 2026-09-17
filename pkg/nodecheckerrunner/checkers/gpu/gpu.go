@@ -88,7 +88,7 @@ func detectGPUCount(ctx context.Context, timeout time.Duration) (int, error) {
 	return count, nil
 }
 
-// runTool executes a benchmark binary and returns its combined output, bounded to the tail.
+// runTool executes a benchmark binary and returns its stdout and stderr. The output is bounded and the tail is kept when it's too large.
 // Output is returned even on error; the parsers extract what the tool managed to report.
 func runTool(ctx context.Context, path string, timeout time.Duration, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
