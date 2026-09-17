@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"k8s.io/apimachinery/pkg/runtime"
+	kubefake "k8s.io/client-go/kubernetes/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -233,6 +234,68 @@ func TestRunCheckers(t *testing.T) {
 			// Validate results
 			if tt.validateFunc != nil {
 				tt.validateFunc(t, updatedCR, tt.checkers)
+			}
+		})
+	}
+}
+
+func TestNewRunnerCheckers(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		opts Options
+		want []string
+	}{
+		{
+			name: "non-gpu node runs only the core checkers",
+			opts: Options{NodeName: "node-1", CRName: "cnh-1"},
+			want: []string{"PodNetwork"},
+		},
+		{
+			name: "gpu node adds the preflight and the benchmarks it gates",
+			opts: Options{
+				NodeName: "node-1",
+				CRName:   "cnh-1",
+				GPU:      &GPUOptions{SKU: "Standard_ND96isr_H100_v5"},
+			},
+			want: []string{"PodNetwork", "GpuPreflight", "NcclAllReduce", "GpuBandwidth"},
+		},
+		{
+			name: "gpu node with an unknown sku still wires the gpu checkers",
+			opts: Options{
+				NodeName: "node-1",
+				CRName:   "cnh-1",
+				GPU:      &GPUOptions{SKU: "unknown_sku"},
+			},
+			want: []string{"PodNetwork", "GpuPreflight", "NcclAllReduce", "GpuBandwidth"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			r := NewRunner(kubefake.NewSimpleClientset(), nil, tt.opts)
+
+			got := make([]string, 0, len(tt.want))
+			for _, c := range r.checkers {
+				got = append(got, c.Name())
+			}
+			if r.gpuPreflight != nil {
+				got = append(got, r.gpuPreflight.Name())
+			}
+			for _, c := range r.gpuCheckers {
+				got = append(got, c.Name())
+			}
+
+			if len(got) != len(tt.want) {
+				t.Fatalf("checkers = %v, want %v", got, tt.want)
+			}
+			for i, want := range tt.want {
+				if got[i] != want {
+					t.Errorf("checkers[%d] = %q, want %q", i, got[i], want)
+				}
 			}
 		})
 	}
