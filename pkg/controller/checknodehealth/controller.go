@@ -35,6 +35,9 @@ const (
 	// This applies to all non-terminal phases (Pending, Running, etc.).
 	PodTimeout = 2 * time.Minute
 
+	// NodeOSRequeueInterval is the interval between retries while the target node's OS is unknown.
+	NodeOSRequeueInterval = 30 * time.Second
+
 	// CheckNodeHealthFinalizer is the finalizer used to ensure proper cleanup checker pods
 	CheckNodeHealthFinalizer = "checknodehealth.clusterhealthmonitor.azure.com/finalizer"
 
@@ -60,6 +63,7 @@ const (
 	ReasonCheckFailed       = "CheckFailed"
 	ReasonCheckUnknown      = "CheckUnknown"
 	ReasonPodStartupTimeout = "PodStartupTimeout"
+	ReasonUnsupportedNodeOS = "UnsupportedNodeOS"
 
 	// NodeConditionNodeHealthy is the condition type set on Node objects
 	// to report health status from CheckNodeHealth checks.
@@ -152,12 +156,23 @@ func (r *CheckNodeHealthReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return r.handleCompletion(ctx, cnh)
 	}
 
-	// GPU applicability is determined from the node, so every creation path behaves the same.
-	info, err := r.gpuNodeInfoFor(ctx, cnh.Spec.NodeRef.Name)
-	if err != nil {
-		klog.ErrorS(err, "Failed to read target node", "node", cnh.Spec.NodeRef.Name)
-		return ctrl.Result{}, err
+	// The checker image is Linux-only. Read the target once so OS eligibility and GPU
+	// applicability are decided from the same current Node object.
+	node := &corev1.Node{}
+	if err := r.APIReader.Get(ctx, client.ObjectKey{Name: cnh.Spec.NodeRef.Name}, node); err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to get target node %s: %w", cnh.Spec.NodeRef.Name, err)
 	}
+
+	nodeOS := node.Labels[corev1.LabelOSStable]
+	if nodeOS == "" {
+		klog.InfoS("Target node operating system is not known yet", "node", cnh.Spec.NodeRef.Name)
+		return ctrl.Result{RequeueAfter: NodeOSRequeueInterval}, nil
+	}
+	if !strings.EqualFold(nodeOS, string(corev1.Linux)) {
+		return r.handleUnsupportedNodeOS(ctx, cnh, nodeOS)
+	}
+
+	info := r.gpuNodeInfo(node)
 	if info.isGPUNode {
 		// TODO: shape the checker pod for GPU nodes and run the GPU checks.
 		klog.InfoS("Detected GPU node, GPU checks not yet implemented",
@@ -184,6 +199,42 @@ func (r *CheckNodeHealthReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 
 	// Determine the overall result based on pod status
 	return r.determineCheckResult(ctx, cnh, pod)
+}
+
+func (r *CheckNodeHealthReconciler) handleUnsupportedNodeOS(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, nodeOS string) (ctrl.Result, error) {
+	if err := r.cleanupPod(ctx, cnh); err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to clean up checker pod for unsupported node OS: %w", err)
+	}
+
+	now := metav1.Now()
+	if cnh.Status.StartedAt == nil {
+		cnh.Status.StartedAt = &now
+	}
+	cnh.Status.FinishedAt = &now
+	message := fmt.Sprintf("checker image %q does not support node operating system %q", r.CheckerPodImage, nodeOS)
+	cnh.Status.Results = []chmv1alpha1.CheckResult{
+		{
+			Name:      "Eligibility",
+			Status:    chmv1alpha1.CheckStatusUnknown,
+			Message:   message,
+			ErrorCode: ReasonUnsupportedNodeOS,
+		},
+	}
+	cnh.Status.Conditions = []metav1.Condition{
+		{
+			Type:               ConditionTypeHealthy,
+			Status:             metav1.ConditionUnknown,
+			LastTransitionTime: now,
+			Reason:             ReasonUnsupportedNodeOS,
+			Message:            message,
+		},
+	}
+
+	if err := r.Status().Update(ctx, cnh); err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to record unsupported node OS: %w", err)
+	}
+	klog.InfoS("Skipped checker pod for unsupported node operating system", "name", cnh.Name, "node", cnh.Spec.NodeRef.Name, "nodeOS", nodeOS)
+	return ctrl.Result{}, nil
 }
 
 func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, pod *corev1.Pod) (ctrl.Result, error) {
