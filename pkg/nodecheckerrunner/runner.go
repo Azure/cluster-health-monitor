@@ -7,6 +7,7 @@ import (
 
 	"github.com/avast/retry-go/v4"
 	"k8s.io/client-go/kubernetes"
+	k8sretry "k8s.io/client-go/util/retry"
 	"k8s.io/klog/v2"
 	chmclient "sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -159,29 +160,37 @@ func (r *Runner) runChecker(ctx context.Context, chk NodeChecker) *checker.Resul
 
 // updateCheckNodeHealthStatus updates the CheckNodeHealth CR with all checker results
 func (r *Runner) updateCheckNodeHealthStatus(ctx context.Context, results map[string]*checker.Result) error {
-	// Get the CheckNodeHealth CR
-	cnh := &chmv1alpha1.CheckNodeHealth{}
-	if err := r.chmClient.Get(ctx, chmclient.ObjectKey{Name: r.crName}, cnh); err != nil {
-		return fmt.Errorf("failed to get CheckNodeHealth CR: %w", err)
-	}
-
-	// Convert all checker results to CheckResults
-	for checkerName, result := range results {
-		checkResult := chmv1alpha1.CheckResult{
-			Name:      checkerName,
-			Status:    convertStatus(result.Status),
-			Message:   result.Detail.Message,
-			ErrorCode: result.Detail.Code,
+	return k8sretry.RetryOnConflict(k8sretry.DefaultRetry, func() error {
+		cnh := &chmv1alpha1.CheckNodeHealth{}
+		if err := r.chmClient.Get(ctx, chmclient.ObjectKey{Name: r.crName}, cnh); err != nil {
+			return fmt.Errorf("failed to get CheckNodeHealth CR: %w", err)
 		}
-		cnh.Status.Results = append(cnh.Status.Results, checkResult)
-	}
 
-	// Update the status once with all results
-	if err := r.chmClient.Status().Update(ctx, cnh); err != nil {
-		return fmt.Errorf("failed to update status: %w", err)
-	}
+		for checkerName, result := range results {
+			upsertResult(&cnh.Status.Results, chmv1alpha1.CheckResult{
+				Name:      checkerName,
+				Status:    convertStatus(result.Status),
+				Message:   result.Detail.Message,
+				ErrorCode: result.Detail.Code,
+			})
+		}
 
-	return nil
+		if err := r.chmClient.Status().Update(ctx, cnh); err != nil {
+			return fmt.Errorf("failed to update status: %w", err)
+		}
+		return nil
+	})
+}
+
+// upsertResult upserts a result based off name.
+func upsertResult(results *[]chmv1alpha1.CheckResult, result chmv1alpha1.CheckResult) {
+	for i := range *results {
+		if (*results)[i].Name == result.Name {
+			(*results)[i] = result
+			return
+		}
+	}
+	*results = append(*results, result)
 }
 
 // convertStatus converts checker.Status to CheckStatus
