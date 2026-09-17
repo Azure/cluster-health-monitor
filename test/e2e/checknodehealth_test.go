@@ -244,6 +244,65 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 			testNodeName, nodeCondition.Status, nodeCondition.Reason, nodeCondition.Message)
 	})
 
+	It("should reject unsupported Windows nodes without creating a checker pod", func() {
+		By("Creating a fake Windows Node")
+		fakeNodeName := fmt.Sprintf("fake-windows-node-%d", time.Now().Unix())
+		fakeNode := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: fakeNodeName,
+				Labels: map[string]string{
+					corev1.LabelOSStable: string(corev1.Windows),
+				},
+			},
+		}
+		err := k8sClient.Create(ctx, fakeNode)
+		Expect(err).NotTo(HaveOccurred())
+
+		defer func() {
+			By("Cleaning up fake Windows Node")
+			if err := k8sClient.Delete(ctx, fakeNode); err != nil {
+				GinkgoWriter.Printf("Warning: Failed to delete fake Node %s: %v\n", fakeNodeName, err)
+			}
+		}()
+
+		By("Creating a CheckNodeHealth CR targeting the Windows node")
+		cnhName = fmt.Sprintf("test-cnh-windows-%d", time.Now().Unix())
+		err = createCheckNodeHealthCR(ctx, k8sClient, cnhName, fakeNodeName)
+		Expect(err).NotTo(HaveOccurred())
+
+		By("Waiting for the ineligible check to complete")
+		var cnh *chmv1alpha1.CheckNodeHealth
+		Eventually(func() bool {
+			cnh, err = getCheckNodeHealthCR(ctx, k8sClient, cnhName)
+			return err == nil && cnh.Status.FinishedAt != nil
+		}, "30s", "1s").Should(BeTrue(), "Windows eligibility result was not recorded")
+
+		By("Verifying the terminal unsupported-platform result")
+		Expect(cnh.Status.Conditions).To(HaveLen(1))
+		Expect(cnh.Status.Conditions[0].Type).To(Equal("Healthy"))
+		Expect(cnh.Status.Conditions[0].Status).To(Equal(metav1.ConditionUnknown))
+		Expect(cnh.Status.Conditions[0].Reason).To(Equal(checknodehealth.ReasonUnsupportedNodeOS))
+		Expect(cnh.Status.Results).To(HaveLen(1))
+		Expect(cnh.Status.Results[0].Name).To(Equal("Eligibility"))
+		Expect(cnh.Status.Results[0].Status).To(Equal(chmv1alpha1.CheckStatusUnknown))
+		Expect(cnh.Status.Results[0].ErrorCode).To(Equal(checknodehealth.ReasonUnsupportedNodeOS))
+
+		By("Verifying no Linux checker pod was created")
+		podList, err := clientset.CoreV1().Pods(checkerNamespace).List(ctx, metav1.ListOptions{
+			LabelSelector: fmt.Sprintf("%s=%s", checknodehealth.CheckNodeHealthLabel, cnhName),
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(podList.Items).To(BeEmpty())
+
+		By("Verifying the unsupported check did not mutate NodeHealthy")
+		node := &corev1.Node{}
+		err = k8sClient.Get(ctx, client.ObjectKey{Name: fakeNodeName}, node)
+		Expect(err).NotTo(HaveOccurred())
+		for _, condition := range node.Status.Conditions {
+			Expect(condition.Type).NotTo(Equal(checknodehealth.NodeConditionNodeHealthy))
+		}
+	})
+
 	It("should handle pod timeout correctly", func() {
 		By("Creating a fake Node object so the checker pod stays Pending until PodTimeout")
 		// The node must exist as a Node object (but have no kubelet) so the pod is
@@ -254,6 +313,9 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 		fakeNode := &corev1.Node{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: fakeNodeName,
+				Labels: map[string]string{
+					corev1.LabelOSStable: string(corev1.Linux),
+				},
 			},
 		}
 		err := k8sClient.Create(ctx, fakeNode)
@@ -357,6 +419,9 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 		fakeNode := &corev1.Node{
 			ObjectMeta: metav1.ObjectMeta{
 				Name: fakeNodeName,
+				Labels: map[string]string{
+					corev1.LabelOSStable: string(corev1.Linux),
+				},
 			},
 		}
 		err := k8sClient.Create(ctx, fakeNode)
@@ -423,12 +488,31 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 	})
 
 	It("should cleanup pod when CR is deleted", func() {
-		By("Creating a CheckNodeHealth CR with non-existent node")
-		cnhName = fmt.Sprintf("test-cnh-deletion-%d", time.Now().Unix())
-		nonExistentNode := "fake-node-for-deletion-test"
-		err := createCheckNodeHealthCR(ctx, k8sClient, cnhName, nonExistentNode)
+		By("Creating a fake Linux Node so the checker pod remains Pending")
+		fakeNodeName := fmt.Sprintf("fake-node-deletion-test-%d", time.Now().Unix())
+		fakeNode := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: fakeNodeName,
+				Labels: map[string]string{
+					corev1.LabelOSStable: string(corev1.Linux),
+				},
+			},
+		}
+		err := k8sClient.Create(ctx, fakeNode)
 		Expect(err).NotTo(HaveOccurred())
-		GinkgoWriter.Printf("Created CheckNodeHealth CR: %s with non-existent node\n", cnhName)
+
+		defer func() {
+			By("Cleaning up fake Node")
+			if err := k8sClient.Delete(ctx, fakeNode); err != nil {
+				GinkgoWriter.Printf("Warning: Failed to delete fake Node %s: %v\n", fakeNodeName, err)
+			}
+		}()
+
+		By("Creating a CheckNodeHealth CR targeting the fake Linux node")
+		cnhName = fmt.Sprintf("test-cnh-deletion-%d", time.Now().Unix())
+		err = createCheckNodeHealthCR(ctx, k8sClient, cnhName, fakeNodeName)
+		Expect(err).NotTo(HaveOccurred())
+		GinkgoWriter.Printf("Created CheckNodeHealth CR: %s for fake node: %s\n", cnhName, fakeNodeName)
 
 		By("Waiting for health check pod to be created and stuck in Pending")
 		Eventually(func() bool {
@@ -439,8 +523,8 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 				return false
 			}
 			pod := &podList.Items[0]
-			return pod.Spec.NodeName == nonExistentNode && pod.Status.Phase == corev1.PodPending
-		}, "10s", "1s").Should(BeTrue(), "Health check pod was not created or not in Pending state")
+			return pod.Spec.NodeName == fakeNodeName && pod.Status.Phase == corev1.PodPending
+		}, "30s", "1s").Should(BeTrue(), "Health check pod was not created or not in Pending state")
 
 		By("Deleting the CheckNodeHealth CR before pod timeout triggers")
 		err = deleteCheckNodeHealthCR(ctx, k8sClient, cnhName)
