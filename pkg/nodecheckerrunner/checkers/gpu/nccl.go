@@ -49,10 +49,9 @@ func (c *NCCLChecker) Name() string {
 
 // Run runs the all-reduce benchmark and maps its report to a check result.
 func (c *NCCLChecker) Run(ctx context.Context) (*checker.Result, error) {
-	// Nothing to judge the measurement against, so the benchmark is not worth the minutes it takes.
-	// An unprofiled SKU lands here too, since its zero value carries no threshold either.
-	profile, _ := profileFor(c.cfg.SKU)
-	if profile.NcclBusGBps == 0 {
+	// Nothing to judge the measurement against, so the benchmark does not make sense to run.
+	profile, ok := profileFor(c.cfg.SKU)
+	if !ok || profile.NcclBusGBps == 0 {
 		return unknownSKU(c.cfg.SKU), nil
 	}
 
