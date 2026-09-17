@@ -79,6 +79,8 @@ func TestReconcile(t *testing.T) {
 		existingCR          *chmv1alpha1.CheckNodeHealth
 		existingPod         *corev1.Pod
 		existingNode        *corev1.Node
+		missingNode         bool
+		unknownNodeOS       bool
 		enableNodeCondition bool
 		circuitBreaker      *NodeConditionCircuitBreaker
 		triggerDeletion     bool // If true, call Delete() before Reconcile()
@@ -128,6 +130,103 @@ func TestReconcile(t *testing.T) {
 						CheckNodeHealthFinalizer, updatedCnh.Finalizers)
 				}
 			},
+		},
+		{
+			name: "completes unsupported Windows node without creating a checker pod",
+			existingCR: &chmv1alpha1.CheckNodeHealth{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-windows-node"},
+				Spec: chmv1alpha1.CheckNodeHealthSpec{
+					NodeRef: chmv1alpha1.NodeReference{Name: "windows-node"},
+				},
+			},
+			existingNode: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "windows-node",
+					Labels: map[string]string{
+						corev1.LabelOSStable: string(corev1.Windows),
+					},
+				},
+			},
+			enableNodeCondition: true,
+			circuitBreaker:      NewNodeConditionCircuitBreaker(DefaultCircuitBreakerThreshold, DefaultCircuitBreakerWindow, DefaultCircuitBreakerCooldown),
+			expectedResult:      ctrl.Result{},
+			expectError:         false,
+			expectedPodCreated:  false,
+			expectedPodDeleted:  false,
+			validateFunc: func(t *testing.T, fakeClient client.Client, cnh *chmv1alpha1.CheckNodeHealth) {
+				updatedCnh := &chmv1alpha1.CheckNodeHealth{}
+				if err := fakeClient.Get(context.Background(), client.ObjectKey{Name: cnh.Name}, updatedCnh); err != nil {
+					t.Fatalf("Failed to get updated CheckNodeHealth: %v", err)
+				}
+				if updatedCnh.Status.FinishedAt == nil {
+					t.Fatal("Expected unsupported Windows check to be completed")
+				}
+				healthyCondition := getHealthyCondition(updatedCnh.Status.Conditions)
+				if healthyCondition == nil {
+					t.Fatal("Healthy condition not found in status")
+				}
+				if healthyCondition.Status != metav1.ConditionUnknown {
+					t.Errorf("Expected condition status Unknown, got %v", healthyCondition.Status)
+				}
+				if healthyCondition.Reason != "UnsupportedNodeOS" {
+					t.Errorf("Expected reason %q, got %q", "UnsupportedNodeOS", healthyCondition.Reason)
+				}
+				if len(updatedCnh.Status.Results) != 1 {
+					t.Fatalf("Expected one eligibility result, got %d", len(updatedCnh.Status.Results))
+				}
+				result := updatedCnh.Status.Results[0]
+				if result.Name != "Eligibility" || result.Status != chmv1alpha1.CheckStatusUnknown || result.ErrorCode != "UnsupportedNodeOS" {
+					t.Errorf("Unexpected eligibility result: %+v", result)
+				}
+
+				node := &corev1.Node{}
+				if err := fakeClient.Get(context.Background(), client.ObjectKey{Name: "windows-node"}, node); err != nil {
+					t.Fatalf("Failed to get node: %v", err)
+				}
+				if nodeCondition := getNodeHealthyCondition(node.Status.Conditions); nodeCondition != nil {
+					t.Error("Expected unsupported node OS not to update the NodeHealthy condition")
+				}
+			},
+		},
+		{
+			name: "defers checker pod creation until node operating system is known",
+			existingCR: &chmv1alpha1.CheckNodeHealth{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-unknown-node-os"},
+				Spec: chmv1alpha1.CheckNodeHealthSpec{
+					NodeRef: chmv1alpha1.NodeReference{Name: "unknown-os-node"},
+				},
+			},
+			existingNode: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{Name: "unknown-os-node"},
+			},
+			unknownNodeOS:      true,
+			expectedResult:     ctrl.Result{RequeueAfter: NodeOSRequeueInterval},
+			expectError:        false,
+			expectedPodCreated: false,
+			expectedPodDeleted: false,
+			validateFunc: func(t *testing.T, fakeClient client.Client, cnh *chmv1alpha1.CheckNodeHealth) {
+				updatedCnh := &chmv1alpha1.CheckNodeHealth{}
+				if err := fakeClient.Get(context.Background(), client.ObjectKey{Name: cnh.Name}, updatedCnh); err != nil {
+					t.Fatalf("Failed to get updated CheckNodeHealth: %v", err)
+				}
+				if updatedCnh.Status.StartedAt != nil || updatedCnh.Status.FinishedAt != nil || len(updatedCnh.Status.Results) != 0 {
+					t.Errorf("Expected missing node OS to leave the check pending, got status %+v", updatedCnh.Status)
+				}
+			},
+		},
+		{
+			name: "returns an error before pod creation when the target node does not exist",
+			existingCR: &chmv1alpha1.CheckNodeHealth{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-missing-node"},
+				Spec: chmv1alpha1.CheckNodeHealthSpec{
+					NodeRef: chmv1alpha1.NodeReference{Name: "missing-node"},
+				},
+			},
+			missingNode:        true,
+			expectedResult:     ctrl.Result{},
+			expectError:        true,
+			expectedPodCreated: false,
+			expectedPodDeleted: false,
 		},
 		{
 			name: "handles pod succeeded and cleans up",
@@ -772,6 +871,24 @@ func TestReconcile(t *testing.T) {
 			reconciler.CircuitBreaker = tt.circuitBreaker
 			ctx := context.Background()
 
+			// Existing cases predate OS eligibility and exercise Linux behavior. Give their
+			// target nodes the stable Linux label unless a case intentionally overrides it.
+			if tt.existingCR != nil && tt.existingCR.Spec.NodeRef.Name != "" && !tt.missingNode {
+				if tt.existingNode == nil {
+					tt.existingNode = &corev1.Node{
+						ObjectMeta: metav1.ObjectMeta{Name: tt.existingCR.Spec.NodeRef.Name},
+					}
+				}
+				if !tt.unknownNodeOS {
+					if tt.existingNode.Labels == nil {
+						tt.existingNode.Labels = map[string]string{}
+					}
+					if _, ok := tt.existingNode.Labels[corev1.LabelOSStable]; !ok {
+						tt.existingNode.Labels[corev1.LabelOSStable] = string(corev1.Linux)
+					}
+				}
+			}
+
 			// Setup existing resources
 			if tt.existingCR != nil {
 				if err := fakeClient.Create(ctx, tt.existingCR); err != nil {
@@ -979,4 +1096,3 @@ func TestDetermineHealthyCondition(t *testing.T) {
 		})
 	}
 }
-
