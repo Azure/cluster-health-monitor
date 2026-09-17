@@ -115,7 +115,7 @@ COPY --from=gpu-tools-builder /nvbandwidth/build/nvbandwidth /usr/local/bin/nvba
 COPY licenses/LICENSE-NCCL.txt /licenses/LICENSE-NCCL.txt
 
 # OpenMPI, copied as directories so the library symlinks survive instead of being dereferenced into
-# duplicates. share/ carries the help text OpenMPI needs to report its own errors.
+# duplicates.
 COPY --from=gpu-tools-builder /opt/openmpi/bin/ /opt/openmpi/bin/
 COPY --from=gpu-tools-builder /opt/openmpi/lib/ /opt/openmpi/lib/
 COPY --from=gpu-tools-builder /opt/openmpi/share/openmpi/ /opt/openmpi/share/openmpi/
