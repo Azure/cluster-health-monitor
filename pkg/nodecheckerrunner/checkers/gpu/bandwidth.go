@@ -75,9 +75,7 @@ func nvbwTestcasesFor(profile skuProfile) []string {
 	return testcases
 }
 
-// parseBandwidthResult maps nvbandwidth output to a check result. Each testcase matrix is reduced
-// to its minimum measured value, matching AzNHC's behavior of failing when any device pair falls
-// below expectation.
+// parseBandwidthResult maps nvbandwidth output to a check result. Test will report unhealthy if any value is below the threshold.
 func parseBandwidthResult(output string, profile skuProfile, execErr error) *checker.Result {
 	testcases, err := parseNvbandwidthReport(output)
 	if err != nil || len(testcases) == 0 {
