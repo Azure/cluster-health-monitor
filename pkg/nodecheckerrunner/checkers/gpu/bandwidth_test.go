@@ -131,7 +131,11 @@ func TestParseBandwidthResult(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			profile, _ := profileFor(tt.sku)
+			profile, ok := profileFor(tt.sku)
+			if !ok {
+				t.Errorf("profile for SKU %q not found", tt.sku)
+			}
+
 			got := parseBandwidthResult(tt.output, profile, nil)
 
 			if got.Status != tt.wantStatus {

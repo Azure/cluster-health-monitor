@@ -110,8 +110,8 @@ func healthy(message string) *checker.Result {
 	}
 }
 
-// unknownSKU is returned instead of running a benchmark when the node's SKU has no profile.
-func unknownSKU(sku string) *checker.Result {
+// unsupportedSKU is returned instead of running a benchmark when the node's SKU has no profile.
+func unsupportedSKU(sku string) *checker.Result {
 	return &checker.Result{
 		Status: checker.StatusUnknown,
 		Detail: checker.Detail{

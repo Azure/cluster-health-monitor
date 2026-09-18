@@ -184,7 +184,10 @@ func TestParseNCCLResult(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			profile, _ := profileFor(tt.sku)
+			profile, ok := profileFor(tt.sku)
+			if !ok {
+				t.Errorf("profile for SKU %q not found", tt.sku)
+			}
 			got := parseNCCLResult(tt.reportJSON, tt.output, tt.sku, profile, tt.execErr)
 
 			if got.Status != tt.wantStatus {

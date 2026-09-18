@@ -54,7 +54,7 @@ func (c *BandwidthChecker) Run(ctx context.Context) (*checker.Result, error) {
 	profile, ok := profileFor(c.cfg.SKU)
 	testcases := nvbwTestcasesFor(profile)
 	if !ok || len(testcases) == 0 {
-		return unknownSKU(c.cfg.SKU), nil
+		return unsupportedSKU(c.cfg.SKU), nil
 	}
 	if result := preflight(ctx, c.cfg); result != nil {
 		return result, nil

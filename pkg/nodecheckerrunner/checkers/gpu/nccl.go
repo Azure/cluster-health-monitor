@@ -52,7 +52,7 @@ func (c *NCCLChecker) Run(ctx context.Context) (*checker.Result, error) {
 	// Nothing to judge the measurement against, so the benchmark does not make sense to run.
 	profile, ok := profileFor(c.cfg.SKU)
 	if !ok || profile.NcclBusGBps == 0 {
-		return unknownSKU(c.cfg.SKU), nil
+		return unsupportedSKU(c.cfg.SKU), nil
 	}
 
 	if result := preflight(ctx, c.cfg); result != nil {

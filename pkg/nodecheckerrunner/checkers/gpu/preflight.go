@@ -25,7 +25,7 @@ func evaluateCount(sku string, count int, detectErr error) *checker.Result {
 	// reported the same way as a SKU we do not recognize.
 	profile, ok := profileFor(sku)
 	if !ok || profile.ExpectedGPUs == 0 {
-		return unknownSKU(sku)
+		return unsupportedSKU(sku)
 	}
 
 	if detectErr != nil {
