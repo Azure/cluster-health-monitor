@@ -111,8 +111,8 @@ COPY --from=cudart /usr/lib/x86_64-linux-gnu/libstdc++.so.6 /usr/lib/
 
 COPY --from=gpu-tools-builder /nccl-tests/build/all_reduce_perf /usr/local/bin/all_reduce_perf
 COPY --from=gpu-tools-builder /nvbandwidth/build/nvbandwidth /usr/local/bin/nvbandwidth
-# Keep the NCCL redistribution terms with the image that carries the NCCL benchmark binary.
-COPY licenses/LICENSE-NCCL.txt /licenses/LICENSE-NCCL.txt
+# Keep the redistribution terms with the image that carries the third-party binaries they cover.
+COPY licenses/ /licenses/
 
 # OpenMPI, copied as directories so the library symlinks survive instead of being dereferenced into
 # duplicates.
