@@ -253,13 +253,13 @@ func TestNewRunnerCheckers(t *testing.T) {
 			want: []string{"PodNetwork"},
 		},
 		{
-			name: "gpu node adds the preflight and the benchmarks it gates",
+			name: "gpu node adds the benchmarks",
 			opts: Options{
 				NodeName: "node-1",
 				CRName:   "cnh-1",
 				GPU:      &GPUOptions{SKU: "Standard_ND96isr_H100_v5"},
 			},
-			want: []string{"PodNetwork", "GpuPreflight", "NcclAllReduce", "GpuBandwidth"},
+			want: []string{"PodNetwork", "NcclAllReduce", "GpuBandwidth"},
 		},
 		{
 			name: "gpu node with an unknown sku still wires the gpu checkers",
@@ -268,7 +268,7 @@ func TestNewRunnerCheckers(t *testing.T) {
 				CRName:   "cnh-1",
 				GPU:      &GPUOptions{SKU: "unknown_sku"},
 			},
-			want: []string{"PodNetwork", "GpuPreflight", "NcclAllReduce", "GpuBandwidth"},
+			want: []string{"PodNetwork", "NcclAllReduce", "GpuBandwidth"},
 		},
 	}
 
@@ -280,12 +280,6 @@ func TestNewRunnerCheckers(t *testing.T) {
 
 			got := make([]string, 0, len(tt.want))
 			for _, c := range r.checkers {
-				got = append(got, c.Name())
-			}
-			if r.gpuPreflight != nil {
-				got = append(got, r.gpuPreflight.Name())
-			}
-			for _, c := range r.gpuCheckers {
 				got = append(got, c.Name())
 			}
 

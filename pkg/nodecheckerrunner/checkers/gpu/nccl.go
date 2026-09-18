@@ -55,7 +55,12 @@ func (c *NCCLChecker) Run(ctx context.Context) (*checker.Result, error) {
 		return unknownSKU(c.cfg.SKU), nil
 	}
 
-	// GPU preflight checker is expected to have already confirmed the node exposes this many GPUs.
+	if result := preflight(ctx, c.cfg); result != nil {
+		return result, nil
+	}
+
+	// The preflight has confirmed the node exposes exactly this many GPUs, so it is safe to use as
+	// the rank count.
 	gpuCount := profile.ExpectedGPUs
 
 	// All-reduce bus bandwidth is algbw * 2(n-1)/n, which is zero for a single rank. Running the

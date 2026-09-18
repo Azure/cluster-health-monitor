@@ -56,18 +56,9 @@ type Checker interface {
 	Run(ctx context.Context) (*checker.Result, error)
 }
 
-// NewCheckers returns the intrusive benchmarks. They assume the node passed NewPreflightChecker,
-// so the caller must not run them otherwise.
+// NewCheckers returns the intrusive benchmarks.
 func NewCheckers(cfg Config) []Checker {
 	return []Checker{NewNCCLChecker(cfg), NewBandwidthChecker(cfg)}
-}
-
-// Skipped reports a check that a failed preflight kept from running.
-func Skipped(reason string) *checker.Result {
-	return &checker.Result{
-		Status: checker.StatusUnknown,
-		Detail: checker.Detail{Code: ErrorCodePreflightFailed, Message: reason},
-	}
 }
 
 // detectGPUCount counts the GPUs nvidia-smi reports.

@@ -7,24 +7,17 @@ import (
 	"github.com/Azure/cluster-health-monitor/pkg/checker"
 )
 
-// PreflightChecker gates the intrusive benchmarks.
-type PreflightChecker struct {
-	cfg Config
-}
-
-func NewPreflightChecker(cfg Config) *PreflightChecker {
-	return &PreflightChecker{cfg: cfg.withDefaults()}
-}
-
-func (c *PreflightChecker) Name() string {
-	return "GpuPreflight"
-}
-
-func (c *PreflightChecker) Run(ctx context.Context) (*checker.Result, error) {
+// preflight reports whether the node is fit to benchmark, returning nil when it is. Each benchmark
+// calls this before running its tool so it does not report a verdict against a node whose GPUs do
+// not match the profile its thresholds came from.
+func preflight(ctx context.Context, cfg Config) *checker.Result {
 	// The count comes from nvidia-smi rather than the device plugin because it has to be the
 	// devices the benchmarks will run on, not what the node advertises.
-	count, err := detectGPUCount(ctx, c.cfg.ToolTimeout)
-	return evaluateCount(c.cfg.SKU, count, err), nil
+	count, err := detectGPUCount(ctx, cfg.ToolTimeout)
+	if result := evaluateCount(cfg.SKU, count, err); result.Status != checker.StatusHealthy {
+		return result
+	}
+	return nil
 }
 
 func evaluateCount(sku string, count int, detectErr error) *checker.Result {

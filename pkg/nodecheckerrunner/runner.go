@@ -50,9 +50,6 @@ type Runner struct {
 	nodeName  string
 	crName    string
 	checkers  []NodeChecker
-	// gpuPreflight gates gpuCheckers. Both are nil on nodes without GPUs.
-	gpuPreflight NodeChecker
-	gpuCheckers  []NodeChecker
 }
 
 // NewRunner creates a new Runner instance
@@ -85,10 +82,8 @@ func (r *Runner) initializeCheckers(clientset kubernetes.Interface, opts Options
 
 	// The GPU checkers only work in the GPU image, which is what the controller uses when it populates these options.
 	if opts.GPU != nil {
-		cfg := gpu.Config{SKU: opts.GPU.SKU}
-		r.gpuPreflight = gpu.NewPreflightChecker(cfg)
-		for _, c := range gpu.NewCheckers(cfg) {
-			r.gpuCheckers = append(r.gpuCheckers, c)
+		for _, c := range gpu.NewCheckers(gpu.Config{SKU: opts.GPU.SKU}) {
+			r.checkers = append(r.checkers, c)
 		}
 	}
 }
@@ -100,22 +95,6 @@ func (r *Runner) runCheckers(ctx context.Context) error {
 	// Run all checkers and collect results
 	for _, chk := range r.checkers {
 		results[chk.Name()] = r.runChecker(ctx, chk)
-	}
-
-	if r.gpuPreflight != nil {
-		pre := r.runChecker(ctx, r.gpuPreflight)
-		results[r.gpuPreflight.Name()] = pre
-
-		for _, chk := range r.gpuCheckers {
-			if pre.Status != checker.StatusHealthy {
-				klog.InfoS("Skipping GPU checker, preflight did not pass",
-					"checker", chk.Name(), "preflight", pre.Status)
-				results[chk.Name()] = gpu.Skipped(fmt.Sprintf(
-					"%s reported %s, so this check did not run", r.gpuPreflight.Name(), pre.Status))
-				continue
-			}
-			results[chk.Name()] = r.runChecker(ctx, chk)
-		}
 	}
 
 	// Update CheckNodeHealth CR with all results at once

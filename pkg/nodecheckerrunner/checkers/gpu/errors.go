@@ -16,10 +16,6 @@ const (
 	// produce a verdict.
 	ErrorCodeUnknownSKU = "UnknownGpuSKU"
 
-	// ErrorCodePreflightFailed indicates the GPU count check did not pass, so the benchmark that
-	// would have followed it was not run.
-	ErrorCodePreflightFailed = "GpuPreflightFailed"
-
 	// ErrorCodeNcclCorrectness indicates the all-reduce returned incorrect data.
 	ErrorCodeNcclCorrectness = "NcclCorrectnessError"
 

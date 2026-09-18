@@ -56,7 +56,9 @@ func (c *BandwidthChecker) Run(ctx context.Context) (*checker.Result, error) {
 	if !ok || len(testcases) == 0 {
 		return unknownSKU(c.cfg.SKU), nil
 	}
-
+	if result := preflight(ctx, c.cfg); result != nil {
+		return result, nil
+	}
 	args := append([]string{"-t"}, testcases...)
 	args = append(args, "-i", "10", "--format", "json")
 	output, err := runTool(ctx, toolsDir+"/nvbandwidth", c.cfg.ToolTimeout, args...)
