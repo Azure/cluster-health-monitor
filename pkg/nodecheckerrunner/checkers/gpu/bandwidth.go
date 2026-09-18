@@ -81,17 +81,17 @@ func nvbwTestcasesFor(profile skuProfile) []string {
 func parseBandwidthResult(output string, profile skuProfile, execErr error) *checker.Result {
 	testcases, err := parseNvbandwidthReport(output)
 	if err != nil || len(testcases) == 0 {
-		return checker.Unhealthy(ErrorCodeToolFailed, truncateMessage(fmt.Sprintf(
-			"nvbandwidth produced no results (%s)\n%s", execErrString(execErr), output)))
+		return toolFailed(fmt.Sprintf(
+			"nvbandwidth produced no results (%s)\n%s", execErrString(execErr), output))
 	}
 
 	lowBandwidth := false
-	toolFailed := false
+	missingMeasurement := false
 	lines := make([]string, 0, len(testcases))
 	for _, testcase := range testcases {
 		min, ok := testcase.slowest()
 		if testcase.Status != nvbwStatusPassed || !ok {
-			toolFailed = true
+			missingMeasurement = true
 			lines = append(lines, fmt.Sprintf("%s: no measurement reported (status %q)", testcase.Name, testcase.Status))
 			continue
 		}
@@ -108,11 +108,11 @@ func parseBandwidthResult(output string, profile skuProfile, execErr error) *che
 
 	message := truncateMessage(strings.Join(lines, "\n"))
 	switch {
-	case toolFailed:
-		return checker.Unhealthy(ErrorCodeToolFailed, message)
+	case missingMeasurement:
+		return toolFailed(message)
 	case execErr != nil:
-		return checker.Unhealthy(ErrorCodeToolFailed, truncateMessage(fmt.Sprintf(
-			"nvbandwidth reported measurements but did not exit cleanly (%s)\n%s", execErrString(execErr), message)))
+		return toolFailed(fmt.Sprintf(
+			"nvbandwidth reported measurements but did not exit cleanly (%s)\n%s", execErrString(execErr), message))
 	case lowBandwidth:
 		return checker.Unhealthy(ErrorCodeGpuLowBandwidth, message)
 	}

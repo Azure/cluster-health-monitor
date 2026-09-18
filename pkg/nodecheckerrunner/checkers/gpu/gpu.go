@@ -110,6 +110,18 @@ func healthy(message string) *checker.Result {
 	}
 }
 
+// toolFailed is returned when a benchmark could not produce a measurement we can trust.
+func toolFailed(message string) *checker.Result {
+	return &checker.Result{
+		// Unknown because a failing tool does not necessarily indicate a node issue and we do not want to potentially act on healthy nodes.
+		Status: checker.StatusUnknown,
+		Detail: checker.Detail{
+			Code:    ErrorCodeToolFailed,
+			Message: truncateMessage(message),
+		},
+	}
+}
+
 // unsupportedSKU is returned instead of running a benchmark when the node's SKU has no profile.
 func unsupportedSKU(sku string) *checker.Result {
 	return &checker.Result{

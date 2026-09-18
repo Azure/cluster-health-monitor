@@ -78,13 +78,7 @@ func (c *NCCLChecker) Run(ctx context.Context) (*checker.Result, error) {
 	// nccl-tests only emits its JSON report to a file. Creating a directory because it cannot overwrite an existing path.
 	dir, err := os.MkdirTemp("", "nccl")
 	if err != nil {
-		return &checker.Result{
-			Status: checker.StatusUnknown,
-			Detail: checker.Detail{
-				Code:    ErrorCodeToolFailed,
-				Message: fmt.Sprintf("could not create a directory for the nccl-tests report: %v", err),
-			},
-		}, nil
+		return toolFailed(fmt.Sprintf("could not create a directory for the nccl-tests report: %v", err)), nil
 	}
 	defer func() {
 		if err := os.RemoveAll(dir); err != nil {
@@ -132,8 +126,8 @@ func ncclArgs(gpuCount int, reportPath string, profile skuProfile) []string {
 func parseNCCLResult(reportJSON, output, sku string, profile skuProfile, execErr error) *checker.Result {
 	var report ncclReport
 	if err := json.Unmarshal([]byte(reportJSON), &report); err != nil || len(report.Results) == 0 {
-		return checker.Unhealthy(ErrorCodeToolFailed, truncateMessage(fmt.Sprintf(
-			"nccl-tests produced no report (%s)\n%s", execErrString(execErr), output)))
+		return toolFailed(fmt.Sprintf(
+			"nccl-tests produced no report (%s)\n%s", execErrString(execErr), output))
 	}
 
 	busbw := report.AverageBusBandwidth.Bandwidth
@@ -144,9 +138,9 @@ func parseNCCLResult(reportJSON, output, sku string, profile skuProfile, execErr
 		return checker.Unhealthy(ErrorCodeNcclCorrectness,
 			fmt.Sprintf("NCCL all-reduce reported %d out-of-bounds values", outOfBounds))
 	case execErr != nil:
-		return checker.Unhealthy(ErrorCodeToolFailed, truncateMessage(fmt.Sprintf(
+		return toolFailed(fmt.Sprintf(
 			"nccl-tests reported bus bandwidth %.3f GB/s but did not exit cleanly (%s)\n%s",
-			busbw, execErrString(execErr), output)))
+			busbw, execErrString(execErr), output))
 	case busbw < profile.NcclBusGBps:
 		return checker.Unhealthy(ErrorCodeNcclLowBandwidth, fmt.Sprintf(
 			"bus bandwidth %.3f GB/s below %.3f GB/s threshold for %s", busbw, profile.NcclBusGBps, sku))

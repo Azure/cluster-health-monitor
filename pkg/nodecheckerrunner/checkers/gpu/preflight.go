@@ -29,13 +29,7 @@ func evaluateCount(sku string, count int, detectErr error) *checker.Result {
 	}
 
 	if detectErr != nil {
-		return &checker.Result{
-			Status: checker.StatusUnknown,
-			Detail: checker.Detail{
-				Code:    ErrorCodeToolFailed,
-				Message: fmt.Sprintf("could not determine GPU count: %v", detectErr),
-			},
-		}
+		return toolFailed(fmt.Sprintf("could not determine GPU count: %v", detectErr))
 	}
 
 	if count != profile.ExpectedGPUs {
