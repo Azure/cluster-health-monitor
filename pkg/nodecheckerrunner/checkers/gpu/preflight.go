@@ -45,8 +45,8 @@ func evaluateCount(sku string, count int, detectErr error) *checker.Result {
 		}
 	}
 
-	if count < profile.ExpectedGPUs {
-		return checker.Unhealthy(ErrorCodeMissingGPUs,
+	if count != profile.ExpectedGPUs {
+		return checker.Unhealthy(ErrorCodeUnexpectedGPUCount,
 			fmt.Sprintf("found %d of %d GPUs expected for %s", count, profile.ExpectedGPUs, sku))
 	}
 	return healthy(fmt.Sprintf("found %d of %d GPUs expected for %s", count, profile.ExpectedGPUs, sku))

@@ -32,8 +32,16 @@ func TestPreflightChecker(t *testing.T) {
 			sku:         h100SKU,
 			found:       7,
 			wantStatus:  checker.StatusUnhealthy,
-			wantCode:    ErrorCodeMissingGPUs,
+			wantCode:    ErrorCodeUnexpectedGPUCount,
 			wantMessage: "found 7 of 8 GPUs expected",
+		},
+		{
+			name:        "more gpus than expected reports unhealthy",
+			sku:         h100SKU,
+			found:       9,
+			wantStatus:  checker.StatusUnhealthy,
+			wantCode:    ErrorCodeUnexpectedGPUCount,
+			wantMessage: "found 9 of 8 GPUs expected",
 		},
 		{
 			name:        "unrecognized sku reports unknown",

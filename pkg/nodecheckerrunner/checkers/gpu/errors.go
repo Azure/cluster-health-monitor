@@ -8,8 +8,9 @@ const (
 	// ErrorCodeInsufficientGPUs indicates the node exposed too few GPUs for the check to be meaningful.
 	ErrorCodeInsufficientGPUs = "InsufficientGPUs"
 
-	// ErrorCodeMissingGPUs indicates the node exposed fewer GPUs than its SKU is expected to have.
-	ErrorCodeMissingGPUs = "MissingGPUs"
+	// ErrorCodeUnexpectedGPUCount indicates the node exposed a different number of GPUs than its SKU
+	// is expected to have.
+	ErrorCodeUnexpectedGPUCount = "UnexpectedGPUCount"
 
 	// ErrorCodeUnknownSKU indicates the node's SKU has no configured profile, so no GPU check can
 	// produce a verdict.
