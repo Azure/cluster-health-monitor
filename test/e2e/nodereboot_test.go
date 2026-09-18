@@ -9,6 +9,7 @@ import (
 	nodecontroller "github.com/Azure/cluster-health-monitor/pkg/controller/node"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -288,8 +289,99 @@ var _ = Describe("NodeReboot Controller", Ordered, ContinueOnFailure, Label("nod
 		}, "30s", "1s").Should(BeTrue(), "CheckNodeHealth CR was not deleted within timeout")
 	})
 
-	It("should not create duplicate CheckNodeHealth CRs for the same bootID", func() {
-		By("Getting the first node")
+	It("should not create CheckNodeHealth CR for Windows nodes", func() {
+		// The cluster health monitor only supports Linux. The node controller must not
+		// create a CheckNodeHealth CR for a Windows node even when it detects a "reboot"
+		// (stale bootID annotation), otherwise the downstream checker would flag the
+		// otherwise-healthy Windows node as unhealthy.
+		By("Creating a fake Windows Node with a bootID")
+		winNodeName := fmt.Sprintf("fake-win-node-%d", time.Now().Unix())
+		winBootID := "win-boot-id-e2e"
+		winNode := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: winNodeName,
+				Labels: map[string]string{
+					"kubernetes.io/os": "windows",
+				},
+				// Stale annotation so the controller's reboot detection fires
+				// (annotation bootID != actual bootID).
+				Annotations: map[string]string{
+					nodecontroller.AnnotationLastBootID: "stale-win-boot-id",
+				},
+			},
+		}
+		err := k8sClient.Create(ctx, winNode)
+		Expect(err).NotTo(HaveOccurred())
+
+		defer func() {
+			By("Cleaning up fake Windows Node")
+			if err := k8sClient.Delete(ctx, winNode); err != nil {
+				GinkgoWriter.Printf("Warning: Failed to delete fake Node %s: %v\n", winNodeName, err)
+			}
+		}()
+
+		By("Setting the node status: Ready, Windows OS, and a real bootID")
+		// The running controller may modify the node concurrently, so re-fetch and
+		// retry the status update on conflict.
+		Eventually(func() error {
+			latest := &corev1.Node{}
+			if err := k8sClient.Get(ctx, client.ObjectKey{Name: winNodeName}, latest); err != nil {
+				return err
+			}
+			latest.Status.NodeInfo.OperatingSystem = "windows"
+			latest.Status.NodeInfo.BootID = winBootID
+			latest.Status.Conditions = []corev1.NodeCondition{
+				{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+			}
+			return k8sClient.Status().Update(ctx, latest)
+		}, "30s", "2s").Should(Succeed(), "Failed to set Windows node status")
+		GinkgoWriter.Printf("Created fake Windows Node %s (bootID=%s, stale annotation)\n", winNodeName, winBootID)
+
+		By("Restarting the checknodehealth-controller to trigger re-sync")
+		err = clientset.CoreV1().Pods(checkerNamespace).DeleteCollection(ctx,
+			metav1.DeleteOptions{},
+			metav1.ListOptions{LabelSelector: "app=checknodehealth-controller"},
+		)
+		Expect(err).NotTo(HaveOccurred())
+
+		By("Waiting for the controller pod to come back")
+		Eventually(func() bool {
+			pods, err := clientset.CoreV1().Pods(checkerNamespace).List(ctx, metav1.ListOptions{
+				LabelSelector: "app=checknodehealth-controller",
+			})
+			if err != nil || len(pods.Items) == 0 {
+				return false
+			}
+			for _, pod := range pods.Items {
+				if pod.Status.Phase == "Running" && pod.DeletionTimestamp == nil {
+					return true
+				}
+			}
+			return false
+		}, "60s", "2s").Should(BeTrue(), "Controller pod did not restart within timeout")
+
+		By("Verifying no CheckNodeHealth CR is ever created for the Windows node")
+		winCNHName := nodecontroller.GenerateCNHName(winNodeName, winBootID)
+		GinkgoWriter.Printf("Expecting NO CheckNodeHealth CR named %s\n", winCNHName)
+		Consistently(func() bool {
+			// No CR for the reboot-detected name, and no CR referencing the Windows node.
+			if checkNodeHealthCRExists(ctx, k8sClient, winCNHName) {
+				return false
+			}
+			cnhList := &chmv1alpha1.CheckNodeHealthList{}
+			if err := k8sClient.List(ctx, cnhList); err != nil {
+				return false
+			}
+			for _, cnh := range cnhList.Items {
+				if cnh.Spec.NodeRef.Name == winNodeName {
+					return false
+				}
+			}
+			return true
+		}, "45s", "3s").Should(BeTrue(), "No CheckNodeHealth CR should be created for a Windows node")
+	})
+
+	It("should not create duplicate CheckNodeHealth CRs for the same bootID", func() {		By("Getting the first node")
 		nodeList, err := clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(nodeList.Items).NotTo(BeEmpty())
