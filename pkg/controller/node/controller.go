@@ -21,6 +21,7 @@ import (
 
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
 	"github.com/Azure/cluster-health-monitor/pkg/controller/checknodehealth"
+	"github.com/Azure/cluster-health-monitor/pkg/utils"
 )
 
 const (
@@ -108,6 +109,15 @@ func (r *NodeRebootReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	node := &corev1.Node{}
 	if err := r.Get(ctx, req.NamespacedName, node); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	// The cluster health monitor only supports Linux. The checker pod runs a Linux
+	// binary, so creating a CheckNodeHealth CR for a Windows node would only cause the
+	// downstream checker to flag an otherwise-healthy node as NodeHealthy=False. Skip
+	// Windows nodes entirely.
+	if utils.IsWindows(node) {
+		klog.V(1).InfoS("Skipping Windows node (Linux only)", "node", node.Name)
+		return ctrl.Result{}, nil
 	}
 
 	// Garbage collect stale NodeHealthy condition
@@ -368,6 +378,7 @@ func (r *NodeRebootReconciler) updateBootIDAnnotation(ctx context.Context, node 
 }
 
 // GenerateCNHName builds a deterministic CheckNodeHealth CR name from the node
+
 // name and bootID. The bootID is hashed to keep the name short and DNS-safe.
 // The hash is placed before the node name so that truncation to maxCNHNameLength
 // never removes the hash portion.

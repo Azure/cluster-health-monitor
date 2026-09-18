@@ -443,9 +443,15 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 		GinkgoWriter.Printf("Created fake Windows Node: %s\n", fakeNodeName)
 
 		// Also set NodeInfo.OperatingSystem via status so both detection paths are covered.
-		fakeNode.Status.NodeInfo.OperatingSystem = "windows"
-		err = k8sClient.Status().Update(ctx, fakeNode)
-		Expect(err).NotTo(HaveOccurred())
+		// The node controller may modify the node concurrently, so re-fetch and retry on conflict.
+		Eventually(func() error {
+			latest := &corev1.Node{}
+			if err := k8sClient.Get(ctx, client.ObjectKey{Name: fakeNodeName}, latest); err != nil {
+				return err
+			}
+			latest.Status.NodeInfo.OperatingSystem = "windows"
+			return k8sClient.Status().Update(ctx, latest)
+		}, "30s", "2s").Should(Succeed(), "Failed to set Windows node status")
 
 		defer func() {
 			By("Cleaning up fake Windows Node")
@@ -485,6 +491,20 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 			}
 			return nil
 		}, "30s", "2s").Should(BeNil(), "NodeHealthy condition should not be set on a Windows node")
+
+		By("Verifying the CR is completed with Healthy=Unknown (unsupported OS)")
+		var cnh *chmv1alpha1.CheckNodeHealth
+		Eventually(func() bool {
+			cnh, err = getCheckNodeHealthCR(ctx, k8sClient, cnhName)
+			if err != nil {
+				return false
+			}
+			return cnh.Status.FinishedAt != nil
+		}, "30s", "2s").Should(BeTrue(), "CR should be marked completed for a Windows node")
+		Expect(cnh.Status.Conditions).To(HaveLen(1))
+		Expect(cnh.Status.Conditions[0].Type).To(Equal("Healthy"))
+		Expect(cnh.Status.Conditions[0].Status).To(Equal(metav1.ConditionUnknown),
+			"Windows node should be marked Healthy=Unknown, not False")
 	})
 
 	It("should cleanup pod when CR is deleted", func() {
