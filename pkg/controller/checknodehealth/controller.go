@@ -7,6 +7,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/klog/v2"
@@ -252,10 +253,14 @@ func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cn
 }
 
 // isWindowsNode reports whether the target node runs Windows. It uses the uncached reader
-// so the result reflects current node state.
+// so the result reflects current node state. A missing node is treated as non-Windows so
+// the reconcile proceeds with its existing not-found handling rather than erroring here.
 func (r *CheckNodeHealthReconciler) isWindowsNode(ctx context.Context, nodeName string) (bool, error) {
 	node := &corev1.Node{}
 	if err := r.APIReader.Get(ctx, client.ObjectKey{Name: nodeName}, node); err != nil {
+		if apierrors.IsNotFound(err) {
+			return false, nil
+		}
 		return false, fmt.Errorf("failed to get node %s: %w", nodeName, err)
 	}
 	return utils.IsWindows(node), nil
