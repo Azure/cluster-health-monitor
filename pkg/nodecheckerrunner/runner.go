@@ -13,7 +13,8 @@ import (
 
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
 	"github.com/Azure/cluster-health-monitor/pkg/checker"
-	"github.com/Azure/cluster-health-monitor/pkg/checker/podnetwork"
+	"github.com/Azure/cluster-health-monitor/pkg/nodecheckerrunner/checkers/gpu"
+	"github.com/Azure/cluster-health-monitor/pkg/nodecheckerrunner/checkers/podnetwork"
 )
 
 const (
@@ -30,6 +31,19 @@ type NodeChecker interface {
 	Run(ctx context.Context) (*checker.Result, error)
 }
 
+// GPUOptions carries information the GPU checkers need from the controller.
+type GPUOptions struct {
+	SKU string
+}
+
+// Options configures which checkers run and what they are told about the node.
+type Options struct {
+	NodeName string
+	CRName   string
+	// GPU is nil on nodes without GPUs.
+	GPU *GPUOptions
+}
+
 // Runner executes node health checkers and updates CheckNodeHealth CR
 type Runner struct {
 	chmClient chmclient.Client
@@ -39,13 +53,14 @@ type Runner struct {
 }
 
 // NewRunner creates a new Runner instance
-func NewRunner(clientset kubernetes.Interface, chmClient chmclient.Client, nodeName, crName string) *Runner {
-	return &Runner{
+func NewRunner(clientset kubernetes.Interface, chmClient chmclient.Client, opts Options) *Runner {
+	r := &Runner{
 		chmClient: chmClient,
-		nodeName:  nodeName,
-		crName:    crName,
-		checkers:  initializeCheckers(clientset, nodeName),
+		nodeName:  opts.NodeName,
+		crName:    opts.CRName,
 	}
+	r.initializeCheckers(clientset, opts)
+	return r
 }
 
 // Run executes all node health checkers and updates the CheckNodeHealth CR
@@ -61,11 +76,16 @@ func (r *Runner) Run(ctx context.Context) error {
 	return nil
 }
 
-// initializeCheckers creates and returns a list of all checkers to run
-func initializeCheckers(clientset kubernetes.Interface, nodeName string) []NodeChecker {
-	checkers := []NodeChecker{}
-	checkers = append(checkers, podnetwork.NewPodNetworkChecker(clientset, nodeName))
-	return checkers
+// initializeCheckers creates all the checkers to run.
+func (r *Runner) initializeCheckers(clientset kubernetes.Interface, opts Options) {
+	r.checkers = []NodeChecker{podnetwork.NewPodNetworkChecker(clientset, opts.NodeName)}
+
+	// The GPU checkers only work in the GPU image, which is what the controller uses when it populates these options.
+	if opts.GPU != nil {
+		for _, c := range gpu.NewCheckers(gpu.Config{SKU: opts.GPU.SKU}) {
+			r.checkers = append(r.checkers, c)
+		}
+	}
 }
 
 // runCheckers runs all checkers sequentially and updates the CR once with all results
@@ -74,32 +94,7 @@ func (r *Runner) runCheckers(ctx context.Context) error {
 
 	// Run all checkers and collect results
 	for _, chk := range r.checkers {
-		klog.InfoS("Running checker", "checker", chk.Name())
-
-		var result *checker.Result
-
-		// Retry with configured attempts and delay
-		err := retry.Do(
-			func() error {
-				var runErr error
-				result, runErr = chk.Run(ctx)
-				return runErr
-			},
-			retry.Attempts(maxRetryAttempts),
-			retry.Delay(retryDelay),
-			retry.OnRetry(func(n uint, err error) {
-				klog.InfoS("Checker attempt failed", "checker", chk.Name(), "attempt", n+1, "error", err)
-			}),
-		)
-
-		if err != nil {
-			klog.ErrorS(err, "Checker failed after retries", "checker", chk.Name())
-			// Record as Unknown and continue with other checkers
-			result = checker.Unknown(fmt.Sprintf("Checker failed after %d attempts: %v", maxRetryAttempts, err))
-		}
-
-		klog.InfoS("Checker completed", "checker", chk.Name(), "status", result.Status, "message", result.Detail.Message)
-		results[chk.Name()] = result
+		results[chk.Name()] = r.runChecker(ctx, chk)
 	}
 
 	// Update CheckNodeHealth CR with all results at once
@@ -110,6 +105,36 @@ func (r *Runner) runCheckers(ctx context.Context) error {
 
 	klog.InfoS("Successfully updated CheckNodeHealth status", "cr", r.crName)
 	return nil
+}
+
+// runChecker runs one checker, retrying while it returns an error.
+func (r *Runner) runChecker(ctx context.Context, chk NodeChecker) *checker.Result {
+	klog.InfoS("Running checker", "checker", chk.Name())
+
+	var result *checker.Result
+
+	// Retry with configured attempts and delay
+	err := retry.Do(
+		func() error {
+			var runErr error
+			result, runErr = chk.Run(ctx)
+			return runErr
+		},
+		retry.Attempts(maxRetryAttempts),
+		retry.Delay(retryDelay),
+		retry.OnRetry(func(n uint, err error) {
+			klog.InfoS("Checker attempt failed", "checker", chk.Name(), "attempt", n+1, "error", err)
+		}),
+	)
+
+	if err != nil {
+		klog.ErrorS(err, "Checker failed after retries", "checker", chk.Name())
+		// Record as Unknown and continue with other checkers
+		result = checker.Unknown(fmt.Sprintf("Checker failed after %d attempts: %v", maxRetryAttempts, err))
+	}
+
+	klog.InfoS("Checker completed", "checker", chk.Name(), "status", result.Status, "message", result.Detail.Message)
+	return result
 }
 
 // updateCheckNodeHealthStatus updates the CheckNodeHealth CR with all checker results

@@ -1,0 +1,59 @@
+{
+  "nvbandwidth": {
+    "CUDA Driver API Version": 13000,
+    "CUDA Runtime Version": 12060,
+    "Driver Version": "580.159.04",
+    "GPU Device list": [
+      "0: NVIDIA H100 80GB HBM3 (00000001:00:00): (nvbw-cap)",
+      "1: NVIDIA H100 80GB HBM3 (00000002:00:00): (nvbw-cap)",
+      "2: NVIDIA H100 80GB HBM3 (00000003:00:00): (nvbw-cap)",
+      "3: NVIDIA H100 80GB HBM3 (00000008:00:00): (nvbw-cap)",
+      "4: NVIDIA H100 80GB HBM3 (00000009:00:00): (nvbw-cap)",
+      "5: NVIDIA H100 80GB HBM3 (0000000a:00:00): (nvbw-cap)",
+      "6: NVIDIA H100 80GB HBM3 (0000000b:00:00): (nvbw-cap)",
+      "7: NVIDIA H100 80GB HBM3 (0000000c:00:00): (nvbw-cap)"
+    ],
+    "Version Major": 0,
+    "Version Minor": 10,
+    "Version Patch": 0,
+    "bounceBufferConfComputeEnabled": false,
+    "git_version": "v0.10",
+    "testcases": [
+      {
+        "bandwidth_description": "memcpy CE CPU(row) -> GPU(column) bandwidth (GB/s)",
+        "bandwidth_matrix": [
+          ["55.5602", "55.5582", "55.5652", "55.5582", "55.5576", "55.5542", "55.5726", "55.5551"]
+        ],
+        "name": "host_to_device_memcpy_ce",
+        "status": "Passed",
+        "sum": 444.4813102085
+      },
+      {
+        "bandwidth_description": "memcpy CE CPU(row) <- GPU(column) bandwidth (GB/s)",
+        "bandwidth_matrix": [
+          ["55.1622", "55.162", "55.1646", "55.1625", "55.1623", "55.1661", "55.1659", "55.168"]
+        ],
+        "name": "device_to_host_memcpy_ce",
+        "status": "Passed",
+        "sum": 441.3135912275
+      },
+      {
+        "bandwidth_description": "memcpy CE GPU(row) -> GPU(column) bandwidth (GB/s)",
+        "bandwidth_matrix": [
+          ["N/A", "395.085", "395.085", "395.085", "395.021", "394.967", "395.012", "395.021"],
+          ["395.085", "N/A", "395.085", "395.076", "395.003", "394.994", "395.067", "394.976"],
+          ["395.076", "395.085", "N/A", "394.921", "394.93", "395.049", "394.985", "395.067"],
+          ["395.058", "395.085", "395.085", "N/A", "394.976", "394.976", "395.03", "395.058"],
+          ["394.994", "394.976", "394.994", "394.976", "N/A", "395.049", "395.021", "395.085"],
+          ["395.103", "394.985", "395.039", "395.103", "395.085", "N/A", "395.067", "395.085"],
+          ["395.039", "395.058", "395.012", "395.049", "395.085", "395.085", "N/A", "395.085"],
+          ["395.012", "395.049", "395.03", "395.03", "395.085", "395.085", "395.076", "N/A"]
+        ],
+        "name": "device_to_device_memcpy_read_ce",
+        "status": "Passed",
+        "sum": 22122.28032556
+      }
+    ],
+    "version": "v0.10.0"
+  }
+}

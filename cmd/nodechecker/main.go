@@ -21,9 +21,15 @@ func init() {
 }
 
 func main() {
-	var name string
+	var (
+		name            string
+		enableGPUChecks bool
+		sku             string
+	)
 
 	flag.StringVar(&name, "name", "", "Name of the CheckNodeHealth resource (required)")
+	flag.BoolVar(&enableGPUChecks, "enable-gpu-checks", false, "Run the GPU checks. Requires the GPU image.")
+	flag.StringVar(&sku, "sku", "", "VM size of the node, used to select the expected GPU count and thresholds")
 	flag.Parse()
 	defer klog.Flush()
 
@@ -52,8 +58,13 @@ func main() {
 
 	klog.InfoS("Retrieved node name from CR", "node", nodeName, "name", name)
 
+	opts := nodecheckerrunner.Options{NodeName: nodeName, CRName: name}
+	if enableGPUChecks {
+		opts.GPU = &nodecheckerrunner.GPUOptions{SKU: sku}
+	}
+
 	// Create runner and execute all checkers
-	runner := nodecheckerrunner.NewRunner(clientset, crClient, nodeName, name)
+	runner := nodecheckerrunner.NewRunner(clientset, crClient, opts)
 	if err := runner.Run(ctx); err != nil {
 		klog.ErrorS(err, "Failed to run node checkers")
 		os.Exit(1)
