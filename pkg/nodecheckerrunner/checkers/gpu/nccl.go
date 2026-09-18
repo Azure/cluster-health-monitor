@@ -93,13 +93,13 @@ func (c *NCCLChecker) Run(ctx context.Context) (*checker.Result, error) {
 	}()
 	reportPath := filepath.Join(dir, "all_reduce.json")
 
-	output, err := runTool(ctx, mpirunPath, c.cfg.ToolTimeout, ncclArgs(gpuCount, reportPath, profile)...)
+	output, execErr := runTool(ctx, mpirunPath, c.cfg.ToolTimeout, ncclArgs(gpuCount, reportPath, profile)...)
 
 	report, readErr := os.ReadFile(reportPath)
 	if readErr != nil {
 		klog.ErrorS(readErr, "Could not read the nccl-tests report", "path", reportPath)
 	}
-	return parseNCCLResult(string(report), output, c.cfg.SKU, profile, err), nil
+	return parseNCCLResult(string(report), output, c.cfg.SKU, profile, execErr), nil
 }
 
 // ncclArgs sets up the all-reduce in a similar way as AzNHC's check_nccl_allreduce does.
@@ -143,6 +143,10 @@ func parseNCCLResult(reportJSON, output, sku string, profile skuProfile, execErr
 	case outOfBounds > 0:
 		return checker.Unhealthy(ErrorCodeNcclCorrectness,
 			fmt.Sprintf("NCCL all-reduce reported %d out-of-bounds values", outOfBounds))
+	case execErr != nil:
+		return checker.Unhealthy(ErrorCodeToolFailed, truncateMessage(fmt.Sprintf(
+			"nccl-tests reported bus bandwidth %.3f GB/s but did not exit cleanly (%s)\n%s",
+			busbw, execErrString(execErr), output)))
 	case busbw < profile.NcclBusGBps:
 		return checker.Unhealthy(ErrorCodeNcclLowBandwidth, fmt.Sprintf(
 			"bus bandwidth %.3f GB/s below %.3f GB/s threshold for %s", busbw, profile.NcclBusGBps, sku))

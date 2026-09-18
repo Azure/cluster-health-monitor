@@ -61,8 +61,8 @@ func (c *BandwidthChecker) Run(ctx context.Context) (*checker.Result, error) {
 	}
 	args := append([]string{"-t"}, testcases...)
 	args = append(args, "-i", "10", "--format", "json")
-	output, err := runTool(ctx, toolsDir+"/nvbandwidth", c.cfg.ToolTimeout, args...)
-	return parseBandwidthResult(output, profile, err), nil
+	output, execErr := runTool(ctx, toolsDir+"/nvbandwidth", c.cfg.ToolTimeout, args...)
+	return parseBandwidthResult(output, profile, execErr), nil
 }
 
 // nvbwTestcasesFor returns the testcases that can be evaluated for a given sku.
@@ -110,6 +110,9 @@ func parseBandwidthResult(output string, profile skuProfile, execErr error) *che
 	switch {
 	case toolFailed:
 		return checker.Unhealthy(ErrorCodeToolFailed, message)
+	case execErr != nil:
+		return checker.Unhealthy(ErrorCodeToolFailed, truncateMessage(fmt.Sprintf(
+			"nvbandwidth reported measurements but did not exit cleanly (%s)\n%s", execErrString(execErr), message)))
 	case lowBandwidth:
 		return checker.Unhealthy(ErrorCodeGpuLowBandwidth, message)
 	}

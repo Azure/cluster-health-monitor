@@ -1,6 +1,7 @@
 package gpu
 
 import (
+	"errors"
 	"os"
 	"strings"
 	"testing"
@@ -78,6 +79,7 @@ func TestParseBandwidthResult(t *testing.T) {
 		name        string
 		output      string
 		sku         string
+		execErr     error
 		wantStatus  checker.Status
 		wantCode    string
 		wantMessage string
@@ -108,8 +110,15 @@ func TestParseBandwidthResult(t *testing.T) {
 			wantMessage: "host_to_device_memcpy_ce: min 20.000 GB/s at GPU 5 below 48.000 GB/s threshold",
 		},
 		{
-			// The tool exits 0, so the result has to come from the testcase status rather than
-			// the exit code.
+			name:        "passing measurements with a dirty exit is a tool failure",
+			output:      nvbandwidthOutput(t),
+			sku:         h100SKU,
+			execErr:     errors.New("exit status 1"),
+			wantStatus:  checker.StatusUnhealthy,
+			wantCode:    ErrorCodeToolFailed,
+			wantMessage: "did not exit cleanly (exit status 1)",
+		},
+		{
 			name:        "error status is a tool failure even on a zero exit",
 			output:      nvbandwidthErrorStatusOutput(t),
 			sku:         h100SKU,
@@ -136,7 +145,7 @@ func TestParseBandwidthResult(t *testing.T) {
 				t.Errorf("profile for SKU %q not found", tt.sku)
 			}
 
-			got := parseBandwidthResult(tt.output, profile, nil)
+			got := parseBandwidthResult(tt.output, profile, tt.execErr)
 
 			if got.Status != tt.wantStatus {
 				t.Errorf("Status = %q, want %q (message: %s)", got.Status, tt.wantStatus, got.Detail.Message)
