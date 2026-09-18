@@ -51,9 +51,9 @@ func (c *BandwidthChecker) Name() string {
 }
 
 func (c *BandwidthChecker) Run(ctx context.Context) (*checker.Result, error) {
-	profile, _ := profileFor(c.cfg.SKU)
+	profile, ok := profileFor(c.cfg.SKU)
 	testcases := nvbwTestcasesFor(profile)
-	if len(testcases) == 0 {
+	if !ok || len(testcases) == 0 {
 		return unknownSKU(c.cfg.SKU), nil
 	}
 
