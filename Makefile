@@ -102,7 +102,7 @@ kind-create-cluster:
 			echo "- role: worker"; \
 			echo "- role: worker"; \
 		} | kind create cluster --name $(KIND_CLUSTER_NAME) --config=-; \
-		# Configure CoreDNS with 2 replicas on different nodes so CheckNodeHealth can successfully run the PodNetwork checker \
+		: "Configure CoreDNS with 2 replicas on different nodes so CheckNodeHealth can successfully run the PodNetwork checker"; \
 		echo "Configuring CoreDNS with 2 replicas spread across nodes"; \
 		kubectl --context kind-$(KIND_CLUSTER_NAME) patch deployment coredns -n kube-system -p '{"spec":{"replicas":2,"strategy":{"type":"RollingUpdate","rollingUpdate":{"maxSurge":0,"maxUnavailable":1}},"template":{"spec":{"affinity":{"podAntiAffinity":{"requiredDuringSchedulingIgnoredDuringExecution":[{"labelSelector":{"matchLabels":{"k8s-app":"kube-dns"}},"topologyKey":"kubernetes.io/hostname"}]}}}}}}'; \
 		kubectl --context kind-$(KIND_CLUSTER_NAME) rollout status deployment coredns -n kube-system --timeout=120s; \
