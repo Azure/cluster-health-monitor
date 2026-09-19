@@ -31,7 +31,8 @@ var (
 	dnsCheckerNames      = append(coreDNSCheckerNames, localDNSCheckerNames...)
 )
 
-var _ = Describe("DNS checker metrics", Ordered, ContinueOnFailure, func() {
+// This suite replaces shared CoreDNS and LocalDNS resources, so run it after parallel suites.
+var _ = Describe("DNS checker metrics", Serial, Ordered, ContinueOnFailure, func() {
 	var (
 		session   *gexec.Session
 		localPort int
