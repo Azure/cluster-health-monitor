@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
-	"github.com/kylelemons/godebug/pretty"
+	"github.com/google/go-cmp/cmp"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
@@ -161,7 +161,7 @@ func TestBuildHealthCheckPodShape(t *testing.T) {
 				got.Env[e.Name] = e.Value
 			}
 
-			if diff := pretty.Compare(tt.want, got); diff != "" {
+			if diff := cmp.Diff(tt.want, got); diff != "" {
 				t.Errorf("pod shape mismatch (-want +got):\n%s", diff)
 			}
 		})

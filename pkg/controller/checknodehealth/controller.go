@@ -409,6 +409,9 @@ func (r *CheckNodeHealthReconciler) updateNodeCondition(ctx context.Context, cnh
 // determineHealthyCondition determines the Healthy condition status from the reported results.
 // Checks that never reported must be filled in as Unknown before this is called, so an absent result
 // here means the node was never expected to run it.
+//
+// TODO implement some logic here to run the GPU checks in a dry-run mode or potentially exclude Unknown checks due to ErrorCodeUnknownSKU
+// and similar. That way testing and config issues do not block the status from being marked as Healthy.
 func (r *CheckNodeHealthReconciler) determineHealthyCondition(cnh *chmv1alpha1.CheckNodeHealth) (metav1.ConditionStatus, string, string) {
 	message := r.formatResultsMessage(cnh)
 
