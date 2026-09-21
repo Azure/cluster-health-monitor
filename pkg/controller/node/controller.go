@@ -111,7 +111,6 @@ func (r *NodeRebootReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	// The cluster health monitor only supports Linux.
 	if supported, reason := utils.IsSupported(node); !supported {
 		klog.V(1).InfoS("Skipping unsupported node", "node", node.Name, "reason", reason)
 		return ctrl.Result{}, nil
