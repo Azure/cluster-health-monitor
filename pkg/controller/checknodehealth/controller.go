@@ -155,11 +155,6 @@ func (r *CheckNodeHealthReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return r.handleCompletion(ctx, cnh)
 	}
 
-	// The checker pod runs a Linux binary (/nodechecker) and is force-scheduled onto the
-	// target node via NodeName. On an unsupported (e.g. Windows) node it can never start,
-	// would time out, and would deterministically report NodeHealthy=False on an
-	// otherwise-healthy node. The monitor only supports Linux, so skip nodes that are not
-	// explicitly supported without creating a pod or touching the node condition.
 	supported, reason, err := r.isSupportedNode(ctx, cnh.Spec.NodeRef.Name)
 	if err != nil {
 		klog.ErrorS(err, "Failed to read target node", "node", cnh.Spec.NodeRef.Name)
@@ -252,11 +247,6 @@ func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cn
 	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 }
 
-// isSupportedNode reports whether the target node runs a supported OS (Linux). It uses the
-// uncached reader so the result reflects current node state. When the node is unsupported,
-// the returned reason explains why. A missing node is treated as supported so the reconcile
-// proceeds with its existing not-found handling rather than short-circuiting as unsupported
-// here.
 func (r *CheckNodeHealthReconciler) isSupportedNode(ctx context.Context, nodeName string) (bool, string, error) {
 	node := &corev1.Node{}
 	if err := r.APIReader.Get(ctx, client.ObjectKey{Name: nodeName}, node); err != nil {
