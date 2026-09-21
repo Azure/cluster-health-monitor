@@ -3,6 +3,7 @@
 package utils
 
 import (
+	"fmt"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -23,9 +24,22 @@ const (
 // reports "linux". The check is positive (allowlist) so nodes with an unknown or
 // unset OS are treated as unsupported rather than silently running Linux checks
 // against them.
-func IsSupported(node *corev1.Node) bool {
-	if strings.EqualFold(node.Labels[nodeOSLabel], osLinux) {
-		return true
+//
+// When the node is unsupported the returned reason explains why, suitable for
+// surfacing in logs and on the CheckNodeHealth condition. The reason is empty
+// when the node is supported. OS is currently the only criterion, but returning
+// a reason lets future criteria (e.g. architecture, required labels) report the
+// specific cause without every caller hard-coding a message.
+func IsSupported(node *corev1.Node) (bool, string) {
+	os := node.Status.NodeInfo.OperatingSystem
+	if v := node.Labels[nodeOSLabel]; v != "" {
+		os = v
 	}
-	return strings.EqualFold(node.Status.NodeInfo.OperatingSystem, osLinux)
+	if !strings.EqualFold(os, osLinux) {
+		if os == "" {
+			return false, "node OS is unknown; only Linux is supported"
+		}
+		return false, fmt.Sprintf("node OS %q is not supported; only Linux is supported", os)
+	}
+	return true, ""
 }
