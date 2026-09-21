@@ -164,7 +164,6 @@ func applyGPUPodShape(pod *corev1.Pod, info gpuNodeInfo, image string) {
 	c.Args = append(c.Args,
 		"--enable-gpu-checks",
 		fmt.Sprintf("--sku=%s", info.sku),
-		fmt.Sprintf("--run-timeout=%s", GPURunBudget),
 	)
 
 	// TODO: we should figure something out so that we can reliably schedule the checks with exclusive GPU access. Current limitations in

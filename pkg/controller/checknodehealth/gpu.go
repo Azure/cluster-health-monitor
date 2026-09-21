@@ -23,13 +23,8 @@ const (
 	instanceTypeLabel = "node.kubernetes.io/instance-type"
 
 	// GPUPodTimeout is the budget for a GPU checker pod. It has to cover a cold pull of the GPU
-	// checker pod image on top of the time for benchmarks allocated in GPURunBudget.
+	// checker pod image on top of the benchmarks themselves.
 	GPUPodTimeout = 15 * time.Minute
-
-	// GPURunBudget is what the GPU checker pod gives the checks themselves. Smaller than
-	// GPUPodTimeout so the pod writes the results it already has rather than being killed and
-	// having all checks reported as unknown. Starts only once the checker binary is running.
-	GPURunBudget = 10 * time.Minute
 )
 
 // gpuCheckerNames are the checks a GPU node reports on top of baseCheckNames.

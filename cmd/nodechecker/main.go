@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
@@ -26,15 +25,11 @@ func main() {
 		name            string
 		enableGPUChecks bool
 		sku             string
-		runTimeout      time.Duration
 	)
 
 	flag.StringVar(&name, "name", "", "Name of the CheckNodeHealth resource (required)")
 	flag.BoolVar(&enableGPUChecks, "enable-gpu-checks", false, "Run the GPU checks. Requires the GPU image.")
 	flag.StringVar(&sku, "sku", "", "VM size of the node, used to select the expected GPU count and thresholds")
-	flag.DurationVar(&runTimeout, "run-timeout", 0,
-		"Budget for all checks together, after which the remaining ones are reported as Unknown. "+
-			"Zero means no limit.")
 	flag.Parse()
 	defer klog.Flush()
 
@@ -63,7 +58,7 @@ func main() {
 
 	klog.InfoS("Retrieved node name from CR", "node", nodeName, "name", name)
 
-	opts := nodecheckerrunner.Options{NodeName: nodeName, CRName: name, RunTimeout: runTimeout}
+	opts := nodecheckerrunner.Options{NodeName: nodeName, CRName: name}
 	if enableGPUChecks {
 		opts.GPU = &nodecheckerrunner.GPUOptions{SKU: sku}
 	}

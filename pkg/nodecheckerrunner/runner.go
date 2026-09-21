@@ -2,7 +2,6 @@ package nodecheckerrunner
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
@@ -41,29 +40,24 @@ type GPUOptions struct {
 type Options struct {
 	NodeName string
 	CRName   string
-	// RunTimeout bounds all the checks together; zero means no limit. Set it below the controller's
-	// pod timeout so the checks that finish get written. Otherwise all results will be recorded as unknown.
-	RunTimeout time.Duration
 	// GPU is nil on nodes without GPUs.
 	GPU *GPUOptions
 }
 
 // Runner executes node health checkers and updates CheckNodeHealth CR
 type Runner struct {
-	chmClient  chmclient.Client
-	nodeName   string
-	crName     string
-	runTimeout time.Duration
-	checkers   []NodeChecker
+	chmClient chmclient.Client
+	nodeName  string
+	crName    string
+	checkers  []NodeChecker
 }
 
 // NewRunner creates a new Runner instance
 func NewRunner(clientset kubernetes.Interface, chmClient chmclient.Client, opts Options) *Runner {
 	r := &Runner{
-		chmClient:  chmClient,
-		nodeName:   opts.NodeName,
-		crName:     opts.CRName,
-		runTimeout: opts.RunTimeout,
+		chmClient: chmClient,
+		nodeName:  opts.NodeName,
+		crName:    opts.CRName,
 	}
 	r.initializeCheckers(clientset, opts)
 	return r
@@ -94,52 +88,26 @@ func (r *Runner) initializeCheckers(clientset kubernetes.Interface, opts Options
 	}
 }
 
-// runCheckers runs all checkers sequentially and updates the CR once with all results
+// runCheckers runs each checker sequentially and records its result as soon as it finishes. This way a pod
+// that is killed part way through still reports everything it managed to measure.
 func (r *Runner) runCheckers(ctx context.Context) error {
-	// The budget bounds the checks only. The status write runs on the caller's context so an
-	// exhausted budget does not also discard everything the run measured.
-	checkCtx := ctx
-	if r.runTimeout > 0 {
-		var cancel context.CancelFunc
-		checkCtx, cancel = context.WithTimeout(ctx, r.runTimeout)
-		defer cancel()
-	}
-
-	results := r.runAll(checkCtx)
-
-	// Update CheckNodeHealth CR with all results at once
-	if err := r.updateCheckNodeHealthStatus(ctx, results); err != nil {
-		klog.ErrorS(err, "Failed to update CheckNodeHealth status")
-		return fmt.Errorf("failed to update CR status: %w", err)
-	}
-
-	klog.InfoS("Successfully updated CheckNodeHealth status", "cr", r.crName)
-	return nil
-}
-
-// runAll runs every checker in order against the run budget, reporting the ones it no longer has
-// time to start rather than leaving them absent.
-func (r *Runner) runAll(ctx context.Context) map[string]*checker.Result {
-	results := make(map[string]*checker.Result, len(r.checkers))
+	var unrecorded []string
 	for _, chk := range r.checkers {
-		if err := ctx.Err(); err != nil {
-			klog.InfoS("Skipping checker, the run ended before this check could start",
-				"checker", chk.Name(), "timeout", r.runTimeout, "cause", err)
-			results[chk.Name()] = checker.Unknown(r.notRunMessage(ctx))
+		result := r.runChecker(ctx, chk)
+		if err := r.recordResult(ctx, chk.Name(), result); err != nil {
+			// The controller reports anything we never record as Unknown, so losing one result is
+			// not a reason to abandon the checks that have not run yet.
+			klog.ErrorS(err, "Failed to record checker result", "checker", chk.Name(), "cr", r.crName)
+			unrecorded = append(unrecorded, chk.Name())
 			continue
 		}
-		results[chk.Name()] = r.runChecker(ctx, chk)
+		klog.InfoS("Recorded checker result", "checker", chk.Name(), "cr", r.crName)
 	}
-	return results
-}
 
-// notRunMessage explains a check that never started, from why ctx ended.
-func (r *Runner) notRunMessage(ctx context.Context) string {
-	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		return fmt.Sprintf(
-			"this check did not run because the %s time limit for all checks on this node was reached first", r.runTimeout)
+	if len(unrecorded) > 0 {
+		return fmt.Errorf("failed to record results for %v", unrecorded)
 	}
-	return "this check did not run because the run was canceled before it started"
+	return nil
 }
 
 // runChecker runs one checker, retrying while it returns an error.
@@ -172,22 +140,20 @@ func (r *Runner) runChecker(ctx context.Context, chk NodeChecker) *checker.Resul
 	return result
 }
 
-// updateCheckNodeHealthStatus updates the CheckNodeHealth CR with all checker results
-func (r *Runner) updateCheckNodeHealthStatus(ctx context.Context, results map[string]*checker.Result) error {
+// recordResult writes one checker's result to the CR. Retrys on conflict.
+func (r *Runner) recordResult(ctx context.Context, checkerName string, result *checker.Result) error {
 	return k8sretry.RetryOnConflict(k8sretry.DefaultRetry, func() error {
 		cnh := &chmv1alpha1.CheckNodeHealth{}
 		if err := r.chmClient.Get(ctx, chmclient.ObjectKey{Name: r.crName}, cnh); err != nil {
 			return fmt.Errorf("failed to get CheckNodeHealth CR: %w", err)
 		}
 
-		for checkerName, result := range results {
-			upsertResult(&cnh.Status.Results, chmv1alpha1.CheckResult{
-				Name:      checkerName,
-				Status:    convertStatus(result.Status),
-				Message:   result.Detail.Message,
-				ErrorCode: result.Detail.Code,
-			})
-		}
+		upsertResult(&cnh.Status.Results, chmv1alpha1.CheckResult{
+			Name:      checkerName,
+			Status:    convertStatus(result.Status),
+			Message:   result.Detail.Message,
+			ErrorCode: result.Detail.Code,
+		})
 
 		if err := r.chmClient.Status().Update(ctx, cnh); err != nil {
 			return fmt.Errorf("failed to update status: %w", err)

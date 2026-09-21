@@ -107,7 +107,7 @@ func TestBuildHealthCheckPodShape(t *testing.T) {
 			info: gpuNodeInfo{isGPUNode: true, gpuCount: 8, sku: "Standard_ND96isr_H100_v5"},
 			want: podShape{
 				Image:           "gpu-image",
-				Args:            []string{"--name=cnh-1", "--enable-gpu-checks", "--sku=Standard_ND96isr_H100_v5", "--run-timeout=10m0s"},
+				Args:            []string{"--name=cnh-1", "--enable-gpu-checks", "--sku=Standard_ND96isr_H100_v5"},
 				GPULimit:        "8",
 				GPURequest:      "8",
 				SecurityContext: wantSecurityContext,
@@ -120,7 +120,7 @@ func TestBuildHealthCheckPodShape(t *testing.T) {
 			info: gpuNodeInfo{isGPUNode: true, gpuCount: 0, sku: "Standard_ND96isr_H100_v5"},
 			want: podShape{
 				Image:           "gpu-image",
-				Args:            []string{"--name=cnh-1", "--enable-gpu-checks", "--sku=Standard_ND96isr_H100_v5", "--run-timeout=10m0s"},
+				Args:            []string{"--name=cnh-1", "--enable-gpu-checks", "--sku=Standard_ND96isr_H100_v5"},
 				Env:             map[string]string{"NVIDIA_VISIBLE_DEVICES": "all"},
 				SecurityContext: wantSecurityContext,
 			},

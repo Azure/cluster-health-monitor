@@ -15,8 +15,8 @@ import (
 )
 
 // A conflict should retry updating the status rather than immediately returning
-// an error and potentially losing the results of the entire run.
-func TestUpdateCheckNodeHealthStatusRetriesOnConflict(t *testing.T) {
+// an error and losing the result.
+func TestRecordResultRetriesOnConflict(t *testing.T) {
 	t.Parallel()
 
 	scheme := runtime.NewScheme()
@@ -46,11 +46,9 @@ func TestUpdateCheckNodeHealthStatusRetriesOnConflict(t *testing.T) {
 
 	r := &Runner{chmClient: fakeClient, nodeName: "test-node", crName: "test-cr"}
 
-	err := r.updateCheckNodeHealthStatus(context.Background(), map[string]*checker.Result{
-		"PodNetwork": checker.Healthy(),
-	})
+	err := r.recordResult(context.Background(), "PodNetwork", checker.Healthy())
 	if err != nil {
-		t.Fatalf("updateCheckNodeHealthStatus() = %v, want nil", err)
+		t.Fatalf("recordResult() = %v, want nil", err)
 	}
 	if attempts != 2 {
 		t.Errorf("status update attempts = %d, want 2", attempts)
@@ -70,7 +68,7 @@ func TestUpdateCheckNodeHealthStatusRetriesOnConflict(t *testing.T) {
 
 // The controller writes PodStartup into the same array, so the pod must replace its own result
 // without dropping the controller's.
-func TestUpdateCheckNodeHealthStatusUpserts(t *testing.T) {
+func TestRecordResultUpserts(t *testing.T) {
 	t.Parallel()
 
 	scheme := runtime.NewScheme()
@@ -93,11 +91,9 @@ func TestUpdateCheckNodeHealthStatusUpserts(t *testing.T) {
 
 	r := &Runner{chmClient: fakeClient, nodeName: "test-node", crName: "test-cr"}
 
-	err := r.updateCheckNodeHealthStatus(context.Background(), map[string]*checker.Result{
-		"PodNetwork": checker.Unhealthy("NetworkConnectivityFailed", "fresh"),
-	})
+	err := r.recordResult(context.Background(), "PodNetwork", checker.Unhealthy("NetworkConnectivityFailed", "fresh"))
 	if err != nil {
-		t.Fatalf("updateCheckNodeHealthStatus() = %v, want nil", err)
+		t.Fatalf("recordResult() = %v, want nil", err)
 	}
 
 	got := &chmv1alpha1.CheckNodeHealth{}
