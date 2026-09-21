@@ -99,7 +99,7 @@ func podTimeoutFor(info gpuNodeInfo) time.Duration {
 func (r *CheckNodeHealthReconciler) recordMissingResults(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, info gpuNodeInfo) error {
 	return k8sretry.RetryOnConflict(k8sretry.DefaultRetry, func() error {
 		latest := &chmv1alpha1.CheckNodeHealth{}
-		if err := r.Get(ctx, client.ObjectKey{Name: cnh.Name}, latest); err != nil {
+		if err := r.APIReader.Get(ctx, client.ObjectKey{Name: cnh.Name}, latest); err != nil {
 			return err
 		}
 
