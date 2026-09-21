@@ -253,7 +253,8 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 		fakeNodeName := fmt.Sprintf("fake-node-timeout-test-%d", time.Now().Unix())
 		fakeNode := &corev1.Node{
 			ObjectMeta: metav1.ObjectMeta{
-				Name: fakeNodeName,
+				Name:   fakeNodeName,
+				Labels: map[string]string{"kubernetes.io/os": "linux"},
 			},
 		}
 		err := k8sClient.Create(ctx, fakeNode)
@@ -356,7 +357,8 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 		fakeNodeName := fmt.Sprintf("fake-node-condition-test-%d", time.Now().Unix())
 		fakeNode := &corev1.Node{
 			ObjectMeta: metav1.ObjectMeta{
-				Name: fakeNodeName,
+				Name:   fakeNodeName,
+				Labels: map[string]string{"kubernetes.io/os": "linux"},
 			},
 		}
 		err := k8sClient.Create(ctx, fakeNode)
