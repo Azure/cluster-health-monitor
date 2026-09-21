@@ -156,19 +156,19 @@ func (r *CheckNodeHealthReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 
 	// The checker pod runs a Linux binary (/nodechecker) and is force-scheduled onto the
-	// target node via NodeName. On a Windows node it can never start, would time out, and
-	// would deterministically report NodeHealthy=False on an otherwise-healthy node. The
-	// monitor only supports Linux, so skip Windows nodes without creating a pod or touching
-	// the node condition.
-	isWindows, err := r.isWindowsNode(ctx, cnh.Spec.NodeRef.Name)
+	// target node via NodeName. On an unsupported (e.g. Windows) node it can never start,
+	// would time out, and would deterministically report NodeHealthy=False on an
+	// otherwise-healthy node. The monitor only supports Linux, so skip nodes that are not
+	// explicitly supported without creating a pod or touching the node condition.
+	supported, err := r.isSupportedNode(ctx, cnh.Spec.NodeRef.Name)
 	if err != nil {
 		klog.ErrorS(err, "Failed to read target node", "node", cnh.Spec.NodeRef.Name)
 		return ctrl.Result{}, err
 	}
-	if isWindows {
-		klog.InfoS("Target node is Windows, skipping health check (Linux only)",
+	if !supported {
+		klog.InfoS("Target node OS is not supported, skipping health check (Linux only)",
 			"name", cnh.Name, "node", cnh.Spec.NodeRef.Name)
-		return r.markUnsupported(ctx, cnh, "Node OS windows is not supported; cluster health monitor only supports Linux")
+		return r.markUnsupported(ctx, cnh, "Node OS windows is not supported")
 	}
 
 	// GPU applicability is determined from the node, so every creation path behaves the same.
@@ -252,18 +252,19 @@ func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cn
 	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 }
 
-// isWindowsNode reports whether the target node runs Windows. It uses the uncached reader
-// so the result reflects current node state. A missing node is treated as non-Windows so
-// the reconcile proceeds with its existing not-found handling rather than erroring here.
-func (r *CheckNodeHealthReconciler) isWindowsNode(ctx context.Context, nodeName string) (bool, error) {
+// isSupportedNode reports whether the target node runs a supported OS (Linux). It uses the
+// uncached reader so the result reflects current node state. A missing node is treated as
+// supported so the reconcile proceeds with its existing not-found handling rather than
+// short-circuiting as unsupported here.
+func (r *CheckNodeHealthReconciler) isSupportedNode(ctx context.Context, nodeName string) (bool, error) {
 	node := &corev1.Node{}
 	if err := r.APIReader.Get(ctx, client.ObjectKey{Name: nodeName}, node); err != nil {
 		if apierrors.IsNotFound(err) {
-			return false, nil
+			return true, nil
 		}
 		return false, fmt.Errorf("failed to get node %s: %w", nodeName, err)
 	}
-	return utils.IsWindows(node), nil
+	return utils.IsSupported(node), nil
 }
 
 // markUnsupported marks the CheckNodeHealth as completed with Healthy=Unknown and a

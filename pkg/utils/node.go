@@ -12,15 +12,20 @@ const (
 	// nodeOSLabel is the well-known label carrying the node operating system.
 	nodeOSLabel = "kubernetes.io/os"
 
-	// osWindows is the value of nodeOSLabel / NodeInfo.OperatingSystem for Windows nodes.
-	osWindows = "windows"
+	// osLinux is the value of nodeOSLabel / NodeInfo.OperatingSystem for Linux nodes.
+	// The cluster health monitor only supports Linux nodes.
+	osLinux = "linux"
 )
 
-// IsWindows reports whether the node runs Windows, checking both the well-known
-// kubernetes.io/os label and NodeInfo.OperatingSystem.
-func IsWindows(node *corev1.Node) bool {
-	if strings.EqualFold(node.Labels[nodeOSLabel], osWindows) {
+// IsSupported reports whether the cluster health monitor supports running checks
+// against the node. Only Linux nodes are supported; a node is considered Linux
+// when either the well-known kubernetes.io/os label or NodeInfo.OperatingSystem
+// reports "linux". The check is positive (allowlist) so nodes with an unknown or
+// unset OS are treated as unsupported rather than silently running Linux checks
+// against them.
+func IsSupported(node *corev1.Node) bool {
+	if strings.EqualFold(node.Labels[nodeOSLabel], osLinux) {
 		return true
 	}
-	return strings.EqualFold(node.Status.NodeInfo.OperatingSystem, osWindows)
+	return strings.EqualFold(node.Status.NodeInfo.OperatingSystem, osLinux)
 }

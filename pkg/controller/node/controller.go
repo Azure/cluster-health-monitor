@@ -111,12 +111,9 @@ func (r *NodeRebootReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	// The cluster health monitor only supports Linux. The checker pod runs a Linux
-	// binary, so creating a CheckNodeHealth CR for a Windows node would only cause the
-	// downstream checker to flag an otherwise-healthy node as NodeHealthy=False. Skip
-	// Windows nodes entirely.
-	if utils.IsWindows(node) {
-		klog.V(1).InfoS("Skipping Windows node (Linux only)", "node", node.Name)
+	// The cluster health monitor only supports Linux.
+	if !utils.IsSupported(node) {
+		klog.V(1).InfoS("Skipping unsupported node (Linux only)", "node", node.Name)
 		return ctrl.Result{}, nil
 	}
 

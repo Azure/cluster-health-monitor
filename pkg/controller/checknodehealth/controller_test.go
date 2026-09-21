@@ -306,7 +306,7 @@ func TestReconcile(t *testing.T) {
 				Status: corev1.PodStatus{Phase: corev1.PodPending},
 			},
 			existingNode: &corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{Name: "test-node"},
+				ObjectMeta: metav1.ObjectMeta{Name: "test-node", Labels: map[string]string{"kubernetes.io/os": "linux"}},
 			},
 			enableNodeCondition: true,
 			circuitBreaker:      NewNodeConditionCircuitBreaker(DefaultCircuitBreakerThreshold, DefaultCircuitBreakerWindow, DefaultCircuitBreakerCooldown),
@@ -413,7 +413,7 @@ func TestReconcile(t *testing.T) {
 				Status: corev1.PodStatus{Phase: corev1.PodSucceeded},
 			},
 			existingNode: &corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{Name: "test-node"},
+				ObjectMeta: metav1.ObjectMeta{Name: "test-node", Labels: map[string]string{"kubernetes.io/os": "linux"}},
 			},
 			enableNodeCondition: true,
 			circuitBreaker:      NewNodeConditionCircuitBreaker(DefaultCircuitBreakerThreshold, DefaultCircuitBreakerWindow, DefaultCircuitBreakerCooldown),
@@ -488,7 +488,7 @@ func TestReconcile(t *testing.T) {
 				Status: corev1.PodStatus{Phase: corev1.PodSucceeded},
 			},
 			existingNode: &corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{Name: "test-node"},
+				ObjectMeta: metav1.ObjectMeta{Name: "test-node", Labels: map[string]string{"kubernetes.io/os": "linux"}},
 			},
 			enableNodeCondition: true,
 			circuitBreaker:      NewNodeConditionCircuitBreaker(DefaultCircuitBreakerThreshold, DefaultCircuitBreakerWindow, DefaultCircuitBreakerCooldown),
@@ -665,7 +665,7 @@ func TestReconcile(t *testing.T) {
 				Status: corev1.PodStatus{Phase: corev1.PodPending},
 			},
 			existingNode: &corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{Name: "test-node"},
+				ObjectMeta: metav1.ObjectMeta{Name: "test-node", Labels: map[string]string{"kubernetes.io/os": "linux"}},
 			},
 			enableNodeCondition: true,
 			circuitBreaker: func() *NodeConditionCircuitBreaker {
@@ -869,7 +869,7 @@ func TestUpdateNodeCondition_NilHealthyCondition(t *testing.T) {
 	ctx := context.Background()
 
 	node := &corev1.Node{
-		ObjectMeta: metav1.ObjectMeta{Name: "test-node"},
+		ObjectMeta: metav1.ObjectMeta{Name: "test-node", Labels: map[string]string{"kubernetes.io/os": "linux"}},
 	}
 	if err := fakeClient.Create(ctx, node); err != nil {
 		t.Fatalf("Failed to create node: %v", err)
