@@ -5,6 +5,7 @@ go 1.26.6
 require (
 	github.com/Azure/aks-health-signal v0.0.0-20260228004220-16040615394b
 	github.com/avast/retry-go/v4 v4.7.0
+	github.com/kylelemons/godebug v1.1.0
 	github.com/miekg/dns v1.1.66
 	github.com/onsi/ginkgo/v2 v2.23.4
 	github.com/onsi/gomega v1.37.0

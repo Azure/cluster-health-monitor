@@ -7,8 +7,10 @@ import (
 
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 )
@@ -49,7 +51,7 @@ func (r *CheckNodeHealthReconciler) cleanupPod(ctx context.Context, cnh *chmv1al
 	return nil
 }
 
-func (r *CheckNodeHealthReconciler) ensureHealthCheckPod(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth) (*corev1.Pod, error) {
+func (r *CheckNodeHealthReconciler) ensureHealthCheckPod(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, info gpuNodeInfo) (*corev1.Pod, error) {
 	// Check if pods already exist using label selector
 	podList := &corev1.PodList{}
 	listOpts := []client.ListOption{
@@ -72,7 +74,7 @@ func (r *CheckNodeHealthReconciler) ensureHealthCheckPod(ctx context.Context, cn
 	}
 
 	// Create the pod
-	pod, err := r.buildHealthCheckPod(cnh)
+	pod, err := r.buildHealthCheckPod(cnh, info)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build health check pod: %w", err)
 	}
@@ -91,7 +93,7 @@ func (r *CheckNodeHealthReconciler) ensureHealthCheckPod(ctx context.Context, cn
 	return createdPod, nil
 }
 
-func (r *CheckNodeHealthReconciler) buildHealthCheckPod(cnh *chmv1alpha1.CheckNodeHealth) (*corev1.Pod, error) {
+func (r *CheckNodeHealthReconciler) buildHealthCheckPod(cnh *chmv1alpha1.CheckNodeHealth, info gpuNodeInfo) (*corev1.Pod, error) {
 	podName := generateHealthCheckPodName(cnh)
 	labels := map[string]string{
 		CheckNodeHealthLabel: cnh.Name,
@@ -130,6 +132,10 @@ func (r *CheckNodeHealthReconciler) buildHealthCheckPod(cnh *chmv1alpha1.CheckNo
 					Image:   r.CheckerPodImage,
 					Command: []string{"/nodechecker"},
 					Args:    []string{fmt.Sprintf("--name=%s", cnh.Name)},
+					SecurityContext: &corev1.SecurityContext{
+						AllowPrivilegeEscalation: ptr.To(false),
+						Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+					},
 				},
 			},
 		},
@@ -144,10 +150,43 @@ func (r *CheckNodeHealthReconciler) buildHealthCheckPod(cnh *chmv1alpha1.CheckNo
 		return nil, err
 	}
 
+	if info.isGPUNode {
+		applyGPUPodShape(pod, info, r.GPUCheckerPodImage)
+	}
+
 	return pod, nil
 }
 
-func (r *CheckNodeHealthReconciler) updatePodstartCheckerResult(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, pod *corev1.Pod) error {
+// applyGPUPodShape swaps in the GPU image and gives the pod what the benchmarks need.
+func applyGPUPodShape(pod *corev1.Pod, info gpuNodeInfo, image string) {
+	c := &pod.Spec.Containers[0]
+	c.Image = image
+	c.Args = append(c.Args,
+		"--enable-gpu-checks",
+		fmt.Sprintf("--sku=%s", info.sku),
+		fmt.Sprintf("--run-timeout=%s", GPURunBudget),
+	)
+
+	// TODO: we should figure something out so that we can reliably schedule the checks with exclusive GPU access. Current limitations in
+	// comments below.
+	if info.gpuCount > 0 {
+		// Fully managed pools use the device plugin's extended resource, so kubelet will not give the same device to another pod that
+		// requests it. Because the controller bypasses the scheduler by setting the node name directly, if we cannot claim all the GPUs,
+		// the pod goes straight to a Failed state.
+		gpus := *resource.NewQuantity(info.gpuCount, resource.DecimalSI)
+		c.Resources = corev1.ResourceRequirements{
+			Limits:   corev1.ResourceList{nvidiaGPUResourceName: gpus},
+			Requests: corev1.ResourceList{nvidiaGPUResourceName: gpus},
+		}
+	} else {
+		// Driver-only pools run no device plugin, so there is no resource to request. The NVIDIA runtime hook reads this env var and
+		// injects every GPU device into the container. Nothing tracks ownership, so other pods can be given the same GPUs. In this case,
+		// it is possible that both the checks and other workloads on the node will experience some contention/degradation.
+		c.Env = append(c.Env, corev1.EnvVar{Name: "NVIDIA_VISIBLE_DEVICES", Value: "all"})
+	}
+}
+
+func (r *CheckNodeHealthReconciler) updatePodstartCheckerResult(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, pod *corev1.Pod, timeout time.Duration) error {
 	// PodStartup checker evaluates whether containers can successfully start on the node.
 
 	// Case 1: All containers have started successfully
@@ -164,7 +203,7 @@ func (r *CheckNodeHealthReconciler) updatePodstartCheckerResult(ctx context.Cont
 	// - The only reliable way to detect pod startup failure is by waiting for a timeout
 	// - If the pod remains in Pending state beyond the timeout, it indicates a persistent node-level
 	//   issue preventing container startup
-	if pod.Status.Phase == corev1.PodPending && r.isPodTimeout(pod) {
+	if pod.Status.Phase == corev1.PodPending && isPodTimeout(pod, timeout) {
 		return r.markPodStartupResult(ctx, cnh, chmv1alpha1.CheckStatusUnhealthy, "Pod stuck in Pending state - timeout exceeded")
 	}
 
@@ -231,9 +270,9 @@ func (r *CheckNodeHealthReconciler) updateCheckResult(cnh *chmv1alpha1.CheckNode
 }
 
 // isPodTimeout checks if the pod has been running for too long without completing
-func (r *CheckNodeHealthReconciler) isPodTimeout(pod *corev1.Pod) bool {
+func isPodTimeout(pod *corev1.Pod, timeout time.Duration) bool {
 	duration := time.Since(pod.CreationTimestamp.Time)
-	return duration > PodTimeout
+	return duration > timeout
 }
 
 func generateHealthCheckPodName(cnh *chmv1alpha1.CheckNodeHealth) string {

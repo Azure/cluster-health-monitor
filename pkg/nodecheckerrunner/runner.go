@@ -2,6 +2,7 @@ package nodecheckerrunner
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -40,24 +41,29 @@ type GPUOptions struct {
 type Options struct {
 	NodeName string
 	CRName   string
+	// RunTimeout bounds all the checks together; zero means no limit. Set it below the controller's
+	// pod timeout so the checks that finish get written. Otherwise all results will be recorded as unknown.
+	RunTimeout time.Duration
 	// GPU is nil on nodes without GPUs.
 	GPU *GPUOptions
 }
 
 // Runner executes node health checkers and updates CheckNodeHealth CR
 type Runner struct {
-	chmClient chmclient.Client
-	nodeName  string
-	crName    string
-	checkers  []NodeChecker
+	chmClient  chmclient.Client
+	nodeName   string
+	crName     string
+	runTimeout time.Duration
+	checkers   []NodeChecker
 }
 
 // NewRunner creates a new Runner instance
 func NewRunner(clientset kubernetes.Interface, chmClient chmclient.Client, opts Options) *Runner {
 	r := &Runner{
-		chmClient: chmClient,
-		nodeName:  opts.NodeName,
-		crName:    opts.CRName,
+		chmClient:  chmClient,
+		nodeName:   opts.NodeName,
+		crName:     opts.CRName,
+		runTimeout: opts.RunTimeout,
 	}
 	r.initializeCheckers(clientset, opts)
 	return r
@@ -90,12 +96,16 @@ func (r *Runner) initializeCheckers(clientset kubernetes.Interface, opts Options
 
 // runCheckers runs all checkers sequentially and updates the CR once with all results
 func (r *Runner) runCheckers(ctx context.Context) error {
-	results := make(map[string]*checker.Result)
-
-	// Run all checkers and collect results
-	for _, chk := range r.checkers {
-		results[chk.Name()] = r.runChecker(ctx, chk)
+	// The budget bounds the checks only. The status write runs on the caller's context so an
+	// exhausted budget does not also discard everything the run measured.
+	checkCtx := ctx
+	if r.runTimeout > 0 {
+		var cancel context.CancelFunc
+		checkCtx, cancel = context.WithTimeout(ctx, r.runTimeout)
+		defer cancel()
 	}
+
+	results := r.runAll(checkCtx)
 
 	// Update CheckNodeHealth CR with all results at once
 	if err := r.updateCheckNodeHealthStatus(ctx, results); err != nil {
@@ -105,6 +115,31 @@ func (r *Runner) runCheckers(ctx context.Context) error {
 
 	klog.InfoS("Successfully updated CheckNodeHealth status", "cr", r.crName)
 	return nil
+}
+
+// runAll runs every checker in order against the run budget, reporting the ones it no longer has
+// time to start rather than leaving them absent.
+func (r *Runner) runAll(ctx context.Context) map[string]*checker.Result {
+	results := make(map[string]*checker.Result, len(r.checkers))
+	for _, chk := range r.checkers {
+		if err := ctx.Err(); err != nil {
+			klog.InfoS("Skipping checker, the run ended before this check could start",
+				"checker", chk.Name(), "timeout", r.runTimeout, "cause", err)
+			results[chk.Name()] = checker.Unknown(r.notRunMessage(ctx))
+			continue
+		}
+		results[chk.Name()] = r.runChecker(ctx, chk)
+	}
+	return results
+}
+
+// notRunMessage explains a check that never started, from why ctx ended.
+func (r *Runner) notRunMessage(ctx context.Context) string {
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return fmt.Sprintf(
+			"this check did not run because the %s time limit for all checks on this node was reached first", r.runTimeout)
+	}
+	return "this check did not run because the run was canceled before it started"
 }
 
 // runChecker runs one checker, retrying while it returns an error.
