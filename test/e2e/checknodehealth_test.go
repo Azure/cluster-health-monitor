@@ -529,15 +529,17 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 		Expect(updatedCnh.Status.Conditions[0].Type).To(Equal("Healthy"))
 		Expect(updatedCnh.Status.Conditions[0].Status).To(Equal(metav1.ConditionUnknown))
 
-		By("Verifying PodNetwork results aren't recorded")
-		var hasPodNetwork bool
-		for _, result := range updatedCnh.Status.Results {
-			if result.Name == "PodNetwork" {
-				hasPodNetwork = true
+		By("Verifying PodNetwork is recorded as Unknown because the checker never reported it")
+		var podNetworkResult *chmv1alpha1.CheckResult
+		for i := range updatedCnh.Status.Results {
+			if updatedCnh.Status.Results[i].Name == "PodNetwork" {
+				podNetworkResult = &updatedCnh.Status.Results[i]
 				break
 			}
 		}
-		Expect(hasPodNetwork).To(BeFalse(), "PodNetwork result should not exist when checker fails")
+		Expect(podNetworkResult).NotTo(BeNil(), "PodNetwork result should be recorded when the checker never reports it")
+		Expect(podNetworkResult.Status).To(Equal(chmv1alpha1.CheckStatusUnknown))
+		Expect(podNetworkResult.ErrorCode).To(Equal(checknodehealth.ErrorCodeCheckNotReported))
 
 		By("Verifying PodStartup result is recorded as Healthy")
 		var podStartupResult *chmv1alpha1.CheckResult

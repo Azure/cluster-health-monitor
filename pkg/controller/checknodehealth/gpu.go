@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -20,7 +21,14 @@ const (
 
 	// instanceTypeLabel carries the node's VM SKU.
 	instanceTypeLabel = "node.kubernetes.io/instance-type"
+
+	// GPUPodTimeout is the budget for a GPU checker pod. It has to cover a cold pull of the GPU
+	// checker pod image on top of the benchmarks themselves.
+	GPUPodTimeout = 15 * time.Minute
 )
+
+// gpuCheckerNames are the checks a GPU node reports on top of baseCheckNames.
+var gpuCheckerNames = []string{"NcclAllReduce", "GpuBandwidth"}
 
 // gpuNodeInfo describes the GPU capabilities of a CheckNodeHealth's target node.
 type gpuNodeInfo struct {

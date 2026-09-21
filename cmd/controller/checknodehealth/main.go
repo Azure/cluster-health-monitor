@@ -66,7 +66,7 @@ func main() {
 		"Enable setting the NodeHealthy condition on Node objects when health checks fail.")
 	flag.BoolVar(&enableGPUChecks, "enable-gpu-checks", false,
 		"Enable intrusive GPU checks on CheckNodeHealth targets that are GPU nodes. "+
-			"Detection only for now; the checks themselves are not implemented yet.")
+			"Requires GPU_CHECKER_POD_IMAGE to be set.")
 
 	// Set up logging configuration with JSON format (no CLI override needed)
 	logConfig := logsapi.NewLoggingConfiguration()
@@ -94,6 +94,16 @@ func main() {
 		klog.FlushAndExit(klog.ExitFlushTimeout, 1)
 	}
 	klog.InfoS("Using checker pod image from CHECKER_POD_IMAGE", "image", checkerPodImage)
+
+	// The GPU variant carries the benchmark binaries, so it is only needed when the gate is on.
+	gpuCheckerPodImage := os.Getenv("GPU_CHECKER_POD_IMAGE")
+	if enableGPUChecks {
+		if gpuCheckerPodImage == "" {
+			klog.ErrorS(nil, "GPU_CHECKER_POD_IMAGE environment variable is not set but --enable-gpu-checks is on")
+			klog.FlushAndExit(klog.ExitFlushTimeout, 1)
+		}
+		klog.InfoS("Using GPU checker pod image from GPU_CHECKER_POD_IMAGE", "image", gpuCheckerPodImage)
+	}
 
 	// Get Kubernetes config
 	cfg, err := ctrl.GetConfig()
@@ -193,6 +203,7 @@ func main() {
 		APIReader:           mgr.GetAPIReader(),
 		CheckerPodLabel:     "checknodehealth", // Label to identify health check pods
 		CheckerPodImage:     checkerPodImage,
+		GPUCheckerPodImage:  gpuCheckerPodImage,
 		CheckerPodNamespace: checkerPodNamespace,
 		EnableNodeCondition: enableNodeCondition,
 		CircuitBreaker:      circuitBreaker,
