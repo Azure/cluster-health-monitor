@@ -8,6 +8,16 @@ on:
       releaseTag:
         description: 'Release tag to publish images, defaults to the latest one'
         type: string
+      publishClusterHealthMonitor:
+        description: 'Publish cluster-health-monitor'
+        required: true
+        default: true
+        type: boolean
+      publishGpuChecker:
+        description: 'Publish cluster-health-monitor-gpu'
+        required: true
+        default: true
+        type: boolean
 
 permissions:
   id-token: write
@@ -17,6 +27,7 @@ env:
   # `public` indicates images to MCR wil be publicly available, and will be removed in the final MCR images
   REGISTRY_REPO: public/aks/cluster-health-monitor
   CLUSTER_HEALTH_MONITOR_IMAGE_NAME: cluster-health-monitor
+  GPU_CHECKER_IMAGE_NAME: cluster-health-monitor-gpu
 jobs:
   prepare-variables:
     runs-on: ubuntu-latest
@@ -63,6 +74,7 @@ jobs:
         az acr login -n ${{ secrets.AZURE_REGISTRY }}
     
     - name: Build and publish cluster-health-monitor
+      if: ${{ inputs.publishClusterHealthMonitor }}
       uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
       with:
         context: .
@@ -70,3 +82,13 @@ jobs:
         platforms: linux/amd64,linux/arm64
         push: true
         tags: ${{ secrets.AZURE_REGISTRY }}/${{ env.REGISTRY_REPO}}/${{ env.CLUSTER_HEALTH_MONITOR_IMAGE_NAME }}:${{ needs.prepare-variables.outputs.release_tag }}
+
+    - name: Build and publish cluster-health-monitor-gpu
+      if: ${{ inputs.publishGpuChecker }}
+      uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+      with:
+        context: .
+        file: docker/cluster-health-monitor-gpu.Dockerfile
+        platforms: linux/amd64
+        push: true
+        tags: ${{ secrets.AZURE_REGISTRY }}/${{ env.REGISTRY_REPO}}/${{ env.GPU_CHECKER_IMAGE_NAME }}:${{ needs.prepare-variables.outputs.release_tag }}
