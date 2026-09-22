@@ -98,6 +98,7 @@ func newNodeWithCreationTime(name, bootID string, annotations map[string]string,
 			Name:              name,
 			Annotations:       annotations,
 			CreationTimestamp: metav1.NewTime(creationTime),
+			Labels:            map[string]string{"kubernetes.io/os": "linux"},
 		},
 		Status: corev1.NodeStatus{
 			NodeInfo: corev1.NodeSystemInfo{

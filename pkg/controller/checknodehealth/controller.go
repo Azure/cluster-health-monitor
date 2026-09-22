@@ -8,6 +8,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	k8sretry "k8s.io/client-go/util/retry"
@@ -19,6 +20,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
+	"github.com/Azure/cluster-health-monitor/pkg/utils"
 )
 
 const (
@@ -63,6 +65,7 @@ const (
 	ReasonCheckUnknown = "CheckUnknown"
 	// ReasonPodStartupTimeout is set when the checker pod never started in time.
 	ReasonPodStartupTimeout = "PodStartupTimeout"
+	ReasonCheckUnsupported  = "CheckUnsupported"
 
 	// ErrorCodeCheckNotReported marks a check whose pod ended before reporting it.
 	ErrorCodeCheckNotReported = "CheckNotReported"
@@ -205,6 +208,17 @@ func (r *CheckNodeHealthReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return r.handleCompletion(ctx, cnh)
 	}
 
+	supported, reason, err := r.isSupportedNode(ctx, cnh.Spec.NodeRef.Name)
+	if err != nil {
+		klog.ErrorS(err, "Failed to read target node", "node", cnh.Spec.NodeRef.Name)
+		return ctrl.Result{}, err
+	}
+	if !supported {
+		klog.InfoS("Target node is not supported, skipping health check",
+			"name", cnh.Name, "node", cnh.Spec.NodeRef.Name, "reason", reason)
+		return r.markUnsupported(ctx, cnh, reason)
+	}
+
 	// GPU applicability is determined from the node, so every creation path behaves the same.
 	info, err := r.gpuNodeInfoFor(ctx, cnh.Spec.NodeRef.Name)
 	if err != nil {
@@ -284,6 +298,48 @@ func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cn
 	// Other pod phases (Unknown, etc.)
 	klog.InfoS("Health check pod in unexpected phase", "phase", pod.Status.Phase)
 	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+}
+
+func (r *CheckNodeHealthReconciler) isSupportedNode(ctx context.Context, nodeName string) (bool, string, error) {
+	node := &corev1.Node{}
+	if err := r.APIReader.Get(ctx, client.ObjectKey{Name: nodeName}, node); err != nil {
+		if apierrors.IsNotFound(err) {
+			return true, "", nil
+		}
+		return false, "", fmt.Errorf("failed to get node %s: %w", nodeName, err)
+	}
+	supported, reason := utils.IsSupported(node)
+	return supported, reason, nil
+}
+
+// markUnsupported marks the CheckNodeHealth as completed with Healthy=Unknown and a
+// Unsupported reason. It intentionally does NOT set the NodeHealthy condition on the node,
+// so unsupported nodes are never flagged as unhealthy.
+func (r *CheckNodeHealthReconciler) markUnsupported(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, message string) (ctrl.Result, error) {
+	now := metav1.Now()
+	if cnh.Status.StartedAt == nil {
+		cnh.Status.StartedAt = &now
+	}
+	cnh.Status.FinishedAt = &now
+	cnh.Status.Conditions = []metav1.Condition{
+		{
+			Type:               ConditionTypeHealthy,
+			Status:             metav1.ConditionUnknown,
+			LastTransitionTime: now,
+			Reason:             ReasonCheckUnsupported,
+			Message:            message,
+		},
+	}
+	if err := r.Status().Update(ctx, cnh); err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to update status: %w", err)
+	}
+
+	// No pod is created for unsupported nodes, but clean up defensively in case one exists.
+	if err := r.cleanupPod(ctx, cnh); err != nil {
+		klog.ErrorS(err, "Failed to cleanup pod for unsupported node", "name", cnh.Name)
+		return ctrl.Result{}, err
+	}
+	return ctrl.Result{}, nil
 }
 
 func (r *CheckNodeHealthReconciler) markStarted(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth) error {
