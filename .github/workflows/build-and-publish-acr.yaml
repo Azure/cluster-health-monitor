@@ -75,6 +75,76 @@ jobs:
         df -hT "$docker_root"
         docker system df
 
+    - name: Move Docker storage to temporary disk
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        docker_data_root="/mnt/docker"
+        root_device="$(findmnt -n -o SOURCE -T /)"
+        temp_device="$(findmnt -n -o SOURCE -T /mnt)"
+
+        echo "Root device: $root_device"
+        echo "Temporary disk device: $temp_device"
+
+        if [ "$root_device" = "$temp_device" ]; then
+          echo "::error::/mnt is not a separate filesystem"
+          exit 1
+        fi
+
+        if ! mountpoint -q /mnt; then
+          echo "::error::/mnt is not mounted"
+          exit 1
+        fi
+
+        if ! command -v jq >/dev/null; then
+          echo "::error::jq is required to preserve Docker's existing configuration"
+          exit 1
+        fi
+
+        sudo mkdir -p "$docker_data_root" /etc/docker
+
+        config="$(mktemp)"
+        backup="$(mktemp)"
+        trap 'rm -f "$config" "$backup"' EXIT
+
+        had_config=false
+        if [ -s /etc/docker/daemon.json ]; then
+          had_config=true
+          sudo cp /etc/docker/daemon.json "$backup"
+          jq --arg root "$docker_data_root" \
+            '.["data-root"] = $root' \
+            /etc/docker/daemon.json > "$config"
+        else
+          jq -n --arg root "$docker_data_root" \
+            '{"data-root": $root}' > "$config"
+        fi
+
+        sudo dockerd --validate --config-file="$config"
+        sudo systemctl stop docker.service docker.socket
+        sudo install -m 0644 "$config" /etc/docker/daemon.json
+
+        if ! sudo systemctl start docker.service; then
+          echo "::error::Docker failed to start with its temporary-disk configuration"
+          if [ "$had_config" = true ]; then
+            sudo install -m 0644 "$backup" /etc/docker/daemon.json
+          else
+            sudo rm -f /etc/docker/daemon.json
+          fi
+          sudo systemctl start docker.service || true
+          exit 1
+        fi
+
+        actual_root="$(docker info --format '{{.DockerRootDir}}')"
+        if [ "$actual_root" != "$docker_data_root" ]; then
+          echo "::error::Expected Docker root $docker_data_root, got $actual_root"
+          exit 1
+        fi
+
+        echo "Docker root: $actual_root"
+        findmnt -T "$actual_root"
+        df -hT "$actual_root"
+
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@594f3bf4285d9ea8dc53c9a0c9c4092420091003 # v4.4.0
       with:
