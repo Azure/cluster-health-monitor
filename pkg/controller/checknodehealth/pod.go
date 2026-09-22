@@ -210,7 +210,7 @@ func (r *CheckNodeHealthReconciler) updatePodstartCheckerResult(ctx context.Cont
 		// never reported the "Running" transition to the API server on a freshly rebooted node — so
 		// treating this as a startup failure would be a false positive. Report PodStartup as Healthy.
 		if r.hasCheckerReportedResult(cnh) {
-			return r.markPodStartupResult(ctx, cnh, chmv1alpha1.CheckStatusHealthy, "Checker result reported despite stale pod status - containers started")
+			return r.markPodStartupResult(ctx, cnh, chmv1alpha1.CheckStatusHealthy, "All containers started successfully")
 		}
 		return r.markPodStartupResult(ctx, cnh, chmv1alpha1.CheckStatusUnhealthy, "Pod stuck in Pending state - timeout exceeded")
 	}
