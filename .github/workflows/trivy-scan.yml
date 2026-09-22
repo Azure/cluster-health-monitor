@@ -7,6 +7,8 @@ on:
     tags: 
       - 'v*.*.*'
   pull_request:
+  schedule:
+    - cron: '0 6 * * 1'
   workflow_dispatch:
 
 permissions:
@@ -17,11 +19,27 @@ env:
 
 jobs:
   vulnerability-scan:
+    name: vulnerability-scan (${{ matrix.name }})
     runs-on: ubuntu-latest
+    strategy:
+      # Scan both images even if one fails, so a GPU finding does not hide a default-image one.
+      fail-fast: false
+      matrix:
+        include:
+          - name: default
+            make-target: docker-build-cluster-health-monitor
+            image-suffix: ""
+            severity: CRITICAL,HIGH,MEDIUM,LOW,UNKNOWN
+            timeout: 5m0s
+          - name: gpu
+            make-target: docker-build-cluster-health-monitor-gpu
+            image-suffix: "-gpu"
+            severity: CRITICAL,HIGH,MEDIUM,LOW,UNKNOWN
+            timeout: 15m0s
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
-      
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
       - name: Set image variables
         id: vars
         run: |
@@ -29,17 +47,19 @@ jobs:
           VERSION=$(git rev-parse --short=7 HEAD)
           echo "registry=$REGISTRY" >> $GITHUB_OUTPUT
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "image=$REGISTRY/${{ env.IMAGE_NAME }}:$VERSION" >> $GITHUB_OUTPUT
-      
+          echo "image=$REGISTRY/${{ env.IMAGE_NAME }}${{ matrix.image-suffix }}:$VERSION" >> $GITHUB_OUTPUT
+
       - name: Build image
-        run: make docker-build-cluster-health-monitor
+        run: make ${{ matrix.make-target }}
         env:
           REGISTRY: ${{ steps.vars.outputs.registry }}
           CLUSTER_HEALTH_MONITOR_IMAGE_NAME: ${{ env.IMAGE_NAME }}
           CLUSTER_HEALTH_MONITOR_IMAGE_VERSION: ${{ steps.vars.outputs.version }}
           OUTPUT_TYPE: type=docker
+          # The two targets read different platform variables; each ignores the other.
           PLATFORM: linux/amd64
-      
+          GPU_PLATFORM: linux/amd64
+
       - name: Run Trivy scan
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
@@ -50,8 +70,8 @@ jobs:
           ignore-unfixed: true
           vuln-type: os,library
           scanners: vuln,secret
-          severity: CRITICAL,HIGH,MEDIUM,LOW,UNKNOWN
-          timeout: 5m0s
+          severity: ${{ matrix.severity }}
+          timeout: ${{ matrix.timeout }}
           version: v0.71.1
         env:
           TRIVY_DB_REPOSITORY: mcr.microsoft.com/mirror/ghcr/aquasecurity/trivy-db

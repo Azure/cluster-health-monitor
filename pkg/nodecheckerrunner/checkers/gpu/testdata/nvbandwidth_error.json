@@ -1,0 +1,29 @@
+{
+  "nvbandwidth": {
+    "CUDA Driver API Version": 13000,
+    "CUDA Runtime Version": 12060,
+    "Driver Version": "580.159.04",
+    "GPU Device list": [
+      "0: NVIDIA H100 80GB HBM3 (00000001:00:00): (nvbw-cap)",
+      "1: NVIDIA H100 80GB HBM3 (00000002:00:00): (nvbw-cap)",
+      "2: NVIDIA H100 80GB HBM3 (00000003:00:00): (nvbw-cap)",
+      "3: NVIDIA H100 80GB HBM3 (00000008:00:00): (nvbw-cap)",
+      "4: NVIDIA H100 80GB HBM3 (00000009:00:00): (nvbw-cap)",
+      "5: NVIDIA H100 80GB HBM3 (0000000a:00:00): (nvbw-cap)",
+      "6: NVIDIA H100 80GB HBM3 (0000000b:00:00): (nvbw-cap)",
+      "7: NVIDIA H100 80GB HBM3 (0000000c:00:00): (nvbw-cap)"
+    ],
+    "Version Major": 0,
+    "Version Minor": 10,
+    "Version Patch": 0,
+    "bounceBufferConfComputeEnabled": false,
+    "git_version": "v0.10",
+    "testcases": [
+      {
+        "name": "not_a_real_testcase",
+        "status": "ERROR"
+      }
+    ],
+    "version": "v0.10.0"
+  }
+}

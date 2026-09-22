@@ -253,7 +253,8 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 		fakeNodeName := fmt.Sprintf("fake-node-timeout-test-%d", time.Now().Unix())
 		fakeNode := &corev1.Node{
 			ObjectMeta: metav1.ObjectMeta{
-				Name: fakeNodeName,
+				Name:   fakeNodeName,
+				Labels: map[string]string{"kubernetes.io/os": "linux"},
 			},
 		}
 		err := k8sClient.Create(ctx, fakeNode)
@@ -356,7 +357,8 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 		fakeNodeName := fmt.Sprintf("fake-node-condition-test-%d", time.Now().Unix())
 		fakeNode := &corev1.Node{
 			ObjectMeta: metav1.ObjectMeta{
-				Name: fakeNodeName,
+				Name:   fakeNodeName,
+				Labels: map[string]string{"kubernetes.io/os": "linux"},
 			},
 		}
 		err := k8sClient.Create(ctx, fakeNode)
@@ -420,6 +422,91 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 		Expect(nodeCondition.Reason).NotTo(BeEmpty())
 		GinkgoWriter.Printf("NodeHealthy condition on %s: status=%s, reason=%s, message=%s\n",
 			fakeNodeName, nodeCondition.Status, nodeCondition.Reason, nodeCondition.Message)
+	})
+
+	It("should not act on Windows nodes", func() {
+		// The cluster health monitor only supports Linux. The checker pod runs a Linux
+		// binary and is force-scheduled via NodeName, so on a Windows node it would be
+		// stuck Pending, time out, and deterministically flag NodeHealthy=False on an
+		// otherwise-healthy node. The controller must skip Windows nodes entirely: no
+		// checker pod, and no NodeHealthy condition on the node.
+		By("Creating a fake Windows Node object")
+		fakeNodeName := fmt.Sprintf("fake-node-windows-test-%d", time.Now().Unix())
+		fakeNode := &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: fakeNodeName,
+				Labels: map[string]string{
+					"kubernetes.io/os": "windows",
+				},
+			},
+		}
+		err := k8sClient.Create(ctx, fakeNode)
+		Expect(err).NotTo(HaveOccurred())
+		GinkgoWriter.Printf("Created fake Windows Node: %s\n", fakeNodeName)
+
+		// Also set NodeInfo.OperatingSystem via status so both detection paths are covered.
+		// The node controller may modify the node concurrently, so re-fetch and retry on conflict.
+		Eventually(func() error {
+			latest := &corev1.Node{}
+			if err := k8sClient.Get(ctx, client.ObjectKey{Name: fakeNodeName}, latest); err != nil {
+				return err
+			}
+			latest.Status.NodeInfo.OperatingSystem = "windows"
+			return k8sClient.Status().Update(ctx, latest)
+		}, "30s", "2s").Should(Succeed(), "Failed to set Windows node status")
+
+		defer func() {
+			By("Cleaning up fake Windows Node")
+			if err := k8sClient.Delete(ctx, fakeNode); err != nil {
+				GinkgoWriter.Printf("Warning: Failed to delete fake Node %s: %v\n", fakeNodeName, err)
+			}
+		}()
+
+		By("Creating a CheckNodeHealth CR targeting the Windows node")
+		cnhName = fmt.Sprintf("test-cnh-windows-%d", time.Now().Unix())
+		err = createCheckNodeHealthCR(ctx, k8sClient, cnhName, fakeNodeName)
+		Expect(err).NotTo(HaveOccurred())
+		GinkgoWriter.Printf("Created CheckNodeHealth CR: %s for Windows node: %s\n", cnhName, fakeNodeName)
+
+		By("Verifying no health check pod is ever created for the Windows node")
+		Consistently(func() int {
+			podList, err := clientset.CoreV1().Pods(checkerNamespace).List(ctx, metav1.ListOptions{
+				LabelSelector: fmt.Sprintf("%s=%s", checknodehealth.CheckNodeHealthLabel, cnhName),
+			})
+			if err != nil {
+				GinkgoWriter.Printf("Failed to list pods: %v\n", err)
+				return -1
+			}
+			return len(podList.Items)
+		}, "30s", "2s").Should(Equal(0), "No checker pod should be created for a Windows node")
+
+		By("Verifying NodeHealthy condition is never set on the Windows node")
+		Consistently(func() *corev1.NodeCondition {
+			node := &corev1.Node{}
+			if err := k8sClient.Get(ctx, client.ObjectKey{Name: fakeNodeName}, node); err != nil {
+				return nil
+			}
+			for i, c := range node.Status.Conditions {
+				if c.Type == checknodehealth.NodeConditionNodeHealthy {
+					return &node.Status.Conditions[i]
+				}
+			}
+			return nil
+		}, "30s", "2s").Should(BeNil(), "NodeHealthy condition should not be set on a Windows node")
+
+		By("Verifying the CR is completed with Healthy=Unknown (unsupported OS)")
+		var cnh *chmv1alpha1.CheckNodeHealth
+		Eventually(func() bool {
+			cnh, err = getCheckNodeHealthCR(ctx, k8sClient, cnhName)
+			if err != nil {
+				return false
+			}
+			return cnh.Status.FinishedAt != nil
+		}, "30s", "2s").Should(BeTrue(), "CR should be marked completed for a Windows node")
+		Expect(cnh.Status.Conditions).To(HaveLen(1))
+		Expect(cnh.Status.Conditions[0].Type).To(Equal("Healthy"))
+		Expect(cnh.Status.Conditions[0].Status).To(Equal(metav1.ConditionUnknown),
+			"Windows node should be marked Healthy=Unknown, not False")
 	})
 
 	It("should cleanup pod when CR is deleted", func() {
@@ -529,15 +616,17 @@ var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func(
 		Expect(updatedCnh.Status.Conditions[0].Type).To(Equal("Healthy"))
 		Expect(updatedCnh.Status.Conditions[0].Status).To(Equal(metav1.ConditionUnknown))
 
-		By("Verifying PodNetwork results aren't recorded")
-		var hasPodNetwork bool
-		for _, result := range updatedCnh.Status.Results {
-			if result.Name == "PodNetwork" {
-				hasPodNetwork = true
+		By("Verifying PodNetwork is recorded as Unknown because the checker never reported it")
+		var podNetworkResult *chmv1alpha1.CheckResult
+		for i := range updatedCnh.Status.Results {
+			if updatedCnh.Status.Results[i].Name == "PodNetwork" {
+				podNetworkResult = &updatedCnh.Status.Results[i]
 				break
 			}
 		}
-		Expect(hasPodNetwork).To(BeFalse(), "PodNetwork result should not exist when checker fails")
+		Expect(podNetworkResult).NotTo(BeNil(), "PodNetwork result should be recorded when the checker never reports it")
+		Expect(podNetworkResult.Status).To(Equal(chmv1alpha1.CheckStatusUnknown))
+		Expect(podNetworkResult.ErrorCode).To(Equal(checknodehealth.ErrorCodeCheckNotReported))
 
 		By("Verifying PodStartup result is recorded as Healthy")
 		var podStartupResult *chmv1alpha1.CheckResult

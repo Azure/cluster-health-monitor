@@ -5,6 +5,7 @@ go 1.26.6
 require (
 	github.com/Azure/aks-health-signal v0.0.0-20260228004220-16040615394b
 	github.com/avast/retry-go/v4 v4.7.0
+	github.com/google/go-cmp v0.7.0
 	github.com/miekg/dns v1.1.66
 	github.com/onsi/ginkgo/v2 v2.23.4
 	github.com/onsi/gomega v1.37.0
@@ -47,7 +48,6 @@ require (
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/google/btree v1.1.3 // indirect
 	github.com/google/gnostic-models v0.6.9 // indirect
-	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/pprof v0.0.0-20250403155104-27863c87afa6 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect

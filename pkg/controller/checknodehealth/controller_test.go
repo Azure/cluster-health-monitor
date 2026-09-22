@@ -163,7 +163,7 @@ func TestReconcile(t *testing.T) {
 			},
 		},
 		{
-			name: "handles pod failed and cleans up",
+			name: "handles pod failed immediately and cleans up",
 			existingCR: &chmv1alpha1.CheckNodeHealth{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-check"},
 				Spec: chmv1alpha1.CheckNodeHealthSpec{
@@ -178,20 +178,39 @@ func TestReconcile(t *testing.T) {
 						CheckNodeHealthLabel: "test-check",
 					},
 				},
-				Status: corev1.PodStatus{Phase: corev1.PodFailed},
+				// Admission rejection to simulate an invalid request where the controller tried to create a pod requesting all the gpu on
+				// a node when they were already in use.
+				Status: corev1.PodStatus{Phase: corev1.PodFailed, Reason: "UnexpectedAdmissionError"},
 			},
 			expectedResult:     ctrl.Result{},
 			expectError:        false,
 			expectedPodCreated: false, // Pod already exists
 			expectedPodDeleted: true,  // Pod should be cleaned up
 			validateFunc: func(t *testing.T, fakeClient client.Client, cnh *chmv1alpha1.CheckNodeHealth) {
-				// Verify CheckNodeHealth is marked as completed
 				updatedCnh := &chmv1alpha1.CheckNodeHealth{}
-				err := fakeClient.Get(context.Background(), client.ObjectKey{Name: cnh.Name}, updatedCnh)
-				if err != nil {
-					t.Errorf("Failed to get updated CheckNodeHealth: %v", err)
-				} else if updatedCnh.Status.FinishedAt == nil {
+				if err := fakeClient.Get(context.Background(), client.ObjectKey{Name: cnh.Name}, updatedCnh); err != nil {
+					t.Fatalf("Failed to get updated CheckNodeHealth: %v", err)
+				}
+				if updatedCnh.Status.FinishedAt == nil {
 					t.Error("Expected CheckNodeHealth to be marked as completed")
+				}
+
+				// PodStartup result should be recorded as Unknown because the pod could have failed to start due to being an invalid
+				// request. There is not sufficient evidence to flag node as unhealthy yet.
+				var podStartup *chmv1alpha1.CheckResult
+				for i := range updatedCnh.Status.Results {
+					if updatedCnh.Status.Results[i].Name == "PodStartup" {
+						podStartup = &updatedCnh.Status.Results[i]
+					}
+				}
+				if podStartup == nil {
+					t.Fatal("Expected a PodStartup result to be recorded")
+				}
+				if podStartup.Status != chmv1alpha1.CheckStatusUnknown {
+					t.Errorf("PodStartup status = %v, want %v", podStartup.Status, chmv1alpha1.CheckStatusUnknown)
+				}
+				if podStartup.ErrorCode != ErrorCodeCheckNotReported {
+					t.Errorf("PodStartup error code = %q, want %q", podStartup.ErrorCode, ErrorCodeCheckNotReported)
 				}
 			},
 		},
@@ -306,7 +325,7 @@ func TestReconcile(t *testing.T) {
 				Status: corev1.PodStatus{Phase: corev1.PodPending},
 			},
 			existingNode: &corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{Name: "test-node"},
+				ObjectMeta: metav1.ObjectMeta{Name: "test-node", Labels: map[string]string{"kubernetes.io/os": "linux"}},
 			},
 			enableNodeCondition: true,
 			circuitBreaker:      NewNodeConditionCircuitBreaker(DefaultCircuitBreakerThreshold, DefaultCircuitBreakerWindow, DefaultCircuitBreakerCooldown),
@@ -413,7 +432,7 @@ func TestReconcile(t *testing.T) {
 				Status: corev1.PodStatus{Phase: corev1.PodSucceeded},
 			},
 			existingNode: &corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{Name: "test-node"},
+				ObjectMeta: metav1.ObjectMeta{Name: "test-node", Labels: map[string]string{"kubernetes.io/os": "linux"}},
 			},
 			enableNodeCondition: true,
 			circuitBreaker:      NewNodeConditionCircuitBreaker(DefaultCircuitBreakerThreshold, DefaultCircuitBreakerWindow, DefaultCircuitBreakerCooldown),
@@ -488,7 +507,7 @@ func TestReconcile(t *testing.T) {
 				Status: corev1.PodStatus{Phase: corev1.PodSucceeded},
 			},
 			existingNode: &corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{Name: "test-node"},
+				ObjectMeta: metav1.ObjectMeta{Name: "test-node", Labels: map[string]string{"kubernetes.io/os": "linux"}},
 			},
 			enableNodeCondition: true,
 			circuitBreaker:      NewNodeConditionCircuitBreaker(DefaultCircuitBreakerThreshold, DefaultCircuitBreakerWindow, DefaultCircuitBreakerCooldown),
@@ -665,7 +684,7 @@ func TestReconcile(t *testing.T) {
 				Status: corev1.PodStatus{Phase: corev1.PodPending},
 			},
 			existingNode: &corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{Name: "test-node"},
+				ObjectMeta: metav1.ObjectMeta{Name: "test-node", Labels: map[string]string{"kubernetes.io/os": "linux"}},
 			},
 			enableNodeCondition: true,
 			circuitBreaker: func() *NodeConditionCircuitBreaker {
@@ -869,7 +888,7 @@ func TestUpdateNodeCondition_NilHealthyCondition(t *testing.T) {
 	ctx := context.Background()
 
 	node := &corev1.Node{
-		ObjectMeta: metav1.ObjectMeta{Name: "test-node"},
+		ObjectMeta: metav1.ObjectMeta{Name: "test-node", Labels: map[string]string{"kubernetes.io/os": "linux"}},
 	}
 	if err := fakeClient.Create(ctx, node); err != nil {
 		t.Fatalf("Failed to create node: %v", err)
@@ -943,21 +962,13 @@ func TestDetermineHealthyCondition(t *testing.T) {
 			wantMessage: "PodStartup: Healthy\nPodNetwork: Unknown",
 		},
 		{
-			name: "missing required result reported as Unknown",
-			results: []chmv1alpha1.CheckResult{
-				{Name: "PodStartup", Status: chmv1alpha1.CheckStatusHealthy},
-				// PodNetwork is missing
-			},
-			wantStatus:  metav1.ConditionUnknown,
-			wantReason:  ReasonCheckUnknown,
-			wantMessage: "PodStartup: Healthy\nPodNetwork: Missing",
-		},
-		{
-			name:        "no results - all required checks are marked Missing",
+			// markCompleted fills in anything unreported, so reaching here with nothing means there
+			// was nothing to judge.
+			name:        "no results is not a pass",
 			results:     nil,
 			wantStatus:  metav1.ConditionUnknown,
 			wantReason:  ReasonCheckUnknown,
-			wantMessage: "PodStartup: Missing\nPodNetwork: Missing",
+			wantMessage: "",
 		},
 	}
 
@@ -980,3 +991,104 @@ func TestDetermineHealthyCondition(t *testing.T) {
 	}
 }
 
+func testCNH(name string) *chmv1alpha1.CheckNodeHealth {
+	return &chmv1alpha1.CheckNodeHealth{
+		ObjectMeta: metav1.ObjectMeta{Name: name},
+		Spec: chmv1alpha1.CheckNodeHealthSpec{
+			NodeRef: chmv1alpha1.NodeReference{Name: "node-1"},
+		},
+	}
+}
+
+func TestPodTimeoutFor(t *testing.T) {
+	t.Parallel()
+
+	if got := podTimeoutFor(gpuNodeInfo{}); got != PodTimeout {
+		t.Errorf("non-GPU timeout = %s, want %s", got, PodTimeout)
+	}
+	if got := podTimeoutFor(gpuNodeInfo{isGPUNode: true}); got != GPUPodTimeout {
+		t.Errorf("GPU timeout = %s, want %s", got, GPUPodTimeout)
+	}
+}
+
+func TestRecordMissingResults(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		info gpuNodeInfo
+		// reported is seeded before the call and must survive it.
+		reported  []string
+		wantAdded []string
+	}{
+		{
+			name:      "non-gpu node fills the base checks",
+			info:      gpuNodeInfo{},
+			reported:  []string{"PodStartup"},
+			wantAdded: []string{"PodNetwork"},
+		},
+		{
+			name:      "gpu node also fills the gpu checks",
+			info:      gpuNodeInfo{isGPUNode: true},
+			reported:  []string{"PodStartup", "PodNetwork", "NcclAllReduce"},
+			wantAdded: []string{"GpuBandwidth"},
+		},
+		{
+			name:      "non-gpu node does not fill the gpu checks",
+			info:      gpuNodeInfo{},
+			reported:  []string{"PodStartup", "PodNetwork"},
+			wantAdded: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			reconciler, c, _ := setupTest()
+			cnh := testCNH("cnh-1")
+			if err := c.Create(context.Background(), cnh); err != nil {
+				t.Fatalf("creating the CR: %v", err)
+			}
+			for _, name := range tt.reported {
+				cnh.Status.Results = append(cnh.Status.Results, chmv1alpha1.CheckResult{
+					Name: name, Status: chmv1alpha1.CheckStatusHealthy, Message: "measured",
+				})
+			}
+			if err := c.Status().Update(context.Background(), cnh); err != nil {
+				t.Fatalf("seeding results: %v", err)
+			}
+
+			if err := reconciler.recordMissingResults(context.Background(), cnh, tt.info); err != nil {
+				t.Fatalf("recordMissingResults returned error: %v", err)
+			}
+
+			got := map[string]chmv1alpha1.CheckResult{}
+			for _, result := range cnh.Status.Results {
+				got[result.Name] = result
+			}
+
+			for _, name := range tt.reported {
+				if r := got[name]; r.Status != chmv1alpha1.CheckStatusHealthy || r.Message != "measured" {
+					t.Errorf("%s = %+v, want the reported result left alone", name, r)
+				}
+			}
+			for _, name := range tt.wantAdded {
+				added, ok := got[name]
+				if !ok {
+					t.Errorf("%s was not recorded, results = %+v", name, cnh.Status.Results)
+					continue
+				}
+				if added.Status != chmv1alpha1.CheckStatusUnknown {
+					t.Errorf("%s status = %q, want %q", name, added.Status, chmv1alpha1.CheckStatusUnknown)
+				}
+				if added.ErrorCode != ErrorCodeCheckNotReported {
+					t.Errorf("%s code = %q, want %q", name, added.ErrorCode, ErrorCodeCheckNotReported)
+				}
+			}
+			if want := len(tt.reported) + len(tt.wantAdded); len(got) != want {
+				t.Errorf("got %d results, want %d: %+v", len(got), want, cnh.Status.Results)
+			}
+		})
+	}
+}

@@ -7,8 +7,10 @@ import (
 	"time"
 
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
+	"github.com/google/go-cmp/cmp"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/utils/ptr"
 )
 
 func TestGenerateHealthCheckPodName(t *testing.T) {
@@ -116,6 +118,106 @@ func TestHasCheckerReportedResult(t *testing.T) {
 	}
 }
 
+func TestBuildHealthCheckPodShape(t *testing.T) {
+	t.Parallel()
+
+	// podShape is the part of a built checker pod that buildHealthCheckPod is responsible for.
+	type podShape struct {
+		Image           string
+		Args            []string
+		GPULimit        string
+		GPURequest      string
+		Env             map[string]string
+		SecurityContext *corev1.SecurityContext
+	}
+
+	wantSecurityContext := &corev1.SecurityContext{
+		AllowPrivilegeEscalation: ptr.To(false),
+		Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
+	}
+
+	tests := []struct {
+		name string
+		info gpuNodeInfo
+		want podShape
+	}{
+		{
+			name: "non-gpu node is unchanged",
+			info: gpuNodeInfo{},
+			want: podShape{
+				Image:           "default-image",
+				Args:            []string{"--name=cnh-1"},
+				SecurityContext: wantSecurityContext,
+			},
+		},
+		{
+			// Fully managed pools advertise the extended resource, so the device plugin assigns
+			// the devices and no env var is needed.
+			name: "device plugin node requests its gpus",
+			info: gpuNodeInfo{isGPUNode: true, gpuCount: 8, sku: "Standard_ND96isr_H100_v5"},
+			want: podShape{
+				Image:           "gpu-image",
+				Args:            []string{"--name=cnh-1", "--enable-gpu-checks", "--sku=Standard_ND96isr_H100_v5"},
+				GPULimit:        "8",
+				GPURequest:      "8",
+				SecurityContext: wantSecurityContext,
+			},
+		},
+		{
+			// Driver-only pools run no device plugin, so there is no resource to request and the
+			// runtime has to be told to expose the devices.
+			name: "driver only node asks the runtime for the devices",
+			info: gpuNodeInfo{isGPUNode: true, gpuCount: 0, sku: "Standard_ND96isr_H100_v5"},
+			want: podShape{
+				Image:           "gpu-image",
+				Args:            []string{"--name=cnh-1", "--enable-gpu-checks", "--sku=Standard_ND96isr_H100_v5"},
+				Env:             map[string]string{"NVIDIA_VISIBLE_DEVICES": "all"},
+				SecurityContext: wantSecurityContext,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			reconciler, _, _ := setupTest()
+			reconciler.CheckerPodImage = "default-image"
+			reconciler.GPUCheckerPodImage = "gpu-image"
+
+			pod, err := reconciler.buildHealthCheckPod(testCNH("cnh-1"), tt.info)
+			if err != nil {
+				t.Fatalf("buildHealthCheckPod returned error: %v", err)
+			}
+
+			c := pod.Spec.Containers[0]
+
+			// set up the struct to compare fields we care about
+			got := podShape{
+				Image:           c.Image,
+				Args:            c.Args,
+				SecurityContext: c.SecurityContext,
+			}
+			if q, ok := c.Resources.Limits[nvidiaGPUResourceName]; ok {
+				got.GPULimit = q.String()
+			}
+			if q, ok := c.Resources.Requests[nvidiaGPUResourceName]; ok {
+				got.GPURequest = q.String()
+			}
+			for _, e := range c.Env {
+				if got.Env == nil {
+					got.Env = map[string]string{}
+				}
+				got.Env[e.Name] = e.Value
+			}
+
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("pod shape mismatch (-want +got):\n%s", diff)
+			}
+		})
+	}
+}
+
 // TestUpdatePodstartCheckerResult_TimeoutWithCheckerResult reproduces the observed production
 // case: the checker container ran and reported PodNetwork: Healthy into the CR, but the pod's
 // observed status remained Pending past the timeout (kubelet never reported the Running
@@ -146,7 +248,7 @@ func TestUpdatePodstartCheckerResult_TimeoutWithCheckerResult(t *testing.T) {
 		Status: corev1.PodStatus{Phase: corev1.PodPending},
 	}
 
-	if err := reconciler.updatePodstartCheckerResult(context.Background(), cnh, pod); err != nil {
+	if err := reconciler.updatePodstartCheckerResult(context.Background(), cnh, pod, PodTimeout); err != nil {
 		t.Fatalf("updatePodstartCheckerResult returned error: %v", err)
 	}
 
@@ -181,7 +283,7 @@ func TestUpdatePodstartCheckerResult_TimeoutWithoutCheckerResult(t *testing.T) {
 		Status: corev1.PodStatus{Phase: corev1.PodPending},
 	}
 
-	if err := reconciler.updatePodstartCheckerResult(context.Background(), cnh, pod); err != nil {
+	if err := reconciler.updatePodstartCheckerResult(context.Background(), cnh, pod, PodTimeout); err != nil {
 		t.Fatalf("updatePodstartCheckerResult returned error: %v", err)
 	}
 
