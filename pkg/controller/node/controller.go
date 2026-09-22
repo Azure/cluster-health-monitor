@@ -21,6 +21,7 @@ import (
 
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
 	"github.com/Azure/cluster-health-monitor/pkg/controller/checknodehealth"
+	"github.com/Azure/cluster-health-monitor/pkg/utils"
 )
 
 const (
@@ -108,6 +109,11 @@ func (r *NodeRebootReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	node := &corev1.Node{}
 	if err := r.Get(ctx, req.NamespacedName, node); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
+	}
+
+	if supported, reason := utils.IsSupported(node); !supported {
+		klog.V(1).InfoS("Skipping unsupported node", "node", node.Name, "reason", reason)
+		return ctrl.Result{}, nil
 	}
 
 	// Garbage collect stale NodeHealthy condition
@@ -368,6 +374,7 @@ func (r *NodeRebootReconciler) updateBootIDAnnotation(ctx context.Context, node 
 }
 
 // GenerateCNHName builds a deterministic CheckNodeHealth CR name from the node
+
 // name and bootID. The bootID is hashed to keep the name short and DNS-safe.
 // The hash is placed before the node name so that truncation to maxCNHNameLength
 // never removes the hash portion.
