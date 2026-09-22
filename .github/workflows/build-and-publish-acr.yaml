@@ -59,7 +59,22 @@ jobs:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         ref: ${{ needs.prepare-variables.outputs.release_tag }}
-    
+
+    - name: Show initial disk usage
+      run: |
+        echo "================ FILESYSTEMS ================"
+        df -hT
+
+        echo "================ WORKSPACE FILESYSTEM ================"
+        findmnt -T "$GITHUB_WORKSPACE"
+
+        echo "================ DOCKER STORAGE ================"
+        docker_root="$(docker info --format '{{.DockerRootDir}}')"
+        echo "Docker root: $docker_root"
+        findmnt -T "$docker_root"
+        df -hT "$docker_root"
+        docker system df
+
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@594f3bf4285d9ea8dc53c9a0c9c4092420091003 # v4.4.0
       with:
@@ -92,3 +107,26 @@ jobs:
         platforms: linux/amd64
         push: true
         tags: ${{ secrets.AZURE_REGISTRY }}/${{ env.REGISTRY_REPO}}/${{ env.GPU_CHECKER_IMAGE_NAME }}:${{ needs.prepare-variables.outputs.release_tag }}
+
+    - name: Show final disk usage
+      if: ${{ always() }}
+      run: |
+        echo "================ FILESYSTEMS ================"
+        df -hT || true
+
+        echo "================ WORKSPACE FILESYSTEM ================"
+        findmnt -T "$GITHUB_WORKSPACE" || true
+
+        echo "================ DOCKER STORAGE ================"
+        docker_root="$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || true)"
+        if [ -n "$docker_root" ]; then
+          echo "Docker root: $docker_root"
+          findmnt -T "$docker_root" || true
+          df -hT "$docker_root" || true
+        else
+          echo "Docker root unavailable"
+        fi
+        docker system df || true
+
+        echo "================ BUILDX STORAGE ================"
+        docker buildx du || true
