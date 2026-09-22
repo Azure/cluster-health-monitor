@@ -60,27 +60,18 @@ jobs:
       with:
         ref: ${{ needs.prepare-variables.outputs.release_tag }}
 
-    - name: Show initial disk usage
-      run: |
-        echo "================ FILESYSTEMS ================"
-        df -hT
-
-        echo "================ WORKSPACE FILESYSTEM ================"
-        findmnt -T "$GITHUB_WORKSPACE"
-
-        echo "================ DOCKER STORAGE ================"
-        docker_root="$(docker info --format '{{.DockerRootDir}}')"
-        echo "Docker root: $docker_root"
-        findmnt -T "$docker_root"
-        df -hT "$docker_root"
-        docker system df
-
+    # Multi-platform image builds can exhaust the runner's root filesystem, so use
+    # the larger, separately mounted temporary disk for Docker layers and cache.
+    # Ideally, the runner image would configure Docker to use this disk so the
+    # workflow would not need to reconfigure it on every run.
     - name: Move Docker storage to temporary disk
       shell: bash
       run: |
         set -euo pipefail
 
         docker_data_root="/mnt/docker"
+
+        # Confirm /mnt is a separate mounted filesystem and the required tooling is available.
         root_device="$(findmnt -n -o SOURCE -T /)"
         temp_device="$(findmnt -n -o SOURCE -T /mnt)"
 
@@ -102,6 +93,7 @@ jobs:
           exit 1
         fi
 
+        # Build a replacement daemon config that preserves existing settings and changes only data-root.
         sudo mkdir -p "$docker_data_root" /etc/docker
 
         config="$(mktemp)"
@@ -120,12 +112,14 @@ jobs:
             '{"data-root": $root}' > "$config"
         fi
 
+        # Validate the replacement before stopping Docker, then restart the daemon with it.
         sudo dockerd --validate --config-file="$config"
         sudo systemctl stop docker.service docker.socket
         sudo install -m 0644 "$config" /etc/docker/daemon.json
 
         if ! sudo systemctl start docker.service; then
           echo "::error::Docker failed to start with its temporary-disk configuration"
+          # Restore the previous configuration so the runner is not left with a broken daemon.
           if [ "$had_config" = true ]; then
             sudo install -m 0644 "$backup" /etc/docker/daemon.json
           else
@@ -135,6 +129,7 @@ jobs:
           exit 1
         fi
 
+        # Verify Docker accepted the new root and that it resolves to the intended filesystem.
         actual_root="$(docker info --format '{{.DockerRootDir}}')"
         if [ "$actual_root" != "$docker_data_root" ]; then
           echo "::error::Expected Docker root $docker_data_root, got $actual_root"
@@ -177,26 +172,3 @@ jobs:
         platforms: linux/amd64
         push: true
         tags: ${{ secrets.AZURE_REGISTRY }}/${{ env.REGISTRY_REPO}}/${{ env.GPU_CHECKER_IMAGE_NAME }}:${{ needs.prepare-variables.outputs.release_tag }}
-
-    - name: Show final disk usage
-      if: ${{ always() }}
-      run: |
-        echo "================ FILESYSTEMS ================"
-        df -hT || true
-
-        echo "================ WORKSPACE FILESYSTEM ================"
-        findmnt -T "$GITHUB_WORKSPACE" || true
-
-        echo "================ DOCKER STORAGE ================"
-        docker_root="$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || true)"
-        if [ -n "$docker_root" ]; then
-          echo "Docker root: $docker_root"
-          findmnt -T "$docker_root" || true
-          df -hT "$docker_root" || true
-        else
-          echo "Docker root unavailable"
-        fi
-        docker system df || true
-
-        echo "================ BUILDX STORAGE ================"
-        docker buildx du || true
