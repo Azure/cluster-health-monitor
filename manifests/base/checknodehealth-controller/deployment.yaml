@@ -24,6 +24,9 @@ spec:
           args:
             - "-v=5"
           imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+              name: metrics
           env:
             - name: CHECKER_POD_IMAGE
               value: "mcr.microsoft.com/aks/cluster-health-monitor/cluster-health-monitor:latest"
