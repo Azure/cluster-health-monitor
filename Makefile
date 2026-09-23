@@ -154,7 +154,7 @@ kind-test-local: kind-setup-e2e kind-apply-manifests
 	@echo "Cluster health monitor deployed to Kind cluster '$(KIND_CLUSTER_NAME)'"
 	@echo "Use 'make kind-export-kubeconfig' to set the kubectl context for Kind cluster '$(KIND_CLUSTER_NAME)'"
 	@echo "Use 'kubectl -n kube-system get pods' to check the status"
-	@echo "Use 'kubectl -n kube-system port-forward deployment/cluster-health-monitor 9800' to access metrics"
+	@echo "Use 'kubectl -n kube-system port-forward deployment/cluster-health-monitor 8080' to access metrics"
 	@echo "Use 'make kind-redeploy' to redeploy the cluster health monitor"
 	@echo "Use 'make kind-delete-cluster' when you're done testing"
 

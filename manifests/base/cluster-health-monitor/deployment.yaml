@@ -24,7 +24,7 @@ spec:
             - "-v=3"
           imagePullPolicy: Always
           ports:
-            - containerPort: 9800
+            - containerPort: 8080
               name: metrics
           volumeMounts:
             - name: config-volume

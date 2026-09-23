@@ -10,6 +10,11 @@ import (
 	"k8s.io/klog/v2"
 )
 
+// DefaultPort is the port the metrics endpoint binds to. It is shared by every
+// component in this repo so that a single `metrics` named port is consistent
+// across all deployments.
+const DefaultPort = 8080
+
 // Server holds Prometheus collectors and exposes them via HTTP.
 type Server struct {
 	registry *prometheus.Registry

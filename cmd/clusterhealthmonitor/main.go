@@ -49,7 +49,7 @@ func main() {
 	defer cancel()
 
 	// Run the prometheus metrics server.
-	m, err := metrics.NewServer(9800)
+	m, err := metrics.NewServer(metrics.DefaultPort)
 	if err != nil {
 		logErrorAndExit(err, "Failed to create metrics server")
 	}
