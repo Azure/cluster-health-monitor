@@ -334,6 +334,10 @@ func (r *CheckNodeHealthReconciler) markUnsupported(ctx context.Context, cnh *ch
 		return ctrl.Result{}, fmt.Errorf("failed to update status: %w", err)
 	}
 
+	// Unsupported nodes are a terminal outcome that never reaches markCompleted, so count them
+	// here to keep the outcome counter a complete record of every CheckNodeHealth.
+	recordNodeCheckMetrics(cnh, metav1.ConditionUnknown, ReasonCheckUnsupported)
+
 	// No pod is created for unsupported nodes, but clean up defensively in case one exists.
 	if err := r.cleanupPod(ctx, cnh); err != nil {
 		klog.ErrorS(err, "Failed to cleanup pod for unsupported node", "name", cnh.Name)
@@ -390,6 +394,8 @@ func (r *CheckNodeHealthReconciler) markCompleted(ctx context.Context, cnh *chmv
 	if err := r.Status().Update(ctx, cnh); err != nil {
 		return healthyStatus, fmt.Errorf("failed to update status: %w", err)
 	}
+
+	recordNodeCheckMetrics(cnh, healthyStatus, reason)
 
 	return healthyStatus, nil
 }
