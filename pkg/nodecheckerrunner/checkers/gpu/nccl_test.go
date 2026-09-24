@@ -129,14 +129,14 @@ func TestParseNCCLResult(t *testing.T) {
 			reportJSON: strings.Replace(report, "480.294297", "300.000", 1),
 			sku:        h100SKU,
 			wantStatus: checker.StatusUnhealthy,
-			wantCode:   ErrorCodeNcclLowBandwidth,
+			wantCode:   ErrorCodeLowBandwidth,
 		},
 		{
 			name:        "correctness failure wins over passing bandwidth",
 			reportJSON:  strings.Replace(report, `"count": 0`, `"count": 3`, 1),
 			sku:         h100SKU,
 			wantStatus:  checker.StatusUnhealthy,
-			wantCode:    ErrorCodeNcclCorrectness,
+			wantCode:    ErrorCodeCorrectness,
 			wantMessage: "3 out-of-bounds values",
 		},
 		{

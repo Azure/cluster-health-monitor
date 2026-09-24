@@ -135,14 +135,14 @@ func parseNCCLResult(reportJSON, output, sku string, profile skuProfile, execErr
 
 	switch {
 	case outOfBounds > 0:
-		return checker.Unhealthy(ErrorCodeNcclCorrectness,
+		return checker.Unhealthy(ErrorCodeCorrectness,
 			fmt.Sprintf("NCCL all-reduce reported %d out-of-bounds values", outOfBounds))
 	case execErr != nil:
 		return toolFailed(fmt.Sprintf(
 			"nccl-tests reported bus bandwidth %.3f GB/s but did not exit cleanly (%s)\n%s",
 			busbw, execErrString(execErr), output))
 	case busbw < profile.NcclBusGBps:
-		return checker.Unhealthy(ErrorCodeNcclLowBandwidth, fmt.Sprintf(
+		return checker.Unhealthy(ErrorCodeLowBandwidth, fmt.Sprintf(
 			"bus bandwidth %.3f GB/s below %.3f GB/s threshold for %s", busbw, profile.NcclBusGBps, sku))
 	}
 	return healthy(fmt.Sprintf("bus bandwidth %.3f GB/s (>= %.3f GB/s threshold for %s)",
