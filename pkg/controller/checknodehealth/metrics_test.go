@@ -352,7 +352,7 @@ func TestNodeCheckMetricsEmitted(t *testing.T) {
 				{
 					Name:      "NcclAllReduce",
 					Status:    chmv1alpha1.CheckStatusUnhealthy,
-					ErrorCode: gpu.ErrorCodeNcclCorrectness,
+					ErrorCode: gpu.ErrorCodeCorrectness,
 					Message:   "reported by the checker pod",
 				},
 			},
@@ -364,7 +364,7 @@ func TestNodeCheckMetricsEmitted(t *testing.T) {
 			wantCHMNodeCheckResultTotal: []map[string]string{
 				{"checker_name": "PodStartup", "status": metrics.HealthyStatus, "error_code": metrics.HealthyCode},
 				{"checker_name": "PodNetwork", "status": metrics.HealthyStatus, "error_code": metrics.HealthyCode},
-				{"checker_name": "NcclAllReduce", "status": metrics.UnhealthyStatus, "error_code": gpu.ErrorCodeNcclCorrectness},
+				{"checker_name": "NcclAllReduce", "status": metrics.UnhealthyStatus, "error_code": gpu.ErrorCodeCorrectness},
 				{"checker_name": "GpuBandwidth", "status": metrics.UnknownStatus, "error_code": ErrorCodeCheckNotReported},
 			},
 		},

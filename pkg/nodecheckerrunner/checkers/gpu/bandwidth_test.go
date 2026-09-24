@@ -97,7 +97,7 @@ func TestParseBandwidthResult(t *testing.T) {
 			output:      strings.Replace(nvbandwidthOutput(t), "394.921", "120.00", 1),
 			sku:         h100SKU,
 			wantStatus:  checker.StatusUnhealthy,
-			wantCode:    ErrorCodeGpuLowBandwidth,
+			wantCode:    ErrorCodeLowBandwidth,
 			wantMessage: "min 120.000 GB/s at GPU 2 -> GPU 3 below 335.000 GB/s threshold",
 		},
 		{
@@ -106,7 +106,7 @@ func TestParseBandwidthResult(t *testing.T) {
 			output:      strings.Replace(nvbandwidthOutput(t), "55.5542", "20.00", 1),
 			sku:         h100SKU,
 			wantStatus:  checker.StatusUnhealthy,
-			wantCode:    ErrorCodeGpuLowBandwidth,
+			wantCode:    ErrorCodeLowBandwidth,
 			wantMessage: "host_to_device_memcpy_ce: min 20.000 GB/s at GPU 5 below 48.000 GB/s threshold",
 		},
 		{

@@ -114,7 +114,7 @@ func parseBandwidthResult(output string, profile skuProfile, execErr error) *che
 		return toolFailed(fmt.Sprintf(
 			"nvbandwidth reported measurements but did not exit cleanly (%s)\n%s", execErrString(execErr), message))
 	case lowBandwidth:
-		return checker.Unhealthy(ErrorCodeGpuLowBandwidth, message)
+		return checker.Unhealthy(ErrorCodeLowBandwidth, message)
 	}
 	return healthy(message)
 }
