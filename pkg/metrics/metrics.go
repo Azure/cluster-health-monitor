@@ -31,4 +31,6 @@ var (
 		},
 		[]string{"checker_type", "checker_name", "pod_namespace", "pod_name", "status", "error_code"},
 	)
+
+	// TODO add latency metrics
 )
