@@ -25,8 +25,6 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
-
-	"github.com/Azure/cluster-health-monitor/pkg/metrics"
 )
 
 const (
@@ -35,8 +33,8 @@ const (
 	kubesystem     = "kube-system"
 	deploymentName = "cluster-health-monitor"
 
-	remoteMetricsPort = metrics.DefaultPort // remoteMetricsPort is the fixed port used by the service in the container.
-	baseLocalPort     = 10000               // baseLocalPort is the base local port for dynamic allocation.
+	remoteMetricsPort = 9800  // remoteMetricsPort is the fixed port used by the service in the container.
+	baseLocalPort     = 10000 // baseLocalPort is the base local port for dynamic allocation.
 
 	checkerResultMetricName   = "cluster_health_monitor_checker_result_total"
 	podHealthResultMetricName = "cluster_health_monitor_pod_health_result_total"

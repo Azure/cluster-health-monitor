@@ -10,9 +10,6 @@ import (
 	"k8s.io/klog/v2"
 )
 
-// DefaultPort is the port the cluster-health-monitor metrics endpoint binds to.
-const DefaultPort = 8080
-
 // Server holds Prometheus collectors and exposes them via HTTP.
 type Server struct {
 	registry *prometheus.Registry
