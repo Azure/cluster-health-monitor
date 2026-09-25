@@ -63,7 +63,9 @@ func checkNodeHealthCRExists(ctx context.Context, k8sClient client.Client, name 
 	return err == nil
 }
 
-var _ = Describe("CheckNodeHealth Controller", Ordered, ContinueOnFailure, func() {
+// These tests create synthetic Node objects and restart the shared controller, so they must not
+// overlap suites that enumerate or mutate all nodes.
+var _ = Describe("CheckNodeHealth Controller", Serial, Ordered, ContinueOnFailure, func() {
 	var (
 		ctx          context.Context
 		k8sClient    client.Client

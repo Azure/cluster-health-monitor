@@ -1,0 +1,31 @@
+#!/fake-gpu-tools/busybox sh
+set -eu
+
+args=" $* "
+for required in \
+  " host_to_device_memcpy_ce " \
+  " device_to_host_memcpy_ce " \
+  " device_to_device_memcpy_read_ce " \
+  " -i 10 " \
+  " --format json "; do
+  case "$args" in
+    *"$required"*) ;;
+    *) echo "missing expected nvbandwidth argument: $required; got:$args" >&2; exit 42 ;;
+  esac
+done
+
+/fake-gpu-tools/busybox cat <<'JSON'
+{"nvbandwidth":{"testcases":[
+{"name":"host_to_device_memcpy_ce","status":"Passed","bandwidth_matrix":[["55","55","55","55","55","55","55","55"]]},
+{"name":"device_to_host_memcpy_ce","status":"Passed","bandwidth_matrix":[["55","55","55","55","55","55","55","55"]]},
+{"name":"device_to_device_memcpy_read_ce","status":"Passed","bandwidth_matrix":[
+["N/A","395","395","395","395","395","395","395"],
+["395","N/A","395","395","395","395","395","395"],
+["395","395","N/A","395","395","395","395","395"],
+["395","395","395","N/A","395","395","395","395"],
+["395","395","395","395","N/A","395","395","395"],
+["395","395","395","395","395","N/A","395","395"],
+["395","395","395","395","395","395","N/A","395"],
+["395","395","395","395","395","395","395","N/A"]]}
+]}}
+JSON
