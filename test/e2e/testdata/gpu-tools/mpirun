@@ -1,0 +1,34 @@
+#!/fake-gpu-tools/busybox sh
+set -eu
+
+args=" $* "
+for required in \
+  " -np 8 " \
+  " --map-by ppr:8:node " \
+  " NCCL_TOPO_FILE=/usr/local/share/topofiles/ndv5-topo.xml " \
+  " /usr/local/bin/all_reduce_perf " \
+  " -b 16G " \
+  " -e 16G "; do
+  case "$args" in
+    *"$required"*) ;;
+    *) echo "missing expected mpirun argument: $required; got:$args" >&2; exit 43 ;;
+  esac
+done
+
+report=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-J" ]; then
+    shift
+    report="${1:-}"
+    break
+  fi
+  shift
+done
+if [ -z "$report" ]; then
+  echo "missing -J report path" >&2
+  exit 44
+fi
+
+/fake-gpu-tools/busybox cat >"$report" <<'JSON'
+{"results":[{"size":17179869184}],"out_of_bounds":{"count":0},"average_bus_bandwidth":{"bandwidth":480.0}}
+JSON

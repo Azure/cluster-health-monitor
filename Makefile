@@ -84,6 +84,8 @@ test-unit:
 
 GIT_ROOT = $(shell git rev-parse --show-toplevel)
 LOCAL_IMAGE_NAME = cluster-health-monitor
+LOCAL_GPU_TEST_IMAGE_NAME = cluster-health-monitor-gpu-e2e
+LOCAL_FAKE_DEVICE_PLUGIN_IMAGE_NAME = cluster-health-monitor-fake-device-plugin
 LOCAL_IMAGE_TAG = test-latest
 KIND_CLUSTER_NAME ?= chm-test
 KUBECONFIG ?= $(HOME)/.kube/config
@@ -102,7 +104,7 @@ kind-create-cluster:
 			echo "- role: worker"; \
 			echo "- role: worker"; \
 		} | kind create cluster --name $(KIND_CLUSTER_NAME) --config=-; \
-		# Configure CoreDNS with 2 replicas on different nodes so CheckNodeHealth can successfully run the PodNetwork checker \
+		: "Configure CoreDNS with 2 replicas on different nodes so CheckNodeHealth can successfully run the PodNetwork checker"; \
 		echo "Configuring CoreDNS with 2 replicas spread across nodes"; \
 		kubectl --context kind-$(KIND_CLUSTER_NAME) patch deployment coredns -n kube-system -p '{"spec":{"replicas":2,"strategy":{"type":"RollingUpdate","rollingUpdate":{"maxSurge":0,"maxUnavailable":1}},"template":{"spec":{"affinity":{"podAntiAffinity":{"requiredDuringSchedulingIgnoredDuringExecution":[{"labelSelector":{"matchLabels":{"k8s-app":"kube-dns"}},"topologyKey":"kubernetes.io/hostname"}]}}}}}}'; \
 		kubectl --context kind-$(KIND_CLUSTER_NAME) rollout status deployment coredns -n kube-system --timeout=120s; \
@@ -118,6 +120,27 @@ kind-build-image:
 kind-load-image: kind-build-image
 	kind load docker-image $(LOCAL_IMAGE_NAME):$(LOCAL_IMAGE_TAG) --name $(KIND_CLUSTER_NAME)
 
+.PHONY: kind-build-gpu-test-image
+kind-build-gpu-test-image: kind-build-image
+	docker build \
+		--file ${GIT_ROOT}/test/e2e/testdata/gpu-sim.Dockerfile \
+		--build-arg BASE_IMAGE=$(LOCAL_IMAGE_NAME):$(LOCAL_IMAGE_TAG) \
+		--tag $(LOCAL_GPU_TEST_IMAGE_NAME):$(LOCAL_IMAGE_TAG) .
+
+.PHONY: kind-load-gpu-test-image
+kind-load-gpu-test-image: kind-build-gpu-test-image
+	kind load docker-image $(LOCAL_GPU_TEST_IMAGE_NAME):$(LOCAL_IMAGE_TAG) --name $(KIND_CLUSTER_NAME)
+
+.PHONY: kind-build-fake-device-plugin-image
+kind-build-fake-device-plugin-image:
+	docker build \
+		--file ${GIT_ROOT}/test/e2e/testdata/fake-device-plugin.Dockerfile \
+		--tag $(LOCAL_FAKE_DEVICE_PLUGIN_IMAGE_NAME):$(LOCAL_IMAGE_TAG) .
+
+.PHONY: kind-load-fake-device-plugin-image
+kind-load-fake-device-plugin-image: kind-build-fake-device-plugin-image
+	kind load docker-image $(LOCAL_FAKE_DEVICE_PLUGIN_IMAGE_NAME):$(LOCAL_IMAGE_TAG) --name $(KIND_CLUSTER_NAME)
+
 .PHONY: kind-export-kubeconfig
 kind-export-kubeconfig:
 	kind export kubeconfig --name $(KIND_CLUSTER_NAME)
@@ -131,7 +154,7 @@ kind-delete-deployment: kind-export-kubeconfig
 	kubectl delete -k ${GIT_ROOT}/manifests/overlays/test
 
 .PHONY: kind-redeploy
-kind-redeploy: kind-delete-deployment kind-build-image kind-load-image kind-apply-manifests
+kind-redeploy: kind-delete-deployment kind-load-image kind-load-gpu-test-image kind-load-fake-device-plugin-image kind-apply-manifests
 	@echo "Redeployed cluster health monitor to Kind cluster '$(KIND_CLUSTER_NAME)'"
 
 .PHONY: kind-delete-cluster
@@ -139,7 +162,7 @@ kind-delete-cluster:
 	kind delete cluster --name $(KIND_CLUSTER_NAME)
 
 .PHONY: kind-setup-e2e
-kind-setup-e2e: kind-create-cluster kind-deploy-metrics-server kind-load-image
+kind-setup-e2e: kind-create-cluster kind-deploy-metrics-server kind-load-image kind-load-gpu-test-image kind-load-fake-device-plugin-image
 
 .PHONY: kind-deploy-metrics-server
 kind-deploy-metrics-server: kind-export-kubeconfig
