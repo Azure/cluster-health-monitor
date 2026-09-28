@@ -28,6 +28,8 @@ var (
 		},
 		[]string{"checker_name", "status", "error_code"},
 	)
+
+	// TODO add latency metrics
 )
 
 // These collectors are registered into the controller-runtime registry rather than a registry of
