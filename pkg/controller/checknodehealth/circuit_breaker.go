@@ -21,6 +21,31 @@ const (
 	DefaultCircuitBreakerCooldown = 10 * time.Minute
 )
 
+// NodeConditionCircuitBreakers holds one circuit breaker per node health condition.
+//
+// The conditions are kept independent because different checks can run on different types if nodes. If one type experiences issues,
+// the other type remains unaffected.
+type NodeConditionCircuitBreakers struct {
+	nodeHealthy    *NodeConditionCircuitBreaker
+	gpuNodeHealthy *NodeConditionCircuitBreaker
+}
+
+// NewNodeConditionCircuitBreakers creates an independent breaker per condition.
+func NewNodeConditionCircuitBreakers(threshold int, window, cooldown time.Duration) *NodeConditionCircuitBreakers {
+	return &NodeConditionCircuitBreakers{
+		nodeHealthy:    NewNodeConditionCircuitBreaker(threshold, window, cooldown),
+		gpuNodeHealthy: NewNodeConditionCircuitBreaker(threshold, window, cooldown),
+	}
+}
+
+// For returns the breaker guarding the condition this node reports to.
+func (c *NodeConditionCircuitBreakers) For(info gpuNodeInfo) *NodeConditionCircuitBreaker {
+	if info.isGPUNode {
+		return c.gpuNodeHealthy
+	}
+	return c.nodeHealthy
+}
+
 // NodeConditionCircuitBreaker implements a circuit breaker pattern for node health condition updates.
 //
 // When N consecutive nodes are marked unhealthy within a short time window, this likely indicates

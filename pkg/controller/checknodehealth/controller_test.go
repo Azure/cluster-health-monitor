@@ -2,6 +2,8 @@ package checknodehealth
 
 import (
 	"context"
+	"fmt"
+	"slices"
 	"testing"
 	"time"
 
@@ -63,14 +65,19 @@ func getHealthyCondition(conditions []metav1.Condition) *metav1.Condition {
 	return nil
 }
 
-// getNodeHealthyCondition retrieves the NodeHealthy condition from a Node's status
-func getNodeHealthyCondition(conditions []corev1.NodeCondition) *corev1.NodeCondition {
+// getNodeConditionByType retrieves a condition of the given type from a Node's status
+func getNodeConditionByType(conditions []corev1.NodeCondition, conditionType corev1.NodeConditionType) *corev1.NodeCondition {
 	for i, condition := range conditions {
-		if condition.Type == NodeConditionNodeHealthy {
+		if condition.Type == conditionType {
 			return &conditions[i]
 		}
 	}
 	return nil
+}
+
+// getNodeHealthyCondition retrieves the NodeHealthy condition from a Node's status
+func getNodeHealthyCondition(conditions []corev1.NodeCondition) *corev1.NodeCondition {
+	return getNodeConditionByType(conditions, NodeConditionNodeHealthy)
 }
 
 func TestReconcile(t *testing.T) {
@@ -80,7 +87,7 @@ func TestReconcile(t *testing.T) {
 		existingPod         *corev1.Pod
 		existingNode        *corev1.Node
 		enableNodeCondition bool
-		circuitBreaker      *NodeConditionCircuitBreaker
+		circuitBreakers     *NodeConditionCircuitBreakers
 		triggerDeletion     bool // If true, call Delete() before Reconcile()
 		expectedResult      ctrl.Result
 		expectError         bool
@@ -328,7 +335,7 @@ func TestReconcile(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{Name: "test-node", Labels: map[string]string{"kubernetes.io/os": "linux"}},
 			},
 			enableNodeCondition: true,
-			circuitBreaker:      NewNodeConditionCircuitBreaker(DefaultCircuitBreakerThreshold, DefaultCircuitBreakerWindow, DefaultCircuitBreakerCooldown),
+			circuitBreakers:     NewNodeConditionCircuitBreakers(DefaultCircuitBreakerThreshold, DefaultCircuitBreakerWindow, DefaultCircuitBreakerCooldown),
 			expectedResult:      ctrl.Result{},
 			expectError:         false,
 			expectedPodCreated:  false,
@@ -435,7 +442,7 @@ func TestReconcile(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{Name: "test-node", Labels: map[string]string{"kubernetes.io/os": "linux"}},
 			},
 			enableNodeCondition: true,
-			circuitBreaker:      NewNodeConditionCircuitBreaker(DefaultCircuitBreakerThreshold, DefaultCircuitBreakerWindow, DefaultCircuitBreakerCooldown),
+			circuitBreakers:     NewNodeConditionCircuitBreakers(DefaultCircuitBreakerThreshold, DefaultCircuitBreakerWindow, DefaultCircuitBreakerCooldown),
 			expectedResult:      ctrl.Result{},
 			expectError:         false,
 			expectedPodCreated:  false,
@@ -510,7 +517,7 @@ func TestReconcile(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{Name: "test-node", Labels: map[string]string{"kubernetes.io/os": "linux"}},
 			},
 			enableNodeCondition: true,
-			circuitBreaker:      NewNodeConditionCircuitBreaker(DefaultCircuitBreakerThreshold, DefaultCircuitBreakerWindow, DefaultCircuitBreakerCooldown),
+			circuitBreakers:     NewNodeConditionCircuitBreakers(DefaultCircuitBreakerThreshold, DefaultCircuitBreakerWindow, DefaultCircuitBreakerCooldown),
 			expectedResult:      ctrl.Result{},
 			expectError:         false,
 			expectedPodCreated:  false,
@@ -687,11 +694,11 @@ func TestReconcile(t *testing.T) {
 				ObjectMeta: metav1.ObjectMeta{Name: "test-node", Labels: map[string]string{"kubernetes.io/os": "linux"}},
 			},
 			enableNodeCondition: true,
-			circuitBreaker: func() *NodeConditionCircuitBreaker {
-				// Create a circuit breaker that is already open
-				cb := NewNodeConditionCircuitBreaker(1, 15*time.Minute, 10*time.Minute)
-				cb.RecordUnhealthyNode() // This trips the breaker (threshold=1)
-				return cb
+			circuitBreakers: func() *NodeConditionCircuitBreakers {
+				// Create breakers whose non-GPU one is already open
+				cbs := NewNodeConditionCircuitBreakers(1, 15*time.Minute, 10*time.Minute)
+				cbs.For(gpuNodeInfo{}).RecordUnhealthyNode() // This trips the breaker (threshold=1)
+				return cbs
 			}(),
 			expectedResult:     ctrl.Result{},
 			expectError:        false,
@@ -788,7 +795,7 @@ func TestReconcile(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			reconciler, fakeClient, _ := setupTest()
 			reconciler.EnableNodeCondition = tt.enableNodeCondition
-			reconciler.CircuitBreaker = tt.circuitBreaker
+			reconciler.CircuitBreakers = tt.circuitBreakers
 			ctx := context.Background()
 
 			// Setup existing resources
@@ -883,7 +890,7 @@ func TestReconcile(t *testing.T) {
 func TestUpdateNodeCondition_NilHealthyCondition(t *testing.T) {
 	reconciler, fakeClient, _ := setupTest()
 	reconciler.EnableNodeCondition = true
-	reconciler.CircuitBreaker = NewNodeConditionCircuitBreaker(DefaultCircuitBreakerThreshold, DefaultCircuitBreakerWindow, DefaultCircuitBreakerCooldown)
+	reconciler.CircuitBreakers = NewNodeConditionCircuitBreakers(DefaultCircuitBreakerThreshold, DefaultCircuitBreakerWindow, DefaultCircuitBreakerCooldown)
 
 	ctx := context.Background()
 
@@ -905,7 +912,7 @@ func TestUpdateNodeCondition_NilHealthyCondition(t *testing.T) {
 	}
 
 	// updateNodeCondition should return nil without updating the node
-	err := reconciler.updateNodeCondition(ctx, cnh)
+	err := reconciler.updateNodeCondition(ctx, cnh, gpuNodeInfo{})
 	if err != nil {
 		t.Fatalf("Expected no error, got: %v", err)
 	}
@@ -932,7 +939,7 @@ func TestDetermineHealthyCondition(t *testing.T) {
 		wantMessage string
 	}{
 		{
-			name: "all results healthy",
+			name: "all results healthy reports True",
 			results: []chmv1alpha1.CheckResult{
 				{Name: "PodStartup", Status: chmv1alpha1.CheckStatusHealthy},
 				{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusHealthy},
@@ -942,7 +949,7 @@ func TestDetermineHealthyCondition(t *testing.T) {
 			wantMessage: "PodStartup: Healthy\nPodNetwork: Healthy",
 		},
 		{
-			name: "any result unhealthy takes precedence over unknown",
+			name: "any result unhealthy reports false. Takes precedence over unknown",
 			results: []chmv1alpha1.CheckResult{
 				{Name: "PodStartup", Status: chmv1alpha1.CheckStatusUnknown},
 				{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusUnhealthy},
@@ -952,7 +959,7 @@ func TestDetermineHealthyCondition(t *testing.T) {
 			wantMessage: "PodStartup: Unknown\nPodNetwork: Unhealthy",
 		},
 		{
-			name: "any result unknown",
+			name: "any result unknown reports Unknown",
 			results: []chmv1alpha1.CheckResult{
 				{Name: "PodStartup", Status: chmv1alpha1.CheckStatusHealthy},
 				{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusUnknown},
@@ -964,11 +971,35 @@ func TestDetermineHealthyCondition(t *testing.T) {
 		{
 			// markCompleted fills in anything unreported, so reaching here with nothing means there
 			// was nothing to judge.
-			name:        "no results is not a pass",
+			name:        "no results present reports Unknown",
 			results:     nil,
 			wantStatus:  metav1.ConditionUnknown,
 			wantReason:  ReasonCheckUnknown,
 			wantMessage: "",
+		},
+		{
+			name: "gpu check results are taken into account",
+			results: []chmv1alpha1.CheckResult{
+				{Name: "PodStartup", Status: chmv1alpha1.CheckStatusHealthy},
+				{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusHealthy},
+				{Name: "NcclAllReduce", Status: chmv1alpha1.CheckStatusUnhealthy},
+				{Name: "GpuBandwidth", Status: chmv1alpha1.CheckStatusUnknown},
+			},
+			wantStatus:  metav1.ConditionFalse,
+			wantReason:  ReasonCheckFailed,
+			wantMessage: "PodStartup: Healthy\nPodNetwork: Healthy\nNcclAllReduce: Unhealthy\nGpuBandwidth: Unknown",
+		},
+		{
+			name: "all checks healthy on a gpu node reports True",
+			results: []chmv1alpha1.CheckResult{
+				{Name: "PodStartup", Status: chmv1alpha1.CheckStatusHealthy},
+				{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusHealthy},
+				{Name: "NcclAllReduce", Status: chmv1alpha1.CheckStatusHealthy},
+				{Name: "GpuBandwidth", Status: chmv1alpha1.CheckStatusHealthy},
+			},
+			wantStatus:  metav1.ConditionTrue,
+			wantReason:  ReasonCheckPassed,
+			wantMessage: "PodStartup: Healthy\nPodNetwork: Healthy\nNcclAllReduce: Healthy\nGpuBandwidth: Healthy",
 		},
 	}
 
@@ -1000,14 +1031,406 @@ func testCNH(name string) *chmv1alpha1.CheckNodeHealth {
 	}
 }
 
-func TestPodTimeoutFor(t *testing.T) {
+// finishedCheckerPod returns a checker pod the reconciler treats as finished, with a container that
+// started so PodStartup is recorded as Healthy.
+func finishedCheckerPod(cnhName string) *corev1.Pod {
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "check-node-health-" + cnhName,
+			Namespace: "default",
+			Labels:    map[string]string{CheckNodeHealthLabel: cnhName},
+		},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodSucceeded,
+			ContainerStatuses: []corev1.ContainerStatus{{
+				Name: "checker",
+				State: corev1.ContainerState{
+					Terminated: &corev1.ContainerStateTerminated{StartedAt: metav1.Now()},
+				},
+			}},
+		},
+	}
+}
+
+func TestCheckerSpecFor(t *testing.T) {
 	t.Parallel()
 
-	if got := podTimeoutFor(gpuNodeInfo{}); got != PodTimeout {
-		t.Errorf("non-GPU timeout = %s, want %s", got, PodTimeout)
+	baseNames := []string{"PodStartup", "PodNetwork"}
+	gpuNames := []string{"PodStartup", "PodNetwork", "NcclAllReduce", "GpuBandwidth"}
+
+	tests := []struct {
+		name            string
+		info            gpuNodeInfo
+		enableGPUChecks bool
+		wantImage       string
+		wantTimeout     time.Duration
+		wantNames       []string
+		// wantGPU is true when the spec must carry the GPU parameters, which is also what makes the
+		// pod get the GPU shape.
+		wantGPU bool
+	}{
+		{
+			name:            "non-gpu node with the gate off",
+			info:            gpuNodeInfo{isGPUNode: false, gpuCount: 0, sku: "Standard_D8d_v5"},
+			enableGPUChecks: false,
+			wantImage:       "base-image",
+			wantTimeout:     PodTimeout,
+			wantNames:       baseNames,
+			wantGPU:         false,
+		},
+		{
+			name:            "non-gpu node with the gate on",
+			info:            gpuNodeInfo{isGPUNode: false, gpuCount: 0, sku: "Standard_D8d_v5"},
+			enableGPUChecks: true,
+			wantImage:       "base-image",
+			wantTimeout:     PodTimeout,
+			wantNames:       baseNames,
+			wantGPU:         false,
+		},
+		{
+			// The node is still routed to GPUNodeHealthy, but it runs the ordinary checker.
+			name:            "gpu node with the gate off",
+			info:            gpuNodeInfo{isGPUNode: true, gpuCount: 8, sku: "Standard_ND96isr_H100_v5"},
+			enableGPUChecks: false,
+			wantImage:       "base-image",
+			wantTimeout:     PodTimeout,
+			wantNames:       baseNames,
+			wantGPU:         false,
+		},
+		{
+			name:            "gpu node with the gate on",
+			info:            gpuNodeInfo{isGPUNode: true, gpuCount: 8, sku: "Standard_ND96isr_H100_v5"},
+			enableGPUChecks: true,
+			wantImage:       "gpu-image",
+			wantTimeout:     GPUPodTimeout,
+			wantNames:       gpuNames,
+			wantGPU:         true,
+		},
 	}
-	if got := podTimeoutFor(gpuNodeInfo{isGPUNode: true}); got != GPUPodTimeout {
-		t.Errorf("GPU timeout = %s, want %s", got, GPUPodTimeout)
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			r := &CheckNodeHealthReconciler{
+				CheckerPodImage:    "base-image",
+				GPUCheckerPodImage: "gpu-image",
+				EnableGPUChecks:    tt.enableGPUChecks,
+			}
+
+			spec := r.checkerSpecFor(tt.info)
+			if spec.image != tt.wantImage {
+				t.Errorf("image = %q, want %q", spec.image, tt.wantImage)
+			}
+			if spec.podTimeout != tt.wantTimeout {
+				t.Errorf("podTimeout = %s, want %s", spec.podTimeout, tt.wantTimeout)
+			}
+			if !slices.Equal(spec.checkerNames, tt.wantNames) {
+				t.Errorf("checkerNames = %v, want %v", spec.checkerNames, tt.wantNames)
+			}
+			if gotGPU := spec.gpu != nil; gotGPU != tt.wantGPU {
+				t.Errorf("gpu set = %v, want %v", gotGPU, tt.wantGPU)
+			}
+			if tt.wantGPU && *spec.gpu != tt.info {
+				t.Errorf("gpu = %+v, want %+v", *spec.gpu, tt.info)
+			}
+		})
+	}
+}
+
+// TestReconcileNodeConditionRouting checks that a node is given exactly one health condition:
+// GPUNodeHealthy for GPU nodes and NodeHealthy for everything else, carrying the same Healthy
+// status the CheckNodeHealth reports over all of its results.
+func TestReconcileNodeConditionRouting(t *testing.T) {
+	tests := []struct {
+		name string
+		// gpuNode makes the target node a GPU node.
+		gpuNode bool
+		// enableGPUChecks gates the intrusive GPU checks, not the routing.
+		enableGPUChecks bool
+		// seededResults stand in for the results the checker pod would have written.
+		seededResults []chmv1alpha1.CheckResult
+		wantHealthy   metav1.ConditionStatus
+		// wantNodeCondition is the only health condition the node may carry.
+		wantNodeCondition corev1.NodeConditionType
+	}{
+		{
+			name:            "failing gpu check fails the gpu node condition",
+			gpuNode:         true,
+			enableGPUChecks: true,
+			seededResults: []chmv1alpha1.CheckResult{
+				{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusHealthy},
+				{Name: "NcclAllReduce", Status: chmv1alpha1.CheckStatusUnhealthy, ErrorCode: "GpuCorrectness"},
+				{Name: "GpuBandwidth", Status: chmv1alpha1.CheckStatusHealthy},
+			},
+			wantHealthy:       metav1.ConditionFalse,
+			wantNodeCondition: NodeConditionGPUNodeHealthy,
+		},
+		{
+			name:            "all checks passing on a gpu node",
+			gpuNode:         true,
+			enableGPUChecks: true,
+			seededResults: []chmv1alpha1.CheckResult{
+				{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusHealthy},
+				{Name: "NcclAllReduce", Status: chmv1alpha1.CheckStatusHealthy},
+				{Name: "GpuBandwidth", Status: chmv1alpha1.CheckStatusHealthy},
+			},
+			wantHealthy:       metav1.ConditionTrue,
+			wantNodeCondition: NodeConditionGPUNodeHealthy,
+		},
+		{
+			name:            "base check failure on a gpu node",
+			gpuNode:         true,
+			enableGPUChecks: true,
+			seededResults: []chmv1alpha1.CheckResult{
+				{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusUnhealthy, ErrorCode: "NetworkConnectivityFailed"},
+				{Name: "NcclAllReduce", Status: chmv1alpha1.CheckStatusHealthy},
+				{Name: "GpuBandwidth", Status: chmv1alpha1.CheckStatusHealthy},
+			},
+			wantHealthy:       metav1.ConditionFalse,
+			wantNodeCondition: NodeConditionGPUNodeHealthy,
+		},
+		{
+			// The routing is independent of whether the gpu checks are enabled, so a GPU node running only the base checks
+			// still stays off NodeHealthy.
+			name:            "gpu node with the intrusive checks disabled",
+			gpuNode:         true,
+			enableGPUChecks: false,
+			seededResults: []chmv1alpha1.CheckResult{
+				{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusHealthy},
+			},
+			wantHealthy:       metav1.ConditionTrue,
+			wantNodeCondition: NodeConditionGPUNodeHealthy,
+		},
+		{
+			name:            "non-gpu node reports NodeHealthy",
+			gpuNode:         false,
+			enableGPUChecks: true,
+			seededResults: []chmv1alpha1.CheckResult{
+				{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusHealthy},
+			},
+			wantHealthy:       metav1.ConditionTrue,
+			wantNodeCondition: NodeConditionNodeHealthy,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			reconciler, fakeClient, _ := setupTest()
+			reconciler.EnableGPUChecks = tt.enableGPUChecks
+			reconciler.EnableNodeCondition = true
+			reconciler.CircuitBreakers = NewNodeConditionCircuitBreakers(DefaultCircuitBreakerThreshold, DefaultCircuitBreakerWindow, DefaultCircuitBreakerCooldown)
+
+			node := &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{Name: "node-1", Labels: map[string]string{"kubernetes.io/os": "linux"}},
+			}
+			if tt.gpuNode {
+				node = gpuNode("node-1")
+			}
+			if err := fakeClient.Create(ctx, node); err != nil {
+				t.Fatalf("creating the node: %v", err)
+			}
+
+			cnh := testCNH("cnh-routing")
+			if err := fakeClient.Create(ctx, cnh); err != nil {
+				t.Fatalf("creating the CR: %v", err)
+			}
+			cnh.Status.Results = tt.seededResults
+			if err := fakeClient.Status().Update(ctx, cnh); err != nil {
+				t.Fatalf("seeding reported results: %v", err)
+			}
+			if err := fakeClient.Create(ctx, finishedCheckerPod(cnh.Name)); err != nil {
+				t.Fatalf("creating the checker pod: %v", err)
+			}
+
+			key := types.NamespacedName{Name: cnh.Name}
+			for i := 0; i < 3; i++ {
+				if _, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: key}); err != nil {
+					t.Fatalf("reconcile %d returned error: %v", i, err)
+				}
+			}
+
+			updated := &chmv1alpha1.CheckNodeHealth{}
+			if err := fakeClient.Get(ctx, key, updated); err != nil {
+				t.Fatalf("reading the CR: %v", err)
+			}
+			if updated.Status.FinishedAt == nil {
+				t.Fatal("the CR never reached a terminal state")
+			}
+
+			healthy := getHealthyCondition(updated.Status.Conditions)
+			if healthy == nil {
+				t.Fatal("Healthy condition not found on the CR")
+			}
+			if healthy.Status != tt.wantHealthy {
+				t.Errorf("Healthy = %q, want %q (results: %+v)", healthy.Status, tt.wantHealthy, updated.Status.Results)
+			}
+
+			updatedNode := &corev1.Node{}
+			if err := fakeClient.Get(ctx, client.ObjectKey{Name: "node-1"}, updatedNode); err != nil {
+				t.Fatalf("reading the node: %v", err)
+			}
+
+			assertOnlyNodeCondition(t, updatedNode, tt.wantNodeCondition, corev1.ConditionStatus(tt.wantHealthy))
+		})
+	}
+}
+
+// assertOnlyNodeCondition checks the node carries want with the given status and does not carry the
+// other health condition.
+func assertOnlyNodeCondition(t *testing.T, node *corev1.Node, want corev1.NodeConditionType, wantStatus corev1.ConditionStatus) {
+	t.Helper()
+
+	got := getNodeConditionByType(node.Status.Conditions, want)
+	if got == nil {
+		t.Fatalf("%s condition not found on the node, conditions = %+v", want, node.Status.Conditions)
+	}
+	if got.Status != wantStatus {
+		t.Errorf("node %s = %q, want %q", want, got.Status, wantStatus)
+	}
+	other := otherNodeConditionType(want)
+	if c := getNodeConditionByType(node.Status.Conditions, other); c != nil {
+		t.Errorf("node also carries %s = %+v, want it absent", other, c)
+	}
+}
+
+// TestUpdateNodeConditionClearsTheOtherCondition covers a node that already carries the condition it
+// is no longer routed to, which happens when a node starts or stops being seen as a GPU node.
+func TestUpdateNodeConditionClearsTheOtherCondition(t *testing.T) {
+	tests := []struct {
+		name string
+		// stale is the condition already on the node before the check runs.
+		stale corev1.NodeConditionType
+		info  gpuNodeInfo
+		want  corev1.NodeConditionType
+	}{
+		{
+			name:  "gpu node drops a leftover NodeHealthy",
+			stale: NodeConditionNodeHealthy,
+			info:  gpuNodeInfo{isGPUNode: true},
+			want:  NodeConditionGPUNodeHealthy,
+		},
+		{
+			name:  "non-gpu node drops a leftover GPUNodeHealthy",
+			stale: NodeConditionGPUNodeHealthy,
+			info:  gpuNodeInfo{},
+			want:  NodeConditionNodeHealthy,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			reconciler, fakeClient, _ := setupTest()
+			reconciler.EnableNodeCondition = true
+			reconciler.CircuitBreakers = NewNodeConditionCircuitBreakers(DefaultCircuitBreakerThreshold, DefaultCircuitBreakerWindow, DefaultCircuitBreakerCooldown)
+
+			node := &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{Name: "node-1", Labels: map[string]string{"kubernetes.io/os": "linux"}},
+				Status: corev1.NodeStatus{
+					Conditions: []corev1.NodeCondition{
+						{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+						{Type: tt.stale, Status: corev1.ConditionFalse, Reason: ReasonCheckFailed},
+					},
+				},
+			}
+			if err := fakeClient.Create(ctx, node); err != nil {
+				t.Fatalf("creating the node: %v", err)
+			}
+
+			cnh := testCNH("cnh-switch")
+			cnh.Status.Conditions = []metav1.Condition{{
+				Type:               ConditionTypeHealthy,
+				Status:             metav1.ConditionTrue,
+				LastTransitionTime: metav1.Now(),
+				Reason:             ReasonCheckPassed,
+			}}
+			if err := reconciler.updateNodeCondition(ctx, cnh, tt.info); err != nil {
+				t.Fatalf("updateNodeCondition returned error: %v", err)
+			}
+
+			updatedNode := &corev1.Node{}
+			if err := fakeClient.Get(ctx, client.ObjectKey{Name: "node-1"}, updatedNode); err != nil {
+				t.Fatalf("reading the node: %v", err)
+			}
+
+			assertOnlyNodeCondition(t, updatedNode, tt.want, corev1.ConditionTrue)
+
+			// Unrelated conditions owned by other controllers must survive.
+			if getNodeConditionByType(updatedNode.Status.Conditions, corev1.NodeReady) == nil {
+				t.Error("the Ready condition was dropped")
+			}
+		})
+	}
+}
+
+// TestCircuitBreakersAreIndependent checks that a run of failures on one kind of node does not open
+// the breaker guarding the other kind's condition.
+func TestCircuitBreakersAreIndependent(t *testing.T) {
+	tests := []struct {
+		name string
+		// failingNodeIsGPU picks which kind of node produces the run of failures.
+		failingNodeIsGPU bool
+	}{
+		{name: "gpu failures leave the NodeHealthy breaker closed", failingNodeIsGPU: true},
+		{name: "non-gpu failures leave the GPUNodeHealthy breaker closed", failingNodeIsGPU: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			reconciler, fakeClient, _ := setupTest()
+			reconciler.EnableGPUChecks = true
+			reconciler.EnableNodeCondition = true
+			reconciler.CircuitBreakers = NewNodeConditionCircuitBreakers(DefaultCircuitBreakerThreshold, DefaultCircuitBreakerWindow, DefaultCircuitBreakerCooldown)
+
+			failing := gpuNodeInfo{isGPUNode: tt.failingNodeIsGPU}
+			other := gpuNodeInfo{isGPUNode: !tt.failingNodeIsGPU}
+
+			node := &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{Name: "node-1", Labels: map[string]string{"kubernetes.io/os": "linux"}},
+			}
+			if tt.failingNodeIsGPU {
+				node = gpuNode("node-1")
+			}
+			if err := fakeClient.Create(ctx, node); err != nil {
+				t.Fatalf("creating the node: %v", err)
+			}
+
+			// Run more consecutive failures than the threshold on one kind of node.
+			for i := 0; i < DefaultCircuitBreakerThreshold+1; i++ {
+				cnh := testCNH(fmt.Sprintf("cnh-failure-%d", i))
+				if err := fakeClient.Create(ctx, cnh); err != nil {
+					t.Fatalf("creating the CR: %v", err)
+				}
+				cnh.Status.Results = []chmv1alpha1.CheckResult{
+					{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusUnhealthy, ErrorCode: "NetworkConnectivityFailed"},
+					{Name: "NcclAllReduce", Status: chmv1alpha1.CheckStatusHealthy},
+					{Name: "GpuBandwidth", Status: chmv1alpha1.CheckStatusHealthy},
+				}
+				if err := fakeClient.Status().Update(ctx, cnh); err != nil {
+					t.Fatalf("seeding reported results: %v", err)
+				}
+				if err := fakeClient.Create(ctx, finishedCheckerPod(cnh.Name)); err != nil {
+					t.Fatalf("creating the checker pod: %v", err)
+				}
+
+				key := types.NamespacedName{Name: cnh.Name}
+				for j := 0; j < 3; j++ {
+					if _, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: key}); err != nil {
+						t.Fatalf("reconcile of %s returned error: %v", cnh.Name, err)
+					}
+				}
+			}
+
+			if reconciler.CircuitBreakers.For(failing).Allow() {
+				t.Error("the breaker for the failing node kind stayed closed, want it open")
+			}
+			if !reconciler.CircuitBreakers.For(other).Allow() {
+				t.Error("the breaker for the other node kind opened, want it closed")
+			}
+		})
 	}
 }
 
@@ -1017,6 +1440,8 @@ func TestRecordMissingResults(t *testing.T) {
 	tests := []struct {
 		name string
 		info gpuNodeInfo
+		// enableGPUChecks gates the intrusive checks, which is what makes them expected.
+		enableGPUChecks bool
 		// reported is seeded before the call and must survive it.
 		reported  []string
 		wantAdded []string
@@ -1028,10 +1453,17 @@ func TestRecordMissingResults(t *testing.T) {
 			wantAdded: []string{"PodNetwork"},
 		},
 		{
-			name:      "gpu node also fills the gpu checks",
+			name:            "gpu node also fills the gpu checks",
+			info:            gpuNodeInfo{isGPUNode: true},
+			enableGPUChecks: true,
+			reported:        []string{"PodStartup", "PodNetwork", "NcclAllReduce"},
+			wantAdded:       []string{"GpuBandwidth"},
+		},
+		{
+			name:      "gpu node without the checks only fills the base checks",
 			info:      gpuNodeInfo{isGPUNode: true},
-			reported:  []string{"PodStartup", "PodNetwork", "NcclAllReduce"},
-			wantAdded: []string{"GpuBandwidth"},
+			reported:  []string{"PodStartup"},
+			wantAdded: []string{"PodNetwork"},
 		},
 		{
 			name:      "non-gpu node does not fill the gpu checks",
@@ -1046,6 +1478,7 @@ func TestRecordMissingResults(t *testing.T) {
 			t.Parallel()
 
 			reconciler, c, _ := setupTest()
+			reconciler.EnableGPUChecks = tt.enableGPUChecks
 			cnh := testCNH("cnh-1")
 			if err := c.Create(context.Background(), cnh); err != nil {
 				t.Fatalf("creating the CR: %v", err)
@@ -1059,7 +1492,7 @@ func TestRecordMissingResults(t *testing.T) {
 				t.Fatalf("seeding results: %v", err)
 			}
 
-			if err := reconciler.recordMissingResults(context.Background(), cnh, tt.info); err != nil {
+			if err := reconciler.recordMissingResults(context.Background(), cnh, reconciler.checkerSpecFor(tt.info)); err != nil {
 				t.Fatalf("recordMissingResults returned error: %v", err)
 			}
 

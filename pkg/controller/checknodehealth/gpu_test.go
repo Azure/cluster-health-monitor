@@ -1,7 +1,6 @@
 package checknodehealth
 
 import (
-	"context"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -9,14 +8,13 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-func TestGPUNodeInfoFor(t *testing.T) {
+func TestGPUNodeInfoFrom(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
 		name string
 		// node is nil when the target node does not exist.
 		node          *corev1.Node
-		wantErr       bool
 		wantIsGPUNode bool
 		wantCount     int64
 		wantSKU       string
@@ -83,9 +81,10 @@ func TestGPUNodeInfoFor(t *testing.T) {
 			wantSKU:       "Standard_D8d_v5",
 		},
 		{
-			name:    "target node does not exist",
-			node:    nil,
-			wantErr: true,
+			// A deleted node is reported as a non-GPU node so the check can still reach a terminal
+			// state, matching how IsSupported treats a missing node.
+			name: "target node does not exist",
+			node: nil,
 		},
 	}
 
@@ -93,28 +92,7 @@ func TestGPUNodeInfoFor(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			reconciler, fakeClient, _ := setupTest()
-			reconciler.EnableGPUChecks = true
-			ctx := context.Background()
-
-			nodeName := "does-not-exist"
-			if tt.node != nil {
-				if err := fakeClient.Create(ctx, tt.node); err != nil {
-					t.Fatalf("Failed to create node: %v", err)
-				}
-				nodeName = tt.node.Name
-			}
-
-			info, err := reconciler.gpuNodeInfoFor(ctx, nodeName)
-			if tt.wantErr {
-				if err == nil {
-					t.Fatal("gpuNodeInfoFor returned no error, want one")
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("gpuNodeInfoFor returned error: %v", err)
-			}
+			info := gpuNodeInfoFrom(tt.node)
 
 			if info.isGPUNode != tt.wantIsGPUNode {
 				t.Errorf("isGPUNode = %v, want %v", info.isGPUNode, tt.wantIsGPUNode)
@@ -126,22 +104,5 @@ func TestGPUNodeInfoFor(t *testing.T) {
 				t.Errorf("sku = %q, want %q", info.sku, tt.wantSKU)
 			}
 		})
-	}
-}
-
-// With the gate off the controller must not read the Node at all, so a missing node is not
-// an error.
-func TestGPUNodeInfoForGateOffSkipsNodeRead(t *testing.T) {
-	t.Parallel()
-
-	reconciler, _, _ := setupTest()
-	reconciler.EnableGPUChecks = false
-
-	info, err := reconciler.gpuNodeInfoFor(context.Background(), "does-not-exist")
-	if err != nil {
-		t.Fatalf("gpuNodeInfoFor returned error: %v", err)
-	}
-	if info.isGPUNode {
-		t.Error("isGPUNode = true, want false when GPU checks are disabled")
 	}
 }
