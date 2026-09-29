@@ -1,0 +1,7 @@
+#!/fake-gpu-tools/busybox sh
+set -eu
+
+# Give Kind time to publish the container's Running transition before the tiny fake benchmarks begin
+# writing status. The production GPU image naturally has a much longer-running checker process.
+/fake-gpu-tools/busybox sleep 20
+exec /real-nodechecker "$@"

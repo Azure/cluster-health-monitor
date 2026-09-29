@@ -1,0 +1,11 @@
+#!/fake-gpu-tools/busybox sh
+set -eu
+
+if [ "$#" -ne 1 ] || [ "$1" != "-L" ]; then
+  echo "expected nvidia-smi -L, got: $*" >&2
+  exit 41
+fi
+
+for i in 0 1 2 3 4 5 6 7; do
+  echo "GPU $i: NVIDIA H100 80GB HBM3 (UUID: GPU-$i)"
+done

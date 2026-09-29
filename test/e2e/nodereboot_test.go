@@ -15,7 +15,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-var _ = Describe("NodeReboot Controller", Ordered, ContinueOnFailure, Label("node-reboot"), func() {
+// This suite mutates every Node and restarts the shared controller, so it cannot safely overlap
+// suites that create synthetic nodes or depend on stable controller state.
+var _ = Describe("NodeReboot Controller", Serial, Ordered, ContinueOnFailure, Label("node-reboot"), func() {
 	var (
 		ctx       context.Context
 		k8sClient client.Client
@@ -381,7 +383,8 @@ var _ = Describe("NodeReboot Controller", Ordered, ContinueOnFailure, Label("nod
 		}, "45s", "3s").Should(BeTrue(), "No CheckNodeHealth CR should be created for a Windows node")
 	})
 
-	It("should not create duplicate CheckNodeHealth CRs for the same bootID", func() {		By("Getting the first node")
+	It("should not create duplicate CheckNodeHealth CRs for the same bootID", func() {
+		By("Getting the first node")
 		nodeList, err := clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 		Expect(err).NotTo(HaveOccurred())
 		Expect(nodeList.Items).NotTo(BeEmpty())
