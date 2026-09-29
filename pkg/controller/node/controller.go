@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"slices"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -49,9 +50,10 @@ const (
 	// only have their annotation initialized without a health check.
 	NewNodeThreshold = 5 * time.Minute
 
-	// NodeConditionTTL is the maximum age of the NodeHealthy condition before
-	// it is garbage collected. Stale conditions are removed to avoid leaving
-	// outdated health signals on nodes after the check results expire.
+	// NodeConditionTTL is how long a node health condition may go without being
+	// confirmed by a check before it is garbage collected. Stale conditions are
+	// removed to avoid leaving outdated health signals on nodes after the check
+	// results expire.
 	NodeConditionTTL = 30 * time.Minute
 
 	// NodeReadyRequeueInterval is how long to wait before re-checking a node
@@ -82,6 +84,12 @@ const (
 	// yet fully initialized.
 	KarpenterInitializedLabel = "karpenter.sh/initialized"
 )
+
+// managedNodeConditions are the Node conditions written by the CheckNodeHealth controller.
+var managedNodeConditions = []corev1.NodeConditionType{
+	checknodehealth.NodeConditionNodeHealthy,
+	checknodehealth.NodeConditionGPUNodeHealthy,
+}
 
 // NodeRebootReconciler watches Node objects and creates CheckNodeHealth CRs
 // when a node reboot is detected via a change in bootID.
@@ -116,8 +124,8 @@ func (r *NodeRebootReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{}, nil
 	}
 
-	// Garbage collect stale NodeHealthy condition
-	if err := r.removeStaleNodeCondition(ctx, node); err != nil {
+	// Garbage collect stale node health conditions
+	if err := r.removeStaleNodeConditions(ctx, node); err != nil {
 		klog.ErrorS(err, "Failed to remove stale node condition", "node", node.Name)
 		return ctrl.Result{}, err
 	}
@@ -333,31 +341,40 @@ func notReadyExceeds(node *corev1.Node, d time.Duration) bool {
 	return time.Since(node.CreationTimestamp.Time) > d
 }
 
-// removeStaleNodeCondition removes the NodeHealthy condition from the node
-// if its LastTransitionTime is older than NodeConditionTTL.
-func (r *NodeRebootReconciler) removeStaleNodeCondition(ctx context.Context, node *corev1.Node) error {
-	for i, c := range node.Status.Conditions {
-		if c.Type != checknodehealth.NodeConditionNodeHealthy {
+// removeStaleNodeConditions removes the node health conditions written by the CheckNodeHealth
+// controller that have not been confirmed by a check within NodeConditionTTL.
+func (r *NodeRebootReconciler) removeStaleNodeConditions(ctx context.Context, node *corev1.Node) error {
+	kept := make([]corev1.NodeCondition, 0, len(node.Status.Conditions))
+	var removed []string
+	for _, c := range node.Status.Conditions {
+		if slices.Contains(managedNodeConditions, c.Type) && time.Since(lastConfirmed(c)) > NodeConditionTTL {
+			klog.InfoS("Removing stale node health condition", "node", node.Name,
+				"type", c.Type, "lastConfirmed", lastConfirmed(c))
+			removed = append(removed, string(c.Type))
 			continue
 		}
+		kept = append(kept, c)
+	}
 
-		if time.Since(c.LastTransitionTime.Time) <= NodeConditionTTL {
-			return nil
-		}
-
-		klog.InfoS("Removing stale NodeHealthy condition", "node", node.Name,
-			"lastTransitionTime", c.LastTransitionTime)
-
-		patch := client.MergeFrom(node.DeepCopy())
-		node.Status.Conditions = append(node.Status.Conditions[:i], node.Status.Conditions[i+1:]...)
-		if err := r.Status().Patch(ctx, node, patch); err != nil {
-			return fmt.Errorf("failed to remove stale NodeHealthy condition from node %s: %w", node.Name, err)
-		}
-
+	if len(removed) == 0 {
 		return nil
 	}
 
+	patch := client.MergeFrom(node.DeepCopy())
+	node.Status.Conditions = kept
+	if err := r.Status().Patch(ctx, node, patch); err != nil {
+		return fmt.Errorf("failed to remove stale conditions %v from node %s: %w", removed, node.Name, err)
+	}
+
 	return nil
+}
+
+// lastConfirmed returns when a check last confirmed the condition.
+func lastConfirmed(c corev1.NodeCondition) time.Time {
+	if c.LastHeartbeatTime.IsZero() {
+		return c.LastTransitionTime.Time
+	}
+	return c.LastHeartbeatTime.Time
 }
 
 // updateBootIDAnnotation patches the node's last-boot-id annotation.

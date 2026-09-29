@@ -1,13 +1,10 @@
 package checknodehealth
 
 import (
-	"context"
-	"fmt"
 	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const (
@@ -32,25 +29,23 @@ var gpuCheckerNames = []string{"NcclAllReduce", "GpuBandwidth"}
 
 // gpuNodeInfo describes the GPU capabilities of a CheckNodeHealth's target node.
 type gpuNodeInfo struct {
+	// isGPUNode decides which Node health condition the result is published as. See NodeConditionGPUNodeHealthy.
 	isGPUNode bool
-	// gpuCount is the allocatable GPU count, which is zero on driver-only pools even though
-	// the node has GPUs.
+	// gpuCount is the node's allocatable gpu extended resource, not how many the node physically has.
+	// Only the device plugin publishes it, so driver-only pools report zero while still having GPUs.
 	gpuCount int64
 	sku      string
 }
 
-// gpuNodeInfoFor reads the target node through the uncached reader so allocatable GPU
-// resources and labels are current. A node counts as a GPU node when it advertises
-// allocatable nvidia GPUs or carries the accelerator label with value "nvidia". AMD GPUs
-// are currently not supported.
-func (r *CheckNodeHealthReconciler) gpuNodeInfoFor(ctx context.Context, nodeName string) (gpuNodeInfo, error) {
-	if !r.EnableGPUChecks {
-		return gpuNodeInfo{}, nil
-	}
-
-	node := &corev1.Node{}
-	if err := r.APIReader.Get(ctx, client.ObjectKey{Name: nodeName}, node); err != nil {
-		return gpuNodeInfo{}, fmt.Errorf("failed to get node %s: %w", nodeName, err)
+// gpuNodeInfoFrom derives the GPU capabilities of a CheckNodeHealth's target node. A node counts as
+// a GPU node when it advertises allocatable nvidia GPUs or carries the accelerator label with value
+// "nvidia". AMD GPUs are currently not supported. A nil node is treated as non-GPU.
+//
+// The node must be read through the uncached reader so allocatable GPU resources and labels are
+// current.
+func gpuNodeInfoFrom(node *corev1.Node) gpuNodeInfo {
+	if node == nil {
+		return gpuNodeInfo{}
 	}
 
 	var allocatable int64
@@ -62,5 +57,5 @@ func (r *CheckNodeHealthReconciler) gpuNodeInfoFor(ctx context.Context, nodeName
 		isGPUNode: allocatable > 0 || strings.EqualFold(node.Labels[gpuAcceleratorLabel], "nvidia"),
 		gpuCount:  allocatable,
 		sku:       node.Labels[instanceTypeLabel],
-	}, nil
+	}
 }

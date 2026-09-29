@@ -51,7 +51,7 @@ func (r *CheckNodeHealthReconciler) cleanupPod(ctx context.Context, cnh *chmv1al
 	return nil
 }
 
-func (r *CheckNodeHealthReconciler) ensureHealthCheckPod(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, info gpuNodeInfo) (*corev1.Pod, error) {
+func (r *CheckNodeHealthReconciler) ensureHealthCheckPod(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, spec checkerSpec) (*corev1.Pod, error) {
 	// Check if pods already exist using label selector
 	podList := &corev1.PodList{}
 	listOpts := []client.ListOption{
@@ -74,7 +74,7 @@ func (r *CheckNodeHealthReconciler) ensureHealthCheckPod(ctx context.Context, cn
 	}
 
 	// Create the pod
-	pod, err := r.buildHealthCheckPod(cnh, info)
+	pod, err := r.buildHealthCheckPod(cnh, spec)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build health check pod: %w", err)
 	}
@@ -93,7 +93,7 @@ func (r *CheckNodeHealthReconciler) ensureHealthCheckPod(ctx context.Context, cn
 	return createdPod, nil
 }
 
-func (r *CheckNodeHealthReconciler) buildHealthCheckPod(cnh *chmv1alpha1.CheckNodeHealth, info gpuNodeInfo) (*corev1.Pod, error) {
+func (r *CheckNodeHealthReconciler) buildHealthCheckPod(cnh *chmv1alpha1.CheckNodeHealth, spec checkerSpec) (*corev1.Pod, error) {
 	podName := generateHealthCheckPodName(cnh)
 	labels := map[string]string{
 		CheckNodeHealthLabel: cnh.Name,
@@ -129,7 +129,7 @@ func (r *CheckNodeHealthReconciler) buildHealthCheckPod(cnh *chmv1alpha1.CheckNo
 			Containers: []corev1.Container{
 				{
 					Name:    "node-health-checker",
-					Image:   r.CheckerPodImage,
+					Image:   spec.image,
 					Command: []string{"/nodechecker"},
 					Args:    []string{fmt.Sprintf("--name=%s", cnh.Name)},
 					SecurityContext: &corev1.SecurityContext{
@@ -150,17 +150,16 @@ func (r *CheckNodeHealthReconciler) buildHealthCheckPod(cnh *chmv1alpha1.CheckNo
 		return nil, err
 	}
 
-	if info.isGPUNode {
-		applyGPUPodShape(pod, info, r.GPUCheckerPodImage)
+	if spec.gpu != nil {
+		configureGPUChecker(&pod.Spec.Containers[0], *spec.gpu)
 	}
 
 	return pod, nil
 }
 
-// applyGPUPodShape swaps in the GPU image and gives the pod what the benchmarks need.
-func applyGPUPodShape(pod *corev1.Pod, info gpuNodeInfo, image string) {
-	c := &pod.Spec.Containers[0]
-	c.Image = image
+// configureGPUChecker turns the GPU checks on in the checker container and gets the node's GPU
+// devices into it.
+func configureGPUChecker(c *corev1.Container, info gpuNodeInfo) {
 	c.Args = append(c.Args,
 		"--enable-gpu-checks",
 		fmt.Sprintf("--sku=%s", info.sku),

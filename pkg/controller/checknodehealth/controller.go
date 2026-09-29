@@ -70,36 +70,59 @@ const (
 	// ErrorCodeCheckNotReported marks a check whose pod ended before reporting it.
 	ErrorCodeCheckNotReported = "CheckNotReported"
 
-	// NodeConditionNodeHealthy is the condition type set on Node objects
-	// to report health status from CheckNodeHealth checks.
+	// NodeConditionNodeHealthy is the condition type set on non-GPU Nodes to report ConditionTypeHealthy
+	// from CheckNodeHealth checks.
 	NodeConditionNodeHealthy corev1.NodeConditionType = "kubernetes.azure.com/NodeHealthy"
+
+	// NodeConditionGPUNodeHealthy is the condition type set on GPU Node objects to report
+	// ConditionTypeHealthy. GPU nodes report on their own condition because GPU nodes should
+	// not be affected by existing remediation triggered by NodeHealthy.
+	NodeConditionGPUNodeHealthy corev1.NodeConditionType = "kubernetes.azure.com/GPUNodeHealthy"
 )
+
+// nodeConditionTypeFor returns the Node condition the result is published as.
+func nodeConditionTypeFor(info gpuNodeInfo) corev1.NodeConditionType {
+	if info.isGPUNode {
+		return NodeConditionGPUNodeHealthy
+	}
+	return NodeConditionNodeHealthy
+}
 
 // baseCheckerNames are the checks every node reports. PodStartup comes from the
 // controller itself; the rest come from the checker pod, listed in pkg/nodecheckerrunner/runner.go.
 var baseCheckerNames = []string{"PodStartup", "PodNetwork"}
 
-// expectedCheckerNames are the checks this node owes a result for: all of them must be present and
-// Healthy for the overall condition to be True. Anything here that goes unreported is recorded as
-// Unknown.
-func expectedCheckerNames(info gpuNodeInfo) []string {
-	if !info.isGPUNode {
-		return baseCheckerNames
-	}
-	return append(slices.Clone(baseCheckerNames), gpuCheckerNames...)
+// checkerSpec is everything that differs between the ordinary checker run and the GPU one. The
+// reconciler selects it once per CheckNodeHealth, so the EnableGPUChecks gate is read in one place.
+type checkerSpec struct {
+	image      string
+	podTimeout time.Duration
+	// checkerNames are the checks this node owes a result for. Anything unreported becomes Unknown.
+	checkerNames []string
+	// gpu is set when the intrusive GPU checks run, and nil otherwise.
+	gpu *gpuNodeInfo
 }
 
-// podTimeoutFor returns how long the checker pod for this node is allowed to take.
-func podTimeoutFor(info gpuNodeInfo) time.Duration {
-	if info.isGPUNode {
-		return GPUPodTimeout
+// checkerSpecFor picks the checker variant for a node.
+func (r *CheckNodeHealthReconciler) checkerSpecFor(info gpuNodeInfo) checkerSpec {
+	if !info.isGPUNode || !r.EnableGPUChecks {
+		return checkerSpec{
+			image:        r.CheckerPodImage,
+			podTimeout:   PodTimeout,
+			checkerNames: baseCheckerNames,
+		}
 	}
-	return PodTimeout
+	return checkerSpec{
+		image:        r.GPUCheckerPodImage,
+		podTimeout:   GPUPodTimeout,
+		checkerNames: append(slices.Clone(baseCheckerNames), gpuCheckerNames...),
+		gpu:          &info,
+	}
 }
 
 // recordMissingResults marks every check the pod never reported as Unknown. Refetched so a
 // result written after this reconcile began is left alone.
-func (r *CheckNodeHealthReconciler) recordMissingResults(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, info gpuNodeInfo) error {
+func (r *CheckNodeHealthReconciler) recordMissingResults(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, spec checkerSpec) error {
 	return k8sretry.RetryOnConflict(k8sretry.DefaultRetry, func() error {
 		latest := &chmv1alpha1.CheckNodeHealth{}
 		if err := r.APIReader.Get(ctx, client.ObjectKey{Name: cnh.Name}, latest); err != nil {
@@ -107,7 +130,7 @@ func (r *CheckNodeHealthReconciler) recordMissingResults(ctx context.Context, cn
 		}
 
 		added := false
-		for _, name := range expectedCheckerNames(info) {
+		for _, name := range spec.checkerNames {
 			if found, _ := r.findResult(latest, name); found {
 				continue
 			}
@@ -135,14 +158,14 @@ func (r *CheckNodeHealthReconciler) recordMissingResults(ctx context.Context, cn
 type CheckNodeHealthReconciler struct {
 	client.Client
 	Scheme              *runtime.Scheme
-	APIReader           client.Reader                // Direct API server reader (bypasses cache) for node operations
-	CheckerPodLabel     string                       // Label to identify health check pods
-	CheckerPodImage     string                       // Image for the health check pod
-	GPUCheckerPodImage  string                       // Image for the health check pod on GPU nodes
-	CheckerPodNamespace string                       // Namespace to create pods in
-	EnableNodeCondition bool                         // Whether to set NodeHealthy condition on the Node
-	CircuitBreaker      *NodeConditionCircuitBreaker // Circuit breaker for node condition updates
-	EnableGPUChecks     bool                         // Whether to run GPU checks on supported GPU nodes
+	APIReader           client.Reader                 // Direct API server reader (bypasses cache) for node operations
+	CheckerPodLabel     string                        // Label to identify health check pods
+	CheckerPodImage     string                        // Image for the health check pod
+	GPUCheckerPodImage  string                        // Image for the health check pod on GPU nodes
+	CheckerPodNamespace string                        // Namespace to create pods in
+	EnableNodeCondition bool                          // Whether to set NodeHealthy condition on the Node
+	CircuitBreakers     *NodeConditionCircuitBreakers // Circuit breakers for node condition updates. Required when EnableNodeCondition is set.
+	EnableGPUChecks     bool                          // Whether to run GPU checks on supported GPU nodes
 }
 
 // +kubebuilder:rbac:groups=clusterhealthmonitor.azure.com,resources=checknodehealths,verbs=get;list;watch;create;update;patch;delete
@@ -208,30 +231,31 @@ func (r *CheckNodeHealthReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return r.handleCompletion(ctx, cnh)
 	}
 
-	supported, reason, err := r.isSupportedNode(ctx, cnh.Spec.NodeRef.Name)
+	// The target node drives both whether we check it at all and which condition the result is
+	// published as, so it is read once here.
+	node, err := r.readTargetNode(ctx, cnh.Spec.NodeRef.Name)
 	if err != nil {
 		klog.ErrorS(err, "Failed to read target node", "node", cnh.Spec.NodeRef.Name)
 		return ctrl.Result{}, err
 	}
-	if !supported {
-		klog.InfoS("Target node is not supported, skipping health check",
-			"name", cnh.Name, "node", cnh.Spec.NodeRef.Name, "reason", reason)
-		return r.markUnsupported(ctx, cnh, reason)
+	info := gpuNodeInfoFrom(node)
+
+	if node != nil {
+		if supported, reason := utils.IsSupported(node); !supported {
+			klog.InfoS("Target node is not supported, skipping health check",
+				"name", cnh.Name, "node", cnh.Spec.NodeRef.Name, "reason", reason)
+			return r.markUnsupported(ctx, cnh, info, reason)
+		}
 	}
 
-	// GPU applicability is determined from the node, so every creation path behaves the same.
-	info, err := r.gpuNodeInfoFor(ctx, cnh.Spec.NodeRef.Name)
-	if err != nil {
-		klog.ErrorS(err, "Failed to read target node", "node", cnh.Spec.NodeRef.Name)
-		return ctrl.Result{}, err
-	}
+	spec := r.checkerSpecFor(info)
 	if info.isGPUNode {
-		klog.InfoS("Detected GPU node, adding GPU checks",
-			"name", cnh.Name, "node", cnh.Spec.NodeRef.Name, "gpuCount", info.gpuCount, "sku", info.sku)
+		klog.InfoS("Detected GPU node", "name", cnh.Name, "node", cnh.Spec.NodeRef.Name,
+			"gpuCount", info.gpuCount, "sku", info.sku, "runGPUChecks", spec.gpu != nil)
 	}
 
 	// Check if pod exists and get its status, or create one if it doesn't exist
-	pod, err := r.ensureHealthCheckPod(ctx, cnh, info)
+	pod, err := r.ensureHealthCheckPod(ctx, cnh, spec)
 	if err != nil {
 		klog.ErrorS(err, "Failed to ensure health check pod")
 		return ctrl.Result{}, err
@@ -243,19 +267,19 @@ func (r *CheckNodeHealthReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, err
 	}
 
-	if err := r.updatePodstartCheckerResult(ctx, cnh, pod, podTimeoutFor(info)); err != nil {
+	if err := r.updatePodstartCheckerResult(ctx, cnh, pod, spec.podTimeout); err != nil {
 		klog.ErrorS(err, "Failed to update PodStartup check result")
 		return ctrl.Result{}, err
 	}
 
 	// Determine the overall result based on pod status
-	return r.determineCheckResult(ctx, cnh, pod, info)
+	return r.determineCheckResult(ctx, cnh, pod, info, spec)
 }
 
-func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, pod *corev1.Pod, info gpuNodeInfo) (ctrl.Result, error) {
+func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, pod *corev1.Pod, info gpuNodeInfo, spec checkerSpec) (ctrl.Result, error) {
 	// Check if pod succeeded or failed (completed), or if it's timed out
 	isPodCompleted := pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed
-	timeout := podTimeoutFor(info)
+	timeout := spec.podTimeout
 
 	if isPodCompleted || isPodTimeout(pod, timeout) {
 		if isPodCompleted {
@@ -265,7 +289,7 @@ func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cn
 		}
 
 		// Step 1: Mark as completed (determines health based on Results)
-		healthyStatus, err := r.markCompleted(ctx, cnh, info)
+		healthyStatus, err := r.markCompleted(ctx, cnh, info, spec)
 		if err != nil {
 			klog.ErrorS(err, "Failed to mark as completed")
 			return ctrl.Result{}, err
@@ -273,15 +297,17 @@ func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cn
 
 		// Step 2: Update node condition based on health status
 		if r.EnableNodeCondition {
-			if err := r.updateNodeCondition(ctx, cnh); err != nil {
+			if err := r.updateNodeCondition(ctx, cnh, info); err != nil {
 				klog.ErrorS(err, "Failed to update node condition, continuing with cleanup", "node", cnh.Spec.NodeRef.Name)
 			}
 
-			// Track consecutive unhealthy/healthy results for circuit breaker
+			// Track consecutive unhealthy/healthy results for the circuit breaker guarding the
+			// condition this node reports to.
+			circuitBreaker := r.CircuitBreakers.For(info)
 			if healthyStatus == metav1.ConditionFalse {
-				r.CircuitBreaker.RecordUnhealthyNode()
+				circuitBreaker.RecordUnhealthyNode()
 			} else {
-				r.CircuitBreaker.RecordHealthyNode()
+				circuitBreaker.RecordHealthyNode()
 			}
 		}
 
@@ -300,22 +326,24 @@ func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cn
 	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 }
 
-func (r *CheckNodeHealthReconciler) isSupportedNode(ctx context.Context, nodeName string) (bool, string, error) {
+// readTargetNode fetches the CheckNodeHealth's target node. A node that no longer exists yields a
+// nil node rather than an error, so a check whose target was deleted still reaches a terminal state
+// instead of requeueing until the CR expires.
+func (r *CheckNodeHealthReconciler) readTargetNode(ctx context.Context, nodeName string) (*corev1.Node, error) {
 	node := &corev1.Node{}
 	if err := r.APIReader.Get(ctx, client.ObjectKey{Name: nodeName}, node); err != nil {
 		if apierrors.IsNotFound(err) {
-			return true, "", nil
+			return nil, nil
 		}
-		return false, "", fmt.Errorf("failed to get node %s: %w", nodeName, err)
+		return nil, fmt.Errorf("failed to get node %s: %w", nodeName, err)
 	}
-	supported, reason := utils.IsSupported(node)
-	return supported, reason, nil
+	return node, nil
 }
 
 // markUnsupported marks the CheckNodeHealth as completed with Healthy=Unknown and a
 // Unsupported reason. It intentionally does NOT set the NodeHealthy condition on the node,
 // so unsupported nodes are never flagged as unhealthy.
-func (r *CheckNodeHealthReconciler) markUnsupported(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, message string) (ctrl.Result, error) {
+func (r *CheckNodeHealthReconciler) markUnsupported(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, info gpuNodeInfo, message string) (ctrl.Result, error) {
 	now := metav1.Now()
 	if cnh.Status.StartedAt == nil {
 		cnh.Status.StartedAt = &now
@@ -336,7 +364,7 @@ func (r *CheckNodeHealthReconciler) markUnsupported(ctx context.Context, cnh *ch
 
 	// Unsupported nodes are a terminal outcome that never reaches markCompleted, so count them
 	// here to keep the outcome counter a complete record of every CheckNodeHealth.
-	recordNodeCheckMetrics(cnh, metav1.ConditionUnknown, ReasonCheckUnsupported)
+	recordNodeCheckMetrics(cnh, info, metav1.ConditionUnknown, ReasonCheckUnsupported)
 
 	// No pod is created for unsupported nodes, but clean up defensively in case one exists.
 	if err := r.cleanupPod(ctx, cnh); err != nil {
@@ -370,10 +398,10 @@ func (r *CheckNodeHealthReconciler) markStarted(ctx context.Context, cnh *chmv1a
 	return nil
 }
 
-func (r *CheckNodeHealthReconciler) markCompleted(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, info gpuNodeInfo) (metav1.ConditionStatus, error) {
+func (r *CheckNodeHealthReconciler) markCompleted(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, info gpuNodeInfo, spec checkerSpec) (metav1.ConditionStatus, error) {
 	// A check that reported nothing becomes an Unknown result here so that we only have to take into account existing checks when
 	// determining the healthy condition.
-	if err := r.recordMissingResults(ctx, cnh, info); err != nil {
+	if err := r.recordMissingResults(ctx, cnh, spec); err != nil {
 		return metav1.ConditionUnknown, fmt.Errorf("failed to record unreported results: %w", err)
 	}
 
@@ -391,33 +419,33 @@ func (r *CheckNodeHealthReconciler) markCompleted(ctx context.Context, cnh *chmv
 	}
 
 	klog.InfoS("CheckNodeHealth Result", "name", cnh.Name, "nodeName", cnh.Spec.NodeRef.Name, "status", healthyStatus, "reason", reason, "message", message)
+
 	if err := r.Status().Update(ctx, cnh); err != nil {
 		return healthyStatus, fmt.Errorf("failed to update status: %w", err)
 	}
 
-	recordNodeCheckMetrics(cnh, healthyStatus, reason)
+	recordNodeCheckMetrics(cnh, info, healthyStatus, reason)
 
 	return healthyStatus, nil
 }
 
-// updateNodeCondition sets the kubernetes.azure.com/NodeHealthy condition on the Node
-// when the CheckNodeHealth's Healthy condition is False.
-func (r *CheckNodeHealthReconciler) updateNodeCondition(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth) error {
-	// Find the Healthy condition from the CheckNodeHealth status
-	var chhHealthyCondition *metav1.Condition
+// updateNodeCondition publishes the CheckNodeHealth's Healthy condition onto the Node, as
+// NodeConditionGPUNodeHealthy for GPU nodes and NodeConditionNodeHealthy for everything else.
+func (r *CheckNodeHealthReconciler) updateNodeCondition(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, info gpuNodeInfo) error {
+	var healthy *metav1.Condition
 	for i := range cnh.Status.Conditions {
 		if cnh.Status.Conditions[i].Type == ConditionTypeHealthy {
-			chhHealthyCondition = &cnh.Status.Conditions[i]
+			healthy = &cnh.Status.Conditions[i]
 			break
 		}
 	}
 
-	if chhHealthyCondition == nil {
+	if healthy == nil {
 		return nil
 	}
 
 	// Check circuit breaker before setting the node condition
-	if !r.CircuitBreaker.Allow() {
+	if !r.CircuitBreakers.For(info).Allow() {
 		klog.InfoS("Circuit breaker is open, skipping node condition update",
 			"node", cnh.Spec.NodeRef.Name,
 			"checkNodeHealth", cnh.Name,
@@ -433,62 +461,94 @@ func (r *CheckNodeHealthReconciler) updateNodeCondition(ctx context.Context, cnh
 
 	patch := client.MergeFrom(node.DeepCopy())
 
+	conditionType := nodeConditionTypeFor(info)
 	now := metav1.Now()
-	found := false
-	for i, c := range node.Status.Conditions {
-		if c.Type == NodeConditionNodeHealthy {
-			if node.Status.Conditions[i].Status != corev1.ConditionStatus(chhHealthyCondition.Status) {
-				node.Status.Conditions[i].LastTransitionTime = now
-			}
-			node.Status.Conditions[i].Status = corev1.ConditionStatus(chhHealthyCondition.Status)
-			node.Status.Conditions[i].LastHeartbeatTime = now
-			node.Status.Conditions[i].Message = chhHealthyCondition.Message
-			node.Status.Conditions[i].Reason = chhHealthyCondition.Reason
-			found = true
-			break
-		}
-	}
-
-	if !found {
-		node.Status.Conditions = append(node.Status.Conditions, corev1.NodeCondition{
-			Type:               NodeConditionNodeHealthy,
-			Status:             corev1.ConditionStatus(chhHealthyCondition.Status),
-			LastTransitionTime: now,
-			LastHeartbeatTime:  now,
-			Message:            chhHealthyCondition.Message,
-			Reason:             chhHealthyCondition.Reason,
-		})
-	}
+	setNodeCondition(node, conditionType, *healthy, now)
+	// A node must never carry both conditions. One can be left behind when a node starts or stops
+	// being seen as a GPU node, and on a GPU node a stale NodeHealthy would keep feeding the very
+	// automation this routing exists to keep away.
+	removed := removeNodeCondition(node, otherNodeConditionType(conditionType))
 
 	if err := r.Status().Patch(ctx, node, patch); err != nil {
 		return fmt.Errorf("failed to update node %s condition: %w", nodeName, err)
 	}
 
-	klog.InfoS("Updated node condition", "node", nodeName, "type", NodeConditionNodeHealthy, "status", corev1.ConditionStatus(chhHealthyCondition.Status))
+	klog.InfoS("Updated node condition", "node", nodeName, "type", conditionType, "status", corev1.ConditionStatus(healthy.Status))
+	if removed {
+		klog.InfoS("Removed node condition that no longer applies", "node", nodeName, "type", otherNodeConditionType(conditionType))
+	}
 	return nil
 }
 
-// determineHealthyCondition determines the Healthy condition status from the reported results.
-// Checks that never reported must be filled in as Unknown before this is called, so an absent result
-// here means the node was never expected to run it.
-//
-// TODO implement some logic here to run the GPU checks in a dry-run mode or potentially exclude Unknown checks due to ErrorCodeUnknownSKU
-// and similar. That way testing and config issues do not block the status from being marked as Healthy.
+// otherNodeConditionType returns the health condition a node must not carry alongside the given one.
+func otherNodeConditionType(conditionType corev1.NodeConditionType) corev1.NodeConditionType {
+	if conditionType == NodeConditionGPUNodeHealthy {
+		return NodeConditionNodeHealthy
+	}
+	return NodeConditionGPUNodeHealthy
+}
+
+// removeNodeCondition drops the given condition from the node, reporting whether it was present.
+func removeNodeCondition(node *corev1.Node, conditionType corev1.NodeConditionType) bool {
+	for i, c := range node.Status.Conditions {
+		if c.Type == conditionType {
+			node.Status.Conditions = append(node.Status.Conditions[:i], node.Status.Conditions[i+1:]...)
+			return true
+		}
+	}
+	return false
+}
+
+// setNodeCondition upserts the Node condition carrying the given CheckNodeHealth condition.
+func setNodeCondition(node *corev1.Node, conditionType corev1.NodeConditionType, source metav1.Condition, now metav1.Time) {
+	status := corev1.ConditionStatus(source.Status)
+	for i, c := range node.Status.Conditions {
+		if c.Type != conditionType {
+			continue
+		}
+		if node.Status.Conditions[i].Status != status {
+			node.Status.Conditions[i].LastTransitionTime = now
+		}
+		node.Status.Conditions[i].Status = status
+		node.Status.Conditions[i].LastHeartbeatTime = now
+		node.Status.Conditions[i].Message = source.Message
+		node.Status.Conditions[i].Reason = source.Reason
+		return
+	}
+
+	node.Status.Conditions = append(node.Status.Conditions, corev1.NodeCondition{
+		Type:               conditionType,
+		Status:             status,
+		LastTransitionTime: now,
+		LastHeartbeatTime:  now,
+		Message:            source.Message,
+		Reason:             source.Reason,
+	})
+}
+
+// determineHealthyCondition determines the Healthy condition status from every reported result,
+// GPU checks included. Checks that never reported must be filled in as Unknown before this is
+// called, so an absent result here means the node was never expected to run it.
 func (r *CheckNodeHealthReconciler) determineHealthyCondition(cnh *chmv1alpha1.CheckNodeHealth) (metav1.ConditionStatus, string, string) {
-	message := r.formatResultsMessage(cnh)
+	return conditionFromResults(cnh.Status.Results)
+}
+
+// conditionFromResults reduces a set of check results to a condition status, reason and message.
+func conditionFromResults(results []chmv1alpha1.CheckResult) (metav1.ConditionStatus, string, string) {
+	message := formatResultsMessage(results)
 
 	// Rule 1: Check if any Result.Status == "Unhealthy"
-	if r.hasUnhealthyResult(cnh) {
+	if hasResultWithStatus(results, chmv1alpha1.CheckStatusUnhealthy) {
 		return metav1.ConditionFalse, ReasonCheckFailed, message
 	}
 
 	// Rule 2: Check if any Result.Status == "Unknown". Checked after Unhealthy so that Unhealthy takes precedence.
-	if r.hasUnknownResult(cnh) {
+	if hasResultWithStatus(results, chmv1alpha1.CheckStatusUnknown) {
 		return metav1.ConditionUnknown, ReasonCheckUnknown, message
 	}
 
 	// Rule 3: All Results.Status == "Healthy"
-	if r.allResultsHealthy(cnh) {
+	if allResultsHealthy(results) {
 		return metav1.ConditionTrue, ReasonCheckPassed, message
 	}
 
@@ -500,41 +560,31 @@ func (r *CheckNodeHealthReconciler) determineHealthyCondition(cnh *chmv1alpha1.C
 //
 //	PodStartup: Healthy
 //	PodNetwork: Unhealthy
-func (r *CheckNodeHealthReconciler) formatResultsMessage(cnh *chmv1alpha1.CheckNodeHealth) string {
-	lines := make([]string, 0, len(cnh.Status.Results))
-	for _, result := range cnh.Status.Results {
+func formatResultsMessage(results []chmv1alpha1.CheckResult) string {
+	lines := make([]string, 0, len(results))
+	for _, result := range results {
 		lines = append(lines, fmt.Sprintf("%s: %s", result.Name, result.Status))
 	}
 	return strings.Join(lines, "\n")
 }
 
-// hasUnknownResult checks whether any result reported by a checker has an Unknown status.
-func (r *CheckNodeHealthReconciler) hasUnknownResult(cnh *chmv1alpha1.CheckNodeHealth) bool {
-	for _, result := range cnh.Status.Results {
-		if result.Status == chmv1alpha1.CheckStatusUnknown {
+// hasResultWithStatus checks whether any of the results has the given status.
+func hasResultWithStatus(results []chmv1alpha1.CheckResult, status chmv1alpha1.CheckStatus) bool {
+	for _, result := range results {
+		if result.Status == status {
 			return true
 		}
 	}
 	return false
 }
 
-// hasUnhealthyResult checks whether any result reported by a checker has an Unhealthy status.
-func (r *CheckNodeHealthReconciler) hasUnhealthyResult(cnh *chmv1alpha1.CheckNodeHealth) bool {
-	for _, result := range cnh.Status.Results {
-		if result.Status == chmv1alpha1.CheckStatusUnhealthy {
-			return true
-		}
-	}
-	return false
-}
-
-// allResultsHealthy verifies that all result reported by checker has Healthy status. A CNH with no
-// results at all has not passed anything, so it is not healthy.
-func (r *CheckNodeHealthReconciler) allResultsHealthy(cnh *chmv1alpha1.CheckNodeHealth) bool {
-	if len(cnh.Status.Results) == 0 {
+// allResultsHealthy verifies that all results have a Healthy status. An empty set of results has
+// not passed anything, so it is not healthy.
+func allResultsHealthy(results []chmv1alpha1.CheckResult) bool {
+	if len(results) == 0 {
 		return false
 	}
-	for _, result := range cnh.Status.Results {
+	for _, result := range results {
 		if result.Status != chmv1alpha1.CheckStatusHealthy {
 			return false
 		}
