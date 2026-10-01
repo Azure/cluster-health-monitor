@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -85,6 +86,55 @@ this topology can support:
 Please revise the conflict and try again.
 --------------------------------------------------------------------------
 `
+
+func TestNCCLArgs(t *testing.T) {
+	t.Parallel()
+
+	const reportPath = "/tmp/report.json"
+	tests := []struct {
+		name     string
+		gpuCount int
+		profile  skuProfile
+		want     []string
+	}{
+		{
+			name:     "without topology file",
+			gpuCount: 2,
+			profile:  skuProfile{NcclMessageSize: "4G"},
+			want: []string{
+				"-mca", "plm", "isolated", "-np", "2", "--map-by", "ppr:2:node",
+				"-bind-to", "numa", "-mca", "coll_hcoll_enable", "0",
+				"-x", "LD_LIBRARY_PATH", "-x", "CUDA_DEVICE_ORDER=PCI_BUS_ID",
+				"-x", "NCCL_IB_PCI_RELAXED_ORDERING=1",
+				"/usr/local/bin/all_reduce_perf", "-b", "4G", "-e", "4G",
+				"-f", "2", "-g", "1", "-c", "1", "-J", reportPath,
+			},
+		},
+		{
+			name:     "with topology file",
+			gpuCount: 8,
+			profile:  skuProfile{NcclMessageSize: "16G", NcclTopoFile: "ndv5-topo.xml"},
+			want: []string{
+				"-mca", "plm", "isolated", "-np", "8", "--map-by", "ppr:8:node",
+				"-bind-to", "numa", "-mca", "coll_hcoll_enable", "0",
+				"-x", "LD_LIBRARY_PATH", "-x", "CUDA_DEVICE_ORDER=PCI_BUS_ID",
+				"-x", "NCCL_IB_PCI_RELAXED_ORDERING=1",
+				"-x", "NCCL_TOPO_FILE=/usr/local/share/topofiles/ndv5-topo.xml",
+				"/usr/local/bin/all_reduce_perf", "-b", "16G", "-e", "16G",
+				"-f", "2", "-g", "1", "-c", "1", "-J", reportPath,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := ncclArgs(tt.gpuCount, reportPath, tt.profile); !slices.Equal(got, tt.want) {
+				t.Errorf("ncclArgs() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
 
 // An unprofiled SKU has no threshold to compare against, so the benchmark must not run.
 func TestNCCLCheckerUnknownSKU(t *testing.T) {

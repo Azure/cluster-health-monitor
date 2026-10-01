@@ -2,8 +2,7 @@ package gpu
 
 import "strings"
 
-// skuProfile is the per-SKU expectation for a node. These mirror the AzNHC conf
-// values: https://github.com/Azure/azurehpc-health-checks.
+// skuProfile is the per-SKU expectation for a GPU node.
 type skuProfile struct {
 	ExpectedGPUs    int     // GPUs the SKU should expose; `check_gpu_count <n>`
 	NcclBusGBps     float64 // NCCL all-reduce bus bandwidth; `check_nccl_allreduce <busbw>`
@@ -15,9 +14,16 @@ type skuProfile struct {
 
 // skuProfiles is keyed by normalizeSKU. When GPU checks are enabled, SKUs absent from this map
 // are treated as unknown and checks do not run.
-//
-// TODO add more skus here once validated.
 var skuProfiles = map[string]skuProfile{
+	// NV72 has two 24 GiB A10 GPUs without NVLink; the 4G message fits in memory.
+	// Its throughput floors are temporary bring-up values, not yet validated on A10.
+	"nv72ads_a10_v5": {
+		ExpectedGPUs:    2,
+		NcclBusGBps:     10.0, // TODO: set a validated NV72 NCCL bus-bandwidth floor from real measurements.
+		NcclMessageSize: "4G",
+		BwPCIeGBps:      10.0, // TODO: set a validated NV72 H2D/D2H PCIe floor from real measurements.
+	},
+	// Sourced from https://github.com/Azure/azurehpc-health-checks/blob/main/conf/nd96isr_h100_v5.conf.
 	"nd96isr_h100_v5": {
 		ExpectedGPUs:    8,
 		NcclBusGBps:     460.0,
