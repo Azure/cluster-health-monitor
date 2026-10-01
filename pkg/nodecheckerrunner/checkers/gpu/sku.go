@@ -18,10 +18,8 @@ type skuProfile struct {
 //
 // TODO add more skus here once validated.
 var skuProfiles = map[string]skuProfile{
-	// NV72ads A10 v5 exposes two 24 GiB A10 GPUs without NVLink. Use a smaller NCCL message
-	// than the 80 GiB H100 profile, omit the P2P nvbandwidth case, and start with conservative
-	// PCIe floors. The real-hardware AKS E2E records the measured values so these floors can be
-	// tightened after a representative sample is available.
+	// NV72 has two 24 GiB A10 GPUs without NVLink. The 4G NCCL message fits in memory;
+	// the 10 GB/s floors are provisional until measured on real hardware.
 	"nv72ads_a10_v5": {
 		ExpectedGPUs:    2,
 		NcclBusGBps:     10.0,
