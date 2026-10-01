@@ -247,14 +247,26 @@ type nodeCheckMetricsCase struct {
 	// failTerminalUpdate rejects the status update that sets FinishedAt, so the reconcile reaches
 	// markCompleted but the CR never completes.
 	failTerminalUpdate bool
-	// enableGPUChecks turns on the GPU gate, which is what makes the reconciler read the node and
-	// expect the GPU checks on top of the base ones.
+	// enableGPUChecks turns on the GPU gate, which makes the reconciler expect the GPU checks on
+	// top of the base ones
 	enableGPUChecks bool
+	// wantNodeKind is the node_kind label every emitted series must carry.
+	wantNodeKind string
 	// wantCHMNodeCheckTotal is the one cluster_health_monitor_node_check_total series that must gain 1, or
-	// nil when the path must emit nothing.
+	// nil when the path must emit nothing. The node_kind label is added from wantNodeKind.
 	wantCHMNodeCheckTotal map[string]string
 	// wantCHMNodeCheckResultTotal are the cluster_health_monitor_node_check_result_total series that must gain 1.
+	// The node_kind label is added from wantNodeKind.
 	wantCHMNodeCheckResultTotal []map[string]string
+}
+
+// withNodeKind returns the label set with the node_kind label added.
+func withNodeKind(labels map[string]string, nodeKind string) map[string]string {
+	withKind := map[string]string{"node_kind": nodeKind}
+	for name, value := range labels {
+		withKind[name] = value
+	}
+	return withKind
 }
 
 // TestNodeCheckMetricsEmitted drives each terminal path to completion and asserts that exactly the
@@ -264,8 +276,9 @@ func TestNodeCheckMetricsEmitted(t *testing.T) {
 		{
 			// The checker pod ended without writing any result, so recordMissingResults fills in
 			// every expected check as Unknown.
-			name: "checker pod ends without reporting",
-			pod:  succeededCheckerPod,
+			name:         "checker pod ends without reporting",
+			wantNodeKind: NodeKindStandard,
+			pod:          succeededCheckerPod,
 			wantCHMNodeCheckTotal: map[string]string{
 				"result": metrics.UnknownStatus,
 				"reason": ReasonCheckUnknown,
@@ -276,8 +289,9 @@ func TestNodeCheckMetricsEmitted(t *testing.T) {
 			},
 		},
 		{
-			name: "every check reports healthy",
-			pod:  startedCheckerPod,
+			name:         "every check reports healthy",
+			wantNodeKind: NodeKindStandard,
+			pod:          startedCheckerPod,
 			seededResults: []chmv1alpha1.CheckResult{
 				{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusHealthy, Message: "reported by the checker pod"},
 			},
@@ -291,8 +305,9 @@ func TestNodeCheckMetricsEmitted(t *testing.T) {
 			},
 		},
 		{
-			name: "a check reports unhealthy with an error code",
-			pod:  startedCheckerPod,
+			name:         "a check reports unhealthy with an error code",
+			wantNodeKind: NodeKindStandard,
+			pod:          startedCheckerPod,
 			seededResults: []chmv1alpha1.CheckResult{
 				{
 					Name:      "PodNetwork",
@@ -311,7 +326,8 @@ func TestNodeCheckMetricsEmitted(t *testing.T) {
 			},
 		},
 		{
-			name: "unsupported node is counted without any per-check results",
+			name:         "unsupported node is counted without any per-check results",
+			wantNodeKind: NodeKindStandard,
 			node: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Name:   "node-1",
@@ -326,7 +342,28 @@ func TestNodeCheckMetricsEmitted(t *testing.T) {
 			wantCHMNodeCheckResultTotal: nil,
 		},
 		{
+			// An unsupported node is still labelled by what it actually is, so a Windows GPU node
+			// does not land in the standard population.
+			name:         "unsupported gpu node is counted as a gpu node",
+			wantNodeKind: NodeKindGPU,
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "node-1",
+					Labels: map[string]string{
+						"kubernetes.io/os":  "windows",
+						gpuAcceleratorLabel: "nvidia",
+					},
+				},
+			},
+			wantCHMNodeCheckTotal: map[string]string{
+				"result": metrics.UnknownStatus,
+				"reason": ReasonCheckUnsupported,
+			},
+			wantCHMNodeCheckResultTotal: nil,
+		},
+		{
 			name:            "gpu node counts the gpu checks too",
+			wantNodeKind:    NodeKindGPU,
 			node:            gpuNode("node-1"),
 			pod:             succeededCheckerPod,
 			enableGPUChecks: true,
@@ -344,6 +381,7 @@ func TestNodeCheckMetricsEmitted(t *testing.T) {
 		{
 			// A GPU node reporting a mix of statuses.
 			name:            "gpu check reports unhealthy alongside healthy and unreported checks",
+			wantNodeKind:    NodeKindGPU,
 			node:            gpuNode("node-1"),
 			pod:             startedCheckerPod,
 			enableGPUChecks: true,
@@ -357,7 +395,7 @@ func TestNodeCheckMetricsEmitted(t *testing.T) {
 				},
 			},
 			wantCHMNodeCheckTotal: map[string]string{
-				// Unhealthy because Unhealthy results take precedence over Unknown
+				// Unhealthy because every result counts, GPU checks included.
 				"result": metrics.UnhealthyStatus,
 				"reason": ReasonCheckFailed,
 			},
@@ -409,11 +447,11 @@ func TestNodeCheckMetricsEmitted(t *testing.T) {
 
 			wantOutcomeDelta := map[string]float64{}
 			if tt.wantCHMNodeCheckTotal != nil {
-				wantOutcomeDelta[labelKey(tt.wantCHMNodeCheckTotal)] = 1
+				wantOutcomeDelta[labelKey(withNodeKind(tt.wantCHMNodeCheckTotal, tt.wantNodeKind))] = 1
 			}
 			wantResultsDelta := map[string]float64{}
 			for _, labels := range tt.wantCHMNodeCheckResultTotal {
-				wantResultsDelta[labelKey(labels)]++
+				wantResultsDelta[labelKey(withNodeKind(labels, tt.wantNodeKind))]++
 			}
 
 			outcomeBefore := counterSnapshot(t, checkCounter)
