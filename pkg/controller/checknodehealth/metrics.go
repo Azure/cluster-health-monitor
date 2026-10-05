@@ -33,10 +33,10 @@ var (
 )
 
 const (
-	// NodeKindGPU labels results from nodes reporting the GPUNodeHealthy condition.
+	// NodeKindGPU labels results from GPU nodes.
 	NodeKindGPU = "gpu"
 
-	// NodeKindStandard labels results from nodes reporting the NodeHealthy condition.
+	// NodeKindStandard labels results from non-GPU nodes.
 	NodeKindStandard = "standard"
 )
 

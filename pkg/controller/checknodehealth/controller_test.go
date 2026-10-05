@@ -3,6 +3,7 @@ package checknodehealth
 import (
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"testing"
 	"time"
@@ -18,6 +19,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
+	"github.com/Azure/cluster-health-monitor/pkg/nodecheckerrunner/checkers/gpu"
+	"github.com/Azure/cluster-health-monitor/pkg/nodecheckerrunner/checkers/podnetwork"
 )
 
 func setupTest() (*CheckNodeHealthReconciler, client.Client, *runtime.Scheme) {
@@ -1088,7 +1091,7 @@ func TestCheckerSpecFor(t *testing.T) {
 			wantGPU:         false,
 		},
 		{
-			// The node is still routed to GPUNodeHealthy, but it runs the ordinary checker.
+			// The node still reports per-check conditions, but it runs the ordinary checker.
 			name:            "gpu node with the gate off",
 			info:            gpuNodeInfo{isGPUNode: true, gpuCount: 8, sku: "Standard_ND96isr_H100_v5"},
 			enableGPUChecks: false,
@@ -1138,9 +1141,8 @@ func TestCheckerSpecFor(t *testing.T) {
 	}
 }
 
-// TestReconcileNodeConditionRouting checks that a node is given exactly one health condition:
-// GPUNodeHealthy for GPU nodes and NodeHealthy for everything else, carrying the same Healthy
-// status the CheckNodeHealth reports over all of its results.
+// TestReconcileNodeConditionRouting checks which Node conditions a check publishes: a single
+// aggregate NodeHealthy for non-GPU nodes, and one condition per check for GPU nodes.
 func TestReconcileNodeConditionRouting(t *testing.T) {
 	tests := []struct {
 		name string
@@ -1148,23 +1150,31 @@ func TestReconcileNodeConditionRouting(t *testing.T) {
 		gpuNode bool
 		// enableGPUChecks gates the intrusive GPU checks, not the routing.
 		enableGPUChecks bool
-		// seededResults stand in for the results the checker pod would have written.
+		// seededResults stand in for the results the checker pod would have written. PodStartup is
+		// recorded by the controller itself, so it is never seeded here.
 		seededResults []chmv1alpha1.CheckResult
-		wantHealthy   metav1.ConditionStatus
-		// wantNodeCondition is the only health condition the node may carry.
-		wantNodeCondition corev1.NodeConditionType
+		// wantHealthy is the aggregate condition on the CheckNodeHealth.
+		wantHealthy metav1.ConditionStatus
+		// wantNodeConditions is exactly the set of managed conditions the node may carry.
+		wantNodeConditions map[corev1.NodeConditionType]corev1.ConditionStatus
 	}{
 		{
-			name:            "failing gpu check fails the gpu node condition",
+			// Only the failing check's own condition goes False.
+			name:            "failing gpu check fails only its own condition",
 			gpuNode:         true,
 			enableGPUChecks: true,
 			seededResults: []chmv1alpha1.CheckResult{
 				{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusHealthy},
-				{Name: "NcclAllReduce", Status: chmv1alpha1.CheckStatusUnhealthy, ErrorCode: "GpuCorrectness"},
+				{Name: "NcclAllReduce", Status: chmv1alpha1.CheckStatusUnhealthy, ErrorCode: gpu.ErrorCodeCorrectness},
 				{Name: "GpuBandwidth", Status: chmv1alpha1.CheckStatusHealthy},
 			},
-			wantHealthy:       metav1.ConditionFalse,
-			wantNodeCondition: NodeConditionGPUNodeHealthy,
+			wantHealthy: metav1.ConditionFalse,
+			wantNodeConditions: map[corev1.NodeConditionType]corev1.ConditionStatus{
+				nodeConditionTypeForChecker("PodStartup"):    corev1.ConditionTrue,
+				nodeConditionTypeForChecker("PodNetwork"):    corev1.ConditionTrue,
+				nodeConditionTypeForChecker("NcclAllReduce"): corev1.ConditionFalse,
+				nodeConditionTypeForChecker("GpuBandwidth"):  corev1.ConditionTrue,
+			},
 		},
 		{
 			name:            "all checks passing on a gpu node",
@@ -1175,42 +1185,60 @@ func TestReconcileNodeConditionRouting(t *testing.T) {
 				{Name: "NcclAllReduce", Status: chmv1alpha1.CheckStatusHealthy},
 				{Name: "GpuBandwidth", Status: chmv1alpha1.CheckStatusHealthy},
 			},
-			wantHealthy:       metav1.ConditionTrue,
-			wantNodeCondition: NodeConditionGPUNodeHealthy,
+			wantHealthy: metav1.ConditionTrue,
+			wantNodeConditions: map[corev1.NodeConditionType]corev1.ConditionStatus{
+				nodeConditionTypeForChecker("PodStartup"):    corev1.ConditionTrue,
+				nodeConditionTypeForChecker("PodNetwork"):    corev1.ConditionTrue,
+				nodeConditionTypeForChecker("NcclAllReduce"): corev1.ConditionTrue,
+				nodeConditionTypeForChecker("GpuBandwidth"):  corev1.ConditionTrue,
+			},
 		},
 		{
+			// A base check failing on a GPU node leaves the GPU conditions alone.
 			name:            "base check failure on a gpu node",
 			gpuNode:         true,
 			enableGPUChecks: true,
 			seededResults: []chmv1alpha1.CheckResult{
-				{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusUnhealthy, ErrorCode: "NetworkConnectivityFailed"},
+				{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusUnhealthy, ErrorCode: podnetwork.ErrorCodeNetworkConnectivityFailed},
 				{Name: "NcclAllReduce", Status: chmv1alpha1.CheckStatusHealthy},
 				{Name: "GpuBandwidth", Status: chmv1alpha1.CheckStatusHealthy},
 			},
-			wantHealthy:       metav1.ConditionFalse,
-			wantNodeCondition: NodeConditionGPUNodeHealthy,
+			wantHealthy: metav1.ConditionFalse,
+			wantNodeConditions: map[corev1.NodeConditionType]corev1.ConditionStatus{
+				nodeConditionTypeForChecker("PodStartup"):    corev1.ConditionTrue,
+				nodeConditionTypeForChecker("PodNetwork"):    corev1.ConditionFalse,
+				nodeConditionTypeForChecker("NcclAllReduce"): corev1.ConditionTrue,
+				nodeConditionTypeForChecker("GpuBandwidth"):  corev1.ConditionTrue,
+			},
 		},
 		{
-			// The routing is independent of whether the gpu checks are enabled, so a GPU node running only the base checks
-			// still stays off NodeHealthy.
+			// The routing is independent of whether the gpu checks are enabled, so a GPU node
+			// running only the base checks still stays off NodeHealthy. The checks that did not run
+			// get no condition at all.
 			name:            "gpu node with the intrusive checks disabled",
 			gpuNode:         true,
 			enableGPUChecks: false,
 			seededResults: []chmv1alpha1.CheckResult{
 				{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusHealthy},
 			},
-			wantHealthy:       metav1.ConditionTrue,
-			wantNodeCondition: NodeConditionGPUNodeHealthy,
+			wantHealthy: metav1.ConditionTrue,
+			wantNodeConditions: map[corev1.NodeConditionType]corev1.ConditionStatus{
+				nodeConditionTypeForChecker("PodStartup"): corev1.ConditionTrue,
+				nodeConditionTypeForChecker("PodNetwork"): corev1.ConditionTrue,
+			},
 		},
 		{
-			name:            "non-gpu node reports NodeHealthy",
+			// Non-GPU nodes keep the single aggregate condition existing automation acts on.
+			name:            "non-gpu node reports only NodeHealthy",
 			gpuNode:         false,
 			enableGPUChecks: true,
 			seededResults: []chmv1alpha1.CheckResult{
 				{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusHealthy},
 			},
-			wantHealthy:       metav1.ConditionTrue,
-			wantNodeCondition: NodeConditionNodeHealthy,
+			wantHealthy: metav1.ConditionTrue,
+			wantNodeConditions: map[corev1.NodeConditionType]corev1.ConditionStatus{
+				NodeConditionNodeHealthy: corev1.ConditionTrue,
+			},
 		},
 	}
 
@@ -1272,50 +1300,67 @@ func TestReconcileNodeConditionRouting(t *testing.T) {
 				t.Fatalf("reading the node: %v", err)
 			}
 
-			assertOnlyNodeCondition(t, updatedNode, tt.wantNodeCondition, corev1.ConditionStatus(tt.wantHealthy))
+			assertManagedNodeConditions(t, updatedNode, tt.wantNodeConditions)
 		})
 	}
 }
 
-// assertOnlyNodeCondition checks the node carries want with the given status and does not carry the
-// other health condition.
-func assertOnlyNodeCondition(t *testing.T, node *corev1.Node, want corev1.NodeConditionType, wantStatus corev1.ConditionStatus) {
+// assertManagedNodeConditions checks the node carries exactly the wanted managed conditions with
+// the wanted statuses, and no other condition this controller owns.
+func assertManagedNodeConditions(t *testing.T, node *corev1.Node, want map[corev1.NodeConditionType]corev1.ConditionStatus) {
 	t.Helper()
 
-	got := getNodeConditionByType(node.Status.Conditions, want)
-	if got == nil {
-		t.Fatalf("%s condition not found on the node, conditions = %+v", want, node.Status.Conditions)
+	got := map[corev1.NodeConditionType]corev1.ConditionStatus{}
+	for _, c := range node.Status.Conditions {
+		if slices.Contains(managedNodeConditionTypes, c.Type) {
+			got[c.Type] = c.Status
+		}
 	}
-	if got.Status != wantStatus {
-		t.Errorf("node %s = %q, want %q", want, got.Status, wantStatus)
-	}
-	other := otherNodeConditionType(want)
-	if c := getNodeConditionByType(node.Status.Conditions, other); c != nil {
-		t.Errorf("node also carries %s = %+v, want it absent", other, c)
+
+	if !maps.Equal(got, want) {
+		t.Errorf("managed node conditions = %v, want %v", got, want)
 	}
 }
 
-// TestUpdateNodeConditionClearsTheOtherCondition covers a node that already carries the condition it
-// is no longer routed to, which happens when a node starts or stops being seen as a GPU node.
-func TestUpdateNodeConditionClearsTheOtherCondition(t *testing.T) {
+// TestUpdateNodeConditionClearsStaleConditions covers a node that already carries conditions it is
+// no longer meant to have. That happens when a node starts or stops being seen as a GPU node, and
+// when the intrusive GPU checks are gated off so their checks stop reporting.
+func TestUpdateNodeConditionClearsStaleConditions(t *testing.T) {
 	tests := []struct {
 		name string
-		// stale is the condition already on the node before the check runs.
-		stale corev1.NodeConditionType
+		// stale are the managed conditions already on the node before the check runs.
+		stale []corev1.NodeConditionType
 		info  gpuNodeInfo
-		want  corev1.NodeConditionType
+		// results are what the completed check reported.
+		results []chmv1alpha1.CheckResult
+		want    map[corev1.NodeConditionType]corev1.ConditionStatus
 	}{
 		{
-			name:  "gpu node drops a leftover NodeHealthy",
-			stale: NodeConditionNodeHealthy,
+			name:  "node newly seen as a gpu node drops its leftover NodeHealthy",
+			stale: []corev1.NodeConditionType{NodeConditionNodeHealthy},
 			info:  gpuNodeInfo{isGPUNode: true},
-			want:  NodeConditionGPUNodeHealthy,
+			results: []chmv1alpha1.CheckResult{
+				{Name: "PodStartup", Status: chmv1alpha1.CheckStatusHealthy},
+				{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusHealthy},
+			},
+			want: map[corev1.NodeConditionType]corev1.ConditionStatus{
+				nodeConditionTypeForChecker("PodStartup"): corev1.ConditionTrue,
+				nodeConditionTypeForChecker("PodNetwork"): corev1.ConditionTrue,
+			},
 		},
 		{
-			name:  "non-gpu node drops a leftover GPUNodeHealthy",
-			stale: NodeConditionGPUNodeHealthy,
-			info:  gpuNodeInfo{},
-			want:  NodeConditionNodeHealthy,
+			name: "node no longer seen as a gpu node drops its per-check conditions",
+			stale: []corev1.NodeConditionType{
+				nodeConditionTypeForChecker("PodStartup"),
+				nodeConditionTypeForChecker("NcclAllReduce"),
+			},
+			info: gpuNodeInfo{},
+			results: []chmv1alpha1.CheckResult{
+				{Name: "PodStartup", Status: chmv1alpha1.CheckStatusHealthy},
+			},
+			want: map[corev1.NodeConditionType]corev1.ConditionStatus{
+				NodeConditionNodeHealthy: corev1.ConditionTrue,
+			},
 		},
 	}
 
@@ -1326,20 +1371,22 @@ func TestUpdateNodeConditionClearsTheOtherCondition(t *testing.T) {
 			reconciler.EnableNodeCondition = true
 			reconciler.CircuitBreakers = NewNodeConditionCircuitBreakers(DefaultCircuitBreakerThreshold, DefaultCircuitBreakerWindow, DefaultCircuitBreakerCooldown)
 
+			conditions := []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}
+			for _, stale := range tt.stale {
+				conditions = append(conditions, corev1.NodeCondition{
+					Type: stale, Status: corev1.ConditionFalse, Reason: ReasonCheckFailed,
+				})
+			}
 			node := &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{Name: "node-1", Labels: map[string]string{"kubernetes.io/os": "linux"}},
-				Status: corev1.NodeStatus{
-					Conditions: []corev1.NodeCondition{
-						{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
-						{Type: tt.stale, Status: corev1.ConditionFalse, Reason: ReasonCheckFailed},
-					},
-				},
+				Status:     corev1.NodeStatus{Conditions: conditions},
 			}
 			if err := fakeClient.Create(ctx, node); err != nil {
 				t.Fatalf("creating the node: %v", err)
 			}
 
 			cnh := testCNH("cnh-switch")
+			cnh.Status.Results = tt.results
 			cnh.Status.Conditions = []metav1.Condition{{
 				Type:               ConditionTypeHealthy,
 				Status:             metav1.ConditionTrue,
@@ -1355,7 +1402,7 @@ func TestUpdateNodeConditionClearsTheOtherCondition(t *testing.T) {
 				t.Fatalf("reading the node: %v", err)
 			}
 
-			assertOnlyNodeCondition(t, updatedNode, tt.want, corev1.ConditionTrue)
+			assertManagedNodeConditions(t, updatedNode, tt.want)
 
 			// Unrelated conditions owned by other controllers must survive.
 			if getNodeConditionByType(updatedNode.Status.Conditions, corev1.NodeReady) == nil {
@@ -1374,7 +1421,7 @@ func TestCircuitBreakersAreIndependent(t *testing.T) {
 		failingNodeIsGPU bool
 	}{
 		{name: "gpu failures leave the NodeHealthy breaker closed", failingNodeIsGPU: true},
-		{name: "non-gpu failures leave the GPUNodeHealthy breaker closed", failingNodeIsGPU: false},
+		{name: "non-gpu failures leave the gpu node breaker closed", failingNodeIsGPU: false},
 	}
 
 	for _, tt := range tests {

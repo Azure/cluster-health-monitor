@@ -64,7 +64,7 @@ func main() {
 			"The HealthCheckRequest CRD must be installed in the cluster by the AKS health signal component.")
 	flag.BoolVar(&enableNodeCondition, "enable-node-condition", false,
 		"Enable setting the NodeHealthy condition on Node objects when health checks fail. "+
-			"GPU nodes report the same result as the GPUNodeHealthy condition instead.")
+			"GPU nodes report one condition per check instead, so NodeHealthy is never set on them.")
 	flag.BoolVar(&enableGPUChecks, "enable-gpu-checks", false,
 		"Enable intrusive GPU checks on CheckNodeHealth targets that are GPU nodes. "+
 			"Requires GPU_CHECKER_POD_IMAGE to be set.")

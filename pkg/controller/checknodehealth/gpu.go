@@ -29,7 +29,7 @@ var gpuCheckerNames = []string{"NcclAllReduce", "GpuBandwidth"}
 
 // gpuNodeInfo describes the GPU capabilities of a CheckNodeHealth's target node.
 type gpuNodeInfo struct {
-	// isGPUNode decides which Node health condition the result is published as. See NodeConditionGPUNodeHealthy.
+	// isGPUNode decides which Node health conditions the result is published as. See NodeConditionNodeHealthy.
 	isGPUNode bool
 	// gpuCount is the node's allocatable gpu extended resource, not how many the node physically has.
 	// Only the device plugin publishes it, so driver-only pools report zero while still having GPUs.

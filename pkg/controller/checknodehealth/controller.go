@@ -70,22 +70,33 @@ const (
 	// ErrorCodeCheckNotReported marks a check whose pod ended before reporting it.
 	ErrorCodeCheckNotReported = "CheckNotReported"
 
-	// NodeConditionNodeHealthy is the condition type set on non-GPU Nodes to report ConditionTypeHealthy
-	// from CheckNodeHealth checks.
-	NodeConditionNodeHealthy corev1.NodeConditionType = "kubernetes.azure.com/NodeHealthy"
+	// nodeConditionPrefix is the domain prefix on every Node condition this controller writes.
+	nodeConditionPrefix = "kubernetes.azure.com/"
 
-	// NodeConditionGPUNodeHealthy is the condition type set on GPU Node objects to report
-	// ConditionTypeHealthy. GPU nodes report on their own condition because GPU nodes should
-	// not be affected by existing remediation triggered by NodeHealthy.
-	NodeConditionGPUNodeHealthy corev1.NodeConditionType = "kubernetes.azure.com/GPUNodeHealthy"
+	// NodeConditionNodeHealthy is the condition type set on non-GPU Nodes to report ConditionTypeHealthy
+	// from CheckNodeHealth checks. GPU nodes report per-check conditions instead, so that existing
+	// remediation keyed on NodeHealthy is never triggered by a GPU node.
+	NodeConditionNodeHealthy corev1.NodeConditionType = nodeConditionPrefix + "NodeHealthy"
 )
 
-// nodeConditionTypeFor returns the Node condition the result is published as.
-func nodeConditionTypeFor(info gpuNodeInfo) corev1.NodeConditionType {
-	if info.isGPUNode {
-		return NodeConditionGPUNodeHealthy
+// nodeConditionTypeForChecker returns the Node condition a single check's result is published as.
+// For example, NcclAllReduce becomes kubernetes.azure.com/NcclAllReduceHealthy.
+func nodeConditionTypeForChecker(checkerName string) corev1.NodeConditionType {
+	return corev1.NodeConditionType(nodeConditionPrefix + checkerName + "Healthy")
+}
+
+// managedNodeConditionTypes are every Node condition this controller owns.
+var managedNodeConditionTypes = func() []corev1.NodeConditionType {
+	types := []corev1.NodeConditionType{NodeConditionNodeHealthy}
+	for _, name := range slices.Concat(baseCheckerNames, gpuCheckerNames) {
+		types = append(types, nodeConditionTypeForChecker(name))
 	}
-	return NodeConditionNodeHealthy
+	return types
+}()
+
+// ManagedNodeConditionTypes returns every Node condition type this controller owns.
+func ManagedNodeConditionTypes() []corev1.NodeConditionType {
+	return slices.Clone(managedNodeConditionTypes)
 }
 
 // baseCheckerNames are the checks every node reports. PodStartup comes from the
@@ -432,18 +443,12 @@ func (r *CheckNodeHealthReconciler) markCompleted(ctx context.Context, cnh *chmv
 	return healthyStatus, nil
 }
 
-// updateNodeCondition publishes the CheckNodeHealth's Healthy condition onto the Node, as
-// NodeConditionGPUNodeHealthy for GPU nodes and NodeConditionNodeHealthy for everything else.
+// updateNodeCondition publishes the check outcome onto the Node. Non-GPU nodes get the single
+// aggregate NodeHealthy condition that existing automation acts on. GPU nodes instead get one
+// condition per check.
 func (r *CheckNodeHealthReconciler) updateNodeCondition(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, info gpuNodeInfo) error {
-	var healthy *metav1.Condition
-	for i := range cnh.Status.Conditions {
-		if cnh.Status.Conditions[i].Type == ConditionTypeHealthy {
-			healthy = &cnh.Status.Conditions[i]
-			break
-		}
-	}
-
-	if healthy == nil {
+	desired := desiredNodeConditions(cnh, info)
+	if len(desired) == 0 {
 		return nil
 	}
 
@@ -464,69 +469,125 @@ func (r *CheckNodeHealthReconciler) updateNodeCondition(ctx context.Context, cnh
 
 	patch := client.MergeFrom(node.DeepCopy())
 
-	conditionType := nodeConditionTypeFor(info)
 	now := metav1.Now()
-	setNodeCondition(node, conditionType, *healthy, now)
-	// A node must never carry both conditions. One can be left behind when a node starts or stops
-	// being seen as a GPU node, and on a GPU node a stale NodeHealthy would keep feeding the very
-	// automation this routing exists to keep away.
-	removed := removeNodeCondition(node, otherNodeConditionType(conditionType))
+	keep := make(map[corev1.NodeConditionType]bool, len(desired))
+	for _, condition := range desired {
+		setNodeCondition(node, condition, now)
+		keep[condition.Type] = true
+	}
+	removed := removeUnwantedNodeConditions(node, keep)
 
 	if err := r.Status().Patch(ctx, node, patch); err != nil {
 		return fmt.Errorf("failed to update node %s condition: %w", nodeName, err)
 	}
 
-	klog.InfoS("Updated node condition", "node", nodeName, "type", conditionType, "status", corev1.ConditionStatus(healthy.Status))
-	if removed {
-		klog.InfoS("Removed node condition that no longer applies", "node", nodeName, "type", otherNodeConditionType(conditionType))
+	for _, condition := range desired {
+		klog.InfoS("Updated node condition", "node", nodeName, "type", condition.Type,
+			"status", condition.Status, "reason", condition.Reason)
+	}
+	if len(removed) > 0 {
+		klog.InfoS("Removed node conditions that no longer apply", "node", nodeName, "types", removed)
 	}
 	return nil
 }
 
-// otherNodeConditionType returns the health condition a node must not carry alongside the given one.
-func otherNodeConditionType(conditionType corev1.NodeConditionType) corev1.NodeConditionType {
-	if conditionType == NodeConditionGPUNodeHealthy {
-		return NodeConditionNodeHealthy
-	}
-	return NodeConditionGPUNodeHealthy
-}
-
-// removeNodeCondition drops the given condition from the node, reporting whether it was present.
-func removeNodeCondition(node *corev1.Node, conditionType corev1.NodeConditionType) bool {
-	for i, c := range node.Status.Conditions {
-		if c.Type == conditionType {
-			node.Status.Conditions = append(node.Status.Conditions[:i], node.Status.Conditions[i+1:]...)
-			return true
+// desiredNodeConditions builds the Node conditions carrying this check's outcome. It returns
+// nothing until the check has completed and the CNH condition is set.
+func desiredNodeConditions(cnh *chmv1alpha1.CheckNodeHealth, info gpuNodeInfo) []corev1.NodeCondition {
+	var healthy *metav1.Condition
+	for i := range cnh.Status.Conditions {
+		if cnh.Status.Conditions[i].Type == ConditionTypeHealthy {
+			healthy = &cnh.Status.Conditions[i]
+			break
 		}
 	}
-	return false
+	if healthy == nil {
+		return nil
+	}
+
+	if !info.isGPUNode {
+		return []corev1.NodeCondition{{
+			Type:    NodeConditionNodeHealthy,
+			Status:  corev1.ConditionStatus(healthy.Status),
+			Reason:  healthy.Reason,
+			Message: healthy.Message,
+		}}
+	}
+
+	conditions := make([]corev1.NodeCondition, 0, len(cnh.Status.Results))
+	for _, result := range cnh.Status.Results {
+		conditions = append(conditions, corev1.NodeCondition{
+			Type:    nodeConditionTypeForChecker(result.Name),
+			Status:  nodeConditionStatusFor(result.Status),
+			Reason:  nodeConditionReasonFor(result),
+			Message: result.Message,
+		})
+	}
+	return conditions
 }
 
-// setNodeCondition upserts the Node condition carrying the given CheckNodeHealth condition.
-func setNodeCondition(node *corev1.Node, conditionType corev1.NodeConditionType, source metav1.Condition, now metav1.Time) {
-	status := corev1.ConditionStatus(source.Status)
-	for i, c := range node.Status.Conditions {
-		if c.Type != conditionType {
+// nodeConditionStatusFor maps a single check's status onto the Node condition status.
+func nodeConditionStatusFor(status chmv1alpha1.CheckStatus) corev1.ConditionStatus {
+	switch status {
+	case chmv1alpha1.CheckStatusHealthy:
+		return corev1.ConditionTrue
+	case chmv1alpha1.CheckStatusUnhealthy:
+		return corev1.ConditionFalse
+	default:
+		return corev1.ConditionUnknown
+	}
+}
+
+// nodeConditionReasonFor names the specific failure mode.
+func nodeConditionReasonFor(result chmv1alpha1.CheckResult) string {
+	if result.ErrorCode != "" {
+		return result.ErrorCode
+	}
+	switch result.Status {
+	case chmv1alpha1.CheckStatusHealthy:
+		return ReasonCheckPassed
+	case chmv1alpha1.CheckStatusUnhealthy:
+		return ReasonCheckFailed
+	default:
+		return ReasonCheckUnknown
+	}
+}
+
+// removeUnwantedNodeConditions drops every condition this controller manages that is not in keep,
+// returning the types it removed.
+func removeUnwantedNodeConditions(node *corev1.Node, keep map[corev1.NodeConditionType]bool) []corev1.NodeConditionType {
+	kept := make([]corev1.NodeCondition, 0, len(node.Status.Conditions))
+	var removed []corev1.NodeConditionType
+	for _, c := range node.Status.Conditions {
+		if !keep[c.Type] && slices.Contains(managedNodeConditionTypes, c.Type) {
+			removed = append(removed, c.Type)
 			continue
 		}
-		if node.Status.Conditions[i].Status != status {
+		kept = append(kept, c)
+	}
+	node.Status.Conditions = kept
+	return removed
+}
+
+// setNodeCondition upserts a Node condition.
+func setNodeCondition(node *corev1.Node, desired corev1.NodeCondition, now metav1.Time) {
+	for i, c := range node.Status.Conditions {
+		if c.Type != desired.Type {
+			continue
+		}
+		if node.Status.Conditions[i].Status != desired.Status {
 			node.Status.Conditions[i].LastTransitionTime = now
 		}
-		node.Status.Conditions[i].Status = status
+		node.Status.Conditions[i].Status = desired.Status
 		node.Status.Conditions[i].LastHeartbeatTime = now
-		node.Status.Conditions[i].Message = source.Message
-		node.Status.Conditions[i].Reason = source.Reason
+		node.Status.Conditions[i].Message = desired.Message
+		node.Status.Conditions[i].Reason = desired.Reason
 		return
 	}
 
-	node.Status.Conditions = append(node.Status.Conditions, corev1.NodeCondition{
-		Type:               conditionType,
-		Status:             status,
-		LastTransitionTime: now,
-		LastHeartbeatTime:  now,
-		Message:            source.Message,
-		Reason:             source.Reason,
-	})
+	desired.LastTransitionTime = now
+	desired.LastHeartbeatTime = now
+	node.Status.Conditions = append(node.Status.Conditions, desired)
 }
 
 // determineHealthyCondition determines the Healthy condition status from every reported result,

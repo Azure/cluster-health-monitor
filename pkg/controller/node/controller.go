@@ -86,10 +86,7 @@ const (
 )
 
 // managedNodeConditions are the Node conditions written by the CheckNodeHealth controller.
-var managedNodeConditions = []corev1.NodeConditionType{
-	checknodehealth.NodeConditionNodeHealthy,
-	checknodehealth.NodeConditionGPUNodeHealthy,
-}
+var managedNodeConditions = checknodehealth.ManagedNodeConditionTypes()
 
 // NodeRebootReconciler watches Node objects and creates CheckNodeHealth CRs
 // when a node reboot is detected via a change in bootID.
