@@ -123,7 +123,110 @@ var _ = Describe("GPU CheckNodeHealth flow on Kind", Serial, Ordered, func() {
 
 		runHealthyGPUControllerFlow(ctx, k8sClient, nodeName)
 	})
+
+	It("reports a condition per check and never NodeHealthy on a GPU node", func() {
+		By("Selecting a node with both CoreDNS replicas on remote nodes")
+		nodeName, err := nodeWithRemoteCoreDNS(ctx)
+		Expect(err).NotTo(HaveOccurred())
+
+		By("Simulating a driver-only NVIDIA H100 node")
+		restoreNode, err := simulateNVIDIAGPUNode(ctx, nodeName, gpuTestSKU)
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { Expect(restoreNode()).To(Succeed()) })
+
+		By("Running the GPU checks to completion")
+		runCheckToCompletion(ctx, k8sClient, nodeName, "gpu-node-conditions")
+
+		By("Verifying every check that ran reports its own condition")
+		for _, checkerName := range []string{"PodStartup", "PodNetwork", "NcclAllReduce", "GpuBandwidth"} {
+			conditionType := nodeConditionTypeForChecker(checkerName)
+			Eventually(func() *corev1.NodeCondition {
+				return getNodeCondition(ctx, k8sClient, nodeName, conditionType)
+			}, "60s", "2s").ShouldNot(BeNil(), "expected %s on the node", conditionType)
+
+			condition := getNodeCondition(ctx, k8sClient, nodeName, conditionType)
+			Expect(condition.Status).To(Equal(corev1.ConditionTrue),
+				"%s: reason=%s message=%s", conditionType, condition.Reason, condition.Message)
+		}
+
+		By("Verifying NodeHealthy is never set on a GPU node")
+		// The invariant the whole split exists for: remediation keyed on NodeHealthy must not act
+		// on GPU nodes, even when every GPU check passed.
+		Consistently(func() *corev1.NodeCondition {
+			return getNodeCondition(ctx, k8sClient, nodeName, checknodehealth.NodeConditionNodeHealthy)
+		}, "15s", "3s").Should(BeNil(), "NodeHealthy must never be set on a GPU node")
+	})
+
+	It("retires the per-check conditions when a node stops being a GPU node", func() {
+		By("Selecting a node with both CoreDNS replicas on remote nodes")
+		nodeName, err := nodeWithRemoteCoreDNS(ctx)
+		Expect(err).NotTo(HaveOccurred())
+
+		By("Simulating a GPU node and running the checks so it carries per-check conditions")
+		restoreNode, err := simulateNVIDIAGPUNode(ctx, nodeName, gpuTestSKU)
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { Expect(restoreNode()).To(Succeed()) })
+
+		runCheckToCompletion(ctx, k8sClient, nodeName, "gpu-cond-before")
+		Eventually(func() *corev1.NodeCondition {
+			return getNodeCondition(ctx, k8sClient, nodeName, nodeConditionTypeForChecker("NcclAllReduce"))
+		}, "60s", "2s").ShouldNot(BeNil(), "expected the GPU per-check conditions first")
+
+		By("Restoring the node so it is no longer seen as a GPU node")
+		Expect(restoreNode()).To(Succeed())
+
+		By("Running another health check")
+		runCheckToCompletion(ctx, k8sClient, nodeName, "gpu-cond-after")
+
+		By("Verifying the node now reports the aggregate NodeHealthy condition")
+		Eventually(func() *corev1.NodeCondition {
+			return getNodeCondition(ctx, k8sClient, nodeName, checknodehealth.NodeConditionNodeHealthy)
+		}, "60s", "2s").ShouldNot(BeNil(), "expected NodeHealthy once the node is not a GPU node")
+
+		By("Verifying the per-check conditions were retired rather than left behind")
+		// A leftover per-check condition would keep asserting a verdict nothing produces any more.
+		for _, checkerName := range []string{"PodStartup", "PodNetwork", "NcclAllReduce", "GpuBandwidth"} {
+			conditionType := nodeConditionTypeForChecker(checkerName)
+			Eventually(func() *corev1.NodeCondition {
+				return getNodeCondition(ctx, k8sClient, nodeName, conditionType)
+			}, "60s", "2s").Should(BeNil(), "%s should have been removed", conditionType)
+		}
+	})
 })
+
+// nodeConditionTypeForChecker mirrors the controller's per-check condition naming. Spelled out here
+// rather than reused from the controller so the test fails if the published name changes.
+func nodeConditionTypeForChecker(checkerName string) corev1.NodeConditionType {
+	return corev1.NodeConditionType("kubernetes.azure.com/" + checkerName + "Healthy")
+}
+
+// getNodeCondition returns the named condition from the node, or nil when it is absent.
+func getNodeCondition(ctx context.Context, k8sClient client.Client, nodeName string, conditionType corev1.NodeConditionType) *corev1.NodeCondition {
+	node := &corev1.Node{}
+	if err := k8sClient.Get(ctx, client.ObjectKey{Name: nodeName}, node); err != nil {
+		return nil
+	}
+	for i, c := range node.Status.Conditions {
+		if c.Type == conditionType {
+			return &node.Status.Conditions[i]
+		}
+	}
+	return nil
+}
+
+// runCheckToCompletion creates a CheckNodeHealth for the node and waits for the controller to
+// finish it, so the node conditions it publishes have settled before they are asserted on.
+func runCheckToCompletion(ctx context.Context, k8sClient client.Client, nodeName, prefix string) {
+	cnhName := fmt.Sprintf("%s-%d", prefix, time.Now().UnixNano())
+	DeferCleanup(func() { _ = deleteCheckNodeHealthCR(ctx, k8sClient, cnhName) })
+
+	Expect(createCheckNodeHealthCR(ctx, k8sClient, cnhName, nodeName)).To(Succeed())
+	Eventually(func(g Gomega) {
+		cnh, getErr := getCheckNodeHealthCR(ctx, k8sClient, cnhName)
+		g.Expect(getErr).NotTo(HaveOccurred())
+		g.Expect(cnh.Status.FinishedAt).NotTo(BeNil())
+	}, "120s", "2s").Should(Succeed(), "CheckNodeHealth %s did not complete", cnhName)
+}
 
 func runHealthyGPUControllerFlow(ctx context.Context, k8sClient client.Client, nodeName string) {
 	By("Verifying the simulated NVIDIA node metadata")

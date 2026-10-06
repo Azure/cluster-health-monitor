@@ -306,10 +306,9 @@ func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cn
 			return ctrl.Result{}, err
 		}
 
-		// Step 2: Update node condition based on health status
-		// TODO: Do not propagate GPU check failures to NodeHealthy until AKS remediation systems
-		// explicitly distinguish GPU-check outcomes; setting False today may trigger an unintended
-		// reimage or redeploy of a GPU node.
+		// Step 2: Update node condition based on health status. GPU nodes report per-check
+		// conditions rather than NodeHealthy, so a GPU check failure never reaches the signal
+		// existing AKS remediation acts on.
 		if r.EnableNodeCondition {
 			if err := r.updateNodeCondition(ctx, cnh, info); err != nil {
 				klog.ErrorS(err, "Failed to update node condition, continuing with cleanup", "node", cnh.Spec.NodeRef.Name)

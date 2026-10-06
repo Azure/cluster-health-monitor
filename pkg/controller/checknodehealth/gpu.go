@@ -24,8 +24,13 @@ const (
 	GPUPodTimeout = 15 * time.Minute
 )
 
+const (
+	CheckerNcclAllReduce = "NcclAllReduce"
+	CheckerGpuBandwidth  = "GpuBandwidth"
+)
+
 // gpuCheckerNames are the checks a GPU node reports on top of baseCheckNames.
-var gpuCheckerNames = []string{"NcclAllReduce", "GpuBandwidth"}
+var gpuCheckerNames = []string{CheckerNcclAllReduce, CheckerGpuBandwidth}
 
 // gpuNodeInfo describes the GPU capabilities of a CheckNodeHealth's target node.
 type gpuNodeInfo struct {
