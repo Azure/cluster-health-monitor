@@ -16,12 +16,14 @@ type skuProfile struct {
 // are treated as unknown and checks do not run.
 var skuProfiles = map[string]skuProfile{
 	// NV72 has two 24 GiB A10 GPUs without NVLink; the 4G message fits in memory.
-	// Its throughput floors are temporary bring-up values, not yet validated on A10.
+	// Initial real-AKS samples measured 2.03-2.31 GB/s, so use 1.5 GB/s as a
+	// conservative bring-up floor with headroom for host variance.
 	"nv72ads_a10_v5": {
-		ExpectedGPUs:    2,
-		NcclBusGBps:     10.0, // TODO: set a validated NV72 NCCL bus-bandwidth floor from real measurements.
+		ExpectedGPUs: 2,
+		// TODO: Replace this provisional floor after validating a larger sample across NV72 hosts and A10 topologies.
+		NcclBusGBps:     1.5,
 		NcclMessageSize: "4G",
-		BwPCIeGBps:      10.0, // TODO: set a validated NV72 H2D/D2H PCIe floor from real measurements.
+		BwPCIeGBps:      10.0, // TODO: set a validated NV72 H2D/D2H PCIe floor from more real measurements.
 	},
 	// Sourced from https://github.com/Azure/azurehpc-health-checks/blob/main/conf/nd96isr_h100_v5.conf.
 	"nd96isr_h100_v5": {
