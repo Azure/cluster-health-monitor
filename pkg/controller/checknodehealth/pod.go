@@ -21,6 +21,10 @@ const (
 	// podNamePrefix is the prefix used for health check pod names
 	// TODO: rename the prefix to "check-node-health-"
 	podNamePrefix = "check-node-health-"
+
+	gpuSharedMemoryVolumeName = "gpu-shared-memory"
+	gpuSharedMemoryMountPath  = "/dev/shm"
+	gpuSharedMemorySize       = "8Gi"
 )
 
 func (r *CheckNodeHealthReconciler) cleanupPod(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth) error {
@@ -165,6 +169,22 @@ func applyGPUPodShape(pod *corev1.Pod, info gpuNodeInfo, image string) {
 		"--enable-gpu-checks",
 		fmt.Sprintf("--sku=%s", info.sku),
 	)
+
+	// nccl-tests uses POSIX shared memory for communication between its local ranks. Kubernetes'
+	// default container /dev/shm is only 64 MiB, which makes the 4 GiB all-reduce fail before it can
+	// report a measurement. Give GPU checker pods a bounded, memory-backed shared-memory volume.
+	sharedMemorySize := resource.MustParse(gpuSharedMemorySize)
+	pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
+		Name: gpuSharedMemoryVolumeName,
+		VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{
+			Medium:    corev1.StorageMediumMemory,
+			SizeLimit: &sharedMemorySize,
+		}},
+	})
+	c.VolumeMounts = append(c.VolumeMounts, corev1.VolumeMount{
+		Name:      gpuSharedMemoryVolumeName,
+		MountPath: gpuSharedMemoryMountPath,
+	})
 
 	// TODO: we should figure something out so that we can reliably schedule the checks with exclusive GPU access. Current limitations in
 	// comments below.
