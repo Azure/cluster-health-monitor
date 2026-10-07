@@ -80,6 +80,7 @@ func TestReconcile(t *testing.T) {
 		existingPod         *corev1.Pod
 		existingNode        *corev1.Node
 		enableNodeCondition bool
+		enableGPUChecks     bool
 		circuitBreaker      *NodeConditionCircuitBreaker
 		triggerDeletion     bool // If true, call Delete() before Reconcile()
 		expectedResult      ctrl.Result
@@ -475,6 +476,66 @@ func TestReconcile(t *testing.T) {
 			},
 		},
 		{
+			name: "GPU failure does not publish generic NodeHealthy condition",
+			existingCR: &chmv1alpha1.CheckNodeHealth{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-gpu-unhealthy"},
+				Spec: chmv1alpha1.CheckNodeHealthSpec{
+					NodeRef: chmv1alpha1.NodeReference{Name: "test-gpu-node"},
+				},
+				Status: chmv1alpha1.CheckNodeHealthStatus{
+					Results: []chmv1alpha1.CheckResult{
+						{Name: "PodStartup", Status: chmv1alpha1.CheckStatusHealthy},
+						{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusHealthy},
+						{Name: "NcclAllReduce", Status: chmv1alpha1.CheckStatusUnhealthy, ErrorCode: "BandwidthBelowThreshold"},
+						{Name: "GpuBandwidth", Status: chmv1alpha1.CheckStatusHealthy},
+					},
+				},
+			},
+			existingPod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "check-node-health-test-gpu-unhealthy",
+					Namespace: "default",
+					Labels: map[string]string{
+						CheckNodeHealthLabel: "test-gpu-unhealthy",
+					},
+				},
+				Status: corev1.PodStatus{Phase: corev1.PodSucceeded},
+			},
+			existingNode: &corev1.Node{ObjectMeta: metav1.ObjectMeta{
+				Name: "test-gpu-node",
+				Labels: map[string]string{
+					"kubernetes.io/os":  "linux",
+					gpuAcceleratorLabel: "nvidia",
+					instanceTypeLabel:   "Standard_NV72ads_A10_v5",
+				},
+			}},
+			enableNodeCondition: true,
+			enableGPUChecks:     true,
+			circuitBreaker:      NewNodeConditionCircuitBreaker(DefaultCircuitBreakerThreshold, DefaultCircuitBreakerWindow, DefaultCircuitBreakerCooldown),
+			expectedResult:      ctrl.Result{},
+			expectError:         false,
+			expectedPodCreated:  false,
+			expectedPodDeleted:  true,
+			validateFunc: func(t *testing.T, fakeClient client.Client, cnh *chmv1alpha1.CheckNodeHealth) {
+				updatedCR := &chmv1alpha1.CheckNodeHealth{}
+				if err := fakeClient.Get(context.Background(), client.ObjectKey{Name: cnh.Name}, updatedCR); err != nil {
+					t.Fatalf("Failed to get updated CheckNodeHealth: %v", err)
+				}
+				healthyCondition := getHealthyCondition(updatedCR.Status.Conditions)
+				if healthyCondition == nil || healthyCondition.Status != metav1.ConditionFalse {
+					t.Fatalf("Expected GPU CheckNodeHealth condition False, got %v", healthyCondition)
+				}
+
+				node := &corev1.Node{}
+				if err := fakeClient.Get(context.Background(), client.ObjectKey{Name: "test-gpu-node"}, node); err != nil {
+					t.Fatalf("Failed to get GPU node: %v", err)
+				}
+				if condition := getNodeHealthyCondition(node.Status.Conditions); condition != nil {
+					t.Errorf("Expected GPU result to remain off generic NodeHealthy, got status %s", condition.Status)
+				}
+			},
+		},
+		{
 			name: "all checker results are Healthy - Healthy condition is True",
 			existingCR: &chmv1alpha1.CheckNodeHealth{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-all-healthy"},
@@ -788,6 +849,7 @@ func TestReconcile(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			reconciler, fakeClient, _ := setupTest()
 			reconciler.EnableNodeCondition = tt.enableNodeCondition
+			reconciler.EnableGPUChecks = tt.enableGPUChecks
 			reconciler.CircuitBreaker = tt.circuitBreaker
 			ctx := context.Background()
 

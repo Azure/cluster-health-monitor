@@ -123,12 +123,15 @@ func TestBuildHealthCheckPodShape(t *testing.T) {
 
 	// podShape is the part of a built checker pod that buildHealthCheckPod is responsible for.
 	type podShape struct {
-		Image           string
-		Args            []string
-		GPULimit        string
-		GPURequest      string
-		Env             map[string]string
-		SecurityContext *corev1.SecurityContext
+		Image              string
+		Args               []string
+		GPULimit           string
+		GPURequest         string
+		Env                map[string]string
+		SharedMemoryMedium corev1.StorageMedium
+		SharedMemorySize   string
+		SharedMemoryMount  string
+		SecurityContext    *corev1.SecurityContext
 	}
 
 	wantSecurityContext := &corev1.SecurityContext{
@@ -156,11 +159,14 @@ func TestBuildHealthCheckPodShape(t *testing.T) {
 			name: "device plugin node requests its gpus",
 			info: gpuNodeInfo{isGPUNode: true, gpuCount: 8, sku: "Standard_ND96isr_H100_v5"},
 			want: podShape{
-				Image:           "gpu-image",
-				Args:            []string{"--name=cnh-1", "--enable-gpu-checks", "--sku=Standard_ND96isr_H100_v5"},
-				GPULimit:        "8",
-				GPURequest:      "8",
-				SecurityContext: wantSecurityContext,
+				Image:              "gpu-image",
+				Args:               []string{"--name=cnh-1", "--enable-gpu-checks", "--sku=Standard_ND96isr_H100_v5"},
+				GPULimit:           "8",
+				GPURequest:         "8",
+				SharedMemoryMedium: corev1.StorageMediumMemory,
+				SharedMemorySize:   gpuSharedMemorySize,
+				SharedMemoryMount:  gpuSharedMemoryMountPath,
+				SecurityContext:    wantSecurityContext,
 			},
 		},
 		{
@@ -169,10 +175,13 @@ func TestBuildHealthCheckPodShape(t *testing.T) {
 			name: "driver only node asks the runtime for the devices",
 			info: gpuNodeInfo{isGPUNode: true, gpuCount: 0, sku: "Standard_ND96isr_H100_v5"},
 			want: podShape{
-				Image:           "gpu-image",
-				Args:            []string{"--name=cnh-1", "--enable-gpu-checks", "--sku=Standard_ND96isr_H100_v5"},
-				Env:             map[string]string{"NVIDIA_VISIBLE_DEVICES": "all"},
-				SecurityContext: wantSecurityContext,
+				Image:              "gpu-image",
+				Args:               []string{"--name=cnh-1", "--enable-gpu-checks", "--sku=Standard_ND96isr_H100_v5"},
+				Env:                map[string]string{"NVIDIA_VISIBLE_DEVICES": "all"},
+				SharedMemoryMedium: corev1.StorageMediumMemory,
+				SharedMemorySize:   gpuSharedMemorySize,
+				SharedMemoryMount:  gpuSharedMemoryMountPath,
+				SecurityContext:    wantSecurityContext,
 			},
 		},
 	}
@@ -209,6 +218,19 @@ func TestBuildHealthCheckPodShape(t *testing.T) {
 					got.Env = map[string]string{}
 				}
 				got.Env[e.Name] = e.Value
+			}
+			for _, volume := range pod.Spec.Volumes {
+				if volume.Name == gpuSharedMemoryVolumeName && volume.EmptyDir != nil {
+					got.SharedMemoryMedium = volume.EmptyDir.Medium
+					if volume.EmptyDir.SizeLimit != nil {
+						got.SharedMemorySize = volume.EmptyDir.SizeLimit.String()
+					}
+				}
+			}
+			for _, mount := range c.VolumeMounts {
+				if mount.Name == gpuSharedMemoryVolumeName {
+					got.SharedMemoryMount = mount.MountPath
+				}
 			}
 
 			if diff := cmp.Diff(tt.want, got); diff != "" {
