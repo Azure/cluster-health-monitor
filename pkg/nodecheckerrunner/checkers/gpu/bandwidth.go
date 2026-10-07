@@ -37,73 +37,101 @@ type nvbandwidthTestcase struct {
 	Matrix [][]string `json:"bandwidth_matrix"`
 }
 
-// BandwidthChecker measures host<->device PCIe and device-to-device NVLink read bandwidth, mirroring AzNHC check_gpu_bw.
-type BandwidthChecker struct {
-	cfg Config
+// bandwidthPath is a set of nvbandwidth testcases measured against one of the SKU's thresholds.
+type bandwidthPath struct {
+	checkerName string
+	testcases   []string
+	threshold   func(skuProfile) float64
 }
 
-func NewBandwidthChecker(cfg Config) *BandwidthChecker {
-	return &BandwidthChecker{cfg: cfg.withDefaults()}
+var (
+	// hostBandwidth covers copies between host memory and each GPU.
+	hostBandwidth = bandwidthPath{
+		checkerName: HostBandwidthCheckerName,
+		testcases:   []string{nvbwHostToDevice, nvbwDeviceToHost},
+		threshold:   func(p skuProfile) float64 { return p.BwPCIeGBps },
+	}
+	// peerBandwidth covers copies between every pair of GPUs.
+	peerBandwidth = bandwidthPath{
+		checkerName: PeerBandwidthCheckerName,
+		testcases:   []string{nvbwDeviceToDevice},
+		threshold:   func(p skuProfile) float64 { return p.BwP2PGBps },
+	}
+)
+
+// BandwidthChecker measures the copy bandwidth of one bandwidthPath, mirroring part of AzNHC check_gpu_bw.
+type BandwidthChecker struct {
+	cfg  Config
+	path bandwidthPath
+}
+
+// NewHostBandwidthChecker measures host<->device copy bandwidth.
+func NewHostBandwidthChecker(cfg Config) *BandwidthChecker {
+	return &BandwidthChecker{cfg: cfg.withDefaults(), path: hostBandwidth}
+}
+
+// NewPeerBandwidthChecker measures device<->device copy bandwidth.
+func NewPeerBandwidthChecker(cfg Config) *BandwidthChecker {
+	return &BandwidthChecker{cfg: cfg.withDefaults(), path: peerBandwidth}
 }
 
 func (c *BandwidthChecker) Name() string {
-	return "GpuBandwidth"
+	return c.path.checkerName
+}
+
+func (c *BandwidthChecker) appliesTo(profile skuProfile) bool {
+	return c.path.threshold(profile) > 0
 }
 
 func (c *BandwidthChecker) Run(ctx context.Context) (*checker.Result, error) {
 	profile, ok := profileFor(c.cfg.SKU)
-	testcases := nvbwTestcasesFor(profile)
-	if !ok || len(testcases) == 0 {
+	if !ok || !c.appliesTo(profile) {
 		return unsupportedSKU(c.cfg.SKU), nil
 	}
 	if result := preflight(ctx, c.cfg); result != nil {
 		return result, nil
 	}
-	args := append([]string{"-t"}, testcases...)
+	args := append([]string{"-t"}, c.path.testcases...)
 	args = append(args, "-i", "10", "--format", "json")
 	output, execErr := runTool(ctx, toolsDir+"/nvbandwidth", c.cfg.ToolTimeout, args...)
-	return parseBandwidthResult(output, profile, execErr), nil
+	return parseBandwidthResult(output, c.path.testcases, c.path.threshold(profile), execErr), nil
 }
 
-// nvbwTestcasesFor returns the testcases that can be evaluated for a given sku.
-func nvbwTestcasesFor(profile skuProfile) []string {
-	var testcases []string
-	if profile.BwPCIeGBps > 0 {
-		testcases = append(testcases, nvbwHostToDevice, nvbwDeviceToHost)
-	}
-	if profile.BwP2PGBps > 0 {
-		testcases = append(testcases, nvbwDeviceToDevice)
-	}
-	return testcases
-}
-
-// parseBandwidthResult maps nvbandwidth output to a check result. Test will report unhealthy if any value is below the threshold.
-func parseBandwidthResult(output string, profile skuProfile, execErr error) *checker.Result {
-	testcases, err := parseNvbandwidthReport(output)
-	if err != nil || len(testcases) == 0 {
+// parseBandwidthResult maps nvbandwidth output to a check result for the given testcases. It reports
+// unhealthy if any measured value is below the threshold, and a tool failure if any of the testcases
+// has no measurement.
+func parseBandwidthResult(output string, testcases []string, threshold float64, execErr error) *checker.Result {
+	reported, err := parseNvbandwidthReport(output)
+	if err != nil || len(reported) == 0 {
 		return toolFailed(fmt.Sprintf(
 			"nvbandwidth produced no results (%s)\n%s", execErrString(execErr), output))
 	}
+	byName := lo.KeyBy(reported, func(t nvbandwidthTestcase) string { return t.Name })
 
 	lowBandwidth := false
 	missingMeasurement := false
 	lines := make([]string, 0, len(testcases))
-	for _, testcase := range testcases {
+	for _, name := range testcases {
+		testcase, found := byName[name]
+		if !found {
+			missingMeasurement = true
+			lines = append(lines, fmt.Sprintf("%s: not reported", name))
+			continue
+		}
 		min, ok := testcase.slowest()
 		if testcase.Status != nvbwStatusPassed || !ok {
 			missingMeasurement = true
-			lines = append(lines, fmt.Sprintf("%s: no measurement reported (status %q)", testcase.Name, testcase.Status))
+			lines = append(lines, fmt.Sprintf("%s: no measurement reported (status %q)", name, testcase.Status))
 			continue
 		}
-		where := min.where(testcase.Name)
-		threshold := nvbwThresholdFor(profile, testcase.Name)
+		where := min.where(name)
 
 		if min.value < threshold {
 			lowBandwidth = true
-			lines = append(lines, fmt.Sprintf("%s: min %.3f GB/s%s below %.3f GB/s threshold", testcase.Name, min.value, where, threshold))
+			lines = append(lines, fmt.Sprintf("%s: min %.3f GB/s%s below %.3f GB/s threshold", name, min.value, where, threshold))
 			continue
 		}
-		lines = append(lines, fmt.Sprintf("%s: min %.3f GB/s%s (>= %.3f GB/s threshold)", testcase.Name, min.value, where, threshold))
+		lines = append(lines, fmt.Sprintf("%s: min %.3f GB/s%s (>= %.3f GB/s threshold)", name, min.value, where, threshold))
 	}
 
 	message := truncateMessage(strings.Join(lines, "\n"))
@@ -117,17 +145,6 @@ func parseBandwidthResult(output string, profile skuProfile, execErr error) *che
 		return checker.Unhealthy(ErrorCodeLowBandwidth, message)
 	}
 	return healthy(message)
-}
-
-// nvbwThresholdFor is the floor for a testcase.
-func nvbwThresholdFor(profile skuProfile, testcase string) float64 {
-	switch testcase {
-	case nvbwHostToDevice, nvbwDeviceToHost:
-		return profile.BwPCIeGBps
-	case nvbwDeviceToDevice:
-		return profile.BwP2PGBps
-	}
-	return 0
 }
 
 // parseNvbandwidthReport decodes nvbandwidth's JSON output.

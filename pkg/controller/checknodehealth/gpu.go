@@ -5,6 +5,8 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+
+	"github.com/Azure/cluster-health-monitor/pkg/nodecheckerrunner/checkers/gpu"
 )
 
 const (
@@ -25,12 +27,14 @@ const (
 )
 
 const (
-	CheckerNcclAllReduce = "NcclAllReduce"
-	CheckerGpuBandwidth  = "GpuBandwidth"
+	CheckerNcclAllReduce    = gpu.NCCLAllReduceCheckerName
+	CheckerGpuHostBandwidth = gpu.HostBandwidthCheckerName
+	CheckerGpuPeerBandwidth = gpu.PeerBandwidthCheckerName
 )
 
-// gpuCheckerNames are the checks a GPU node reports on top of baseCheckNames.
-var gpuCheckerNames = []string{CheckerNcclAllReduce, CheckerGpuBandwidth}
+// gpuCheckerNames are every check a GPU node can report on top of baseCheckerNames. Only the ones
+// gpu.CheckerNames returns for the node's SKU run on it.
+var gpuCheckerNames = []string{CheckerNcclAllReduce, CheckerGpuHostBandwidth, CheckerGpuPeerBandwidth}
 
 // gpuNodeInfo describes the GPU capabilities of a CheckNodeHealth's target node.
 type gpuNodeInfo struct {

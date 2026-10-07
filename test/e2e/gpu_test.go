@@ -124,7 +124,7 @@ var _ = Describe("GPU CheckNodeHealth flow on Kind", Serial, Ordered, func() {
 		runHealthyGPUControllerFlow(ctx, k8sClient, nodeName)
 	})
 
-	It("reports a condition per check and never NodeHealthy on a GPU node", func() {
+	It("reports base check and GPU conditions and never NodeHealthy on a GPU node", func() {
 		By("Selecting a node with both CoreDNS replicas on remote nodes")
 		nodeName, err := nodeWithRemoteCoreDNS(ctx)
 		Expect(err).NotTo(HaveOccurred())
@@ -137,16 +137,9 @@ var _ = Describe("GPU CheckNodeHealth flow on Kind", Serial, Ordered, func() {
 		By("Running the GPU checks to completion")
 		runCheckToCompletion(ctx, k8sClient, nodeName, "gpu-node-conditions")
 
-		By("Verifying every check that ran reports its own condition")
-		for _, checkerName := range []string{"PodStartup", "PodNetwork", "NcclAllReduce", "GpuBandwidth"} {
-			conditionType := nodeConditionTypeForChecker(checkerName)
-			Eventually(func() *corev1.NodeCondition {
-				return getNodeCondition(ctx, k8sClient, nodeName, conditionType)
-			}, "60s", "2s").ShouldNot(BeNil(), "expected %s on the node", conditionType)
-
-			condition := getNodeCondition(ctx, k8sClient, nodeName, conditionType)
-			Expect(condition.Status).To(Equal(corev1.ConditionTrue),
-				"%s: reason=%s message=%s", conditionType, condition.Reason, condition.Message)
+		By("Verifying every base check and GPU condition reports healthy")
+		for _, conditionType := range slices.Concat(baseCheckConditionTypes, gpuConditionTypes) {
+			expectNodeConditionStatus(ctx, k8sClient, nodeName, conditionType, corev1.ConditionTrue)
 		}
 
 		By("Verifying NodeHealthy is never set on a GPU node")
@@ -157,20 +150,20 @@ var _ = Describe("GPU CheckNodeHealth flow on Kind", Serial, Ordered, func() {
 		}, "15s", "3s").Should(BeNil(), "NodeHealthy must never be set on a GPU node")
 	})
 
-	It("retires the per-check conditions when a node stops being a GPU node", func() {
+	It("retires the GPU node conditions when a node stops being a GPU node", func() {
 		By("Selecting a node with both CoreDNS replicas on remote nodes")
 		nodeName, err := nodeWithRemoteCoreDNS(ctx)
 		Expect(err).NotTo(HaveOccurred())
 
-		By("Simulating a GPU node and running the checks so it carries per-check conditions")
+		By("Simulating a GPU node and running the checks so it carries GPU node conditions")
 		restoreNode, err := simulateNVIDIAGPUNode(ctx, nodeName, gpuTestSKU)
 		Expect(err).NotTo(HaveOccurred())
 		DeferCleanup(func() { Expect(restoreNode()).To(Succeed()) })
 
 		runCheckToCompletion(ctx, k8sClient, nodeName, "gpu-cond-before")
 		Eventually(func() *corev1.NodeCondition {
-			return getNodeCondition(ctx, k8sClient, nodeName, nodeConditionTypeForChecker("NcclAllReduce"))
-		}, "60s", "2s").ShouldNot(BeNil(), "expected the GPU per-check conditions first")
+			return getNodeCondition(ctx, k8sClient, nodeName, gpuConditionTypes[0])
+		}, "60s", "2s").ShouldNot(BeNil(), "expected the GPU node conditions first")
 
 		By("Restoring the node so it is no longer seen as a GPU node")
 		Expect(restoreNode()).To(Succeed())
@@ -183,10 +176,9 @@ var _ = Describe("GPU CheckNodeHealth flow on Kind", Serial, Ordered, func() {
 			return getNodeCondition(ctx, k8sClient, nodeName, checknodehealth.NodeConditionNodeHealthy)
 		}, "60s", "2s").ShouldNot(BeNil(), "expected NodeHealthy once the node is not a GPU node")
 
-		By("Verifying the per-check conditions were retired rather than left behind")
-		// A leftover per-check condition would keep asserting a verdict nothing produces any more.
-		for _, checkerName := range []string{"PodStartup", "PodNetwork", "NcclAllReduce", "GpuBandwidth"} {
-			conditionType := nodeConditionTypeForChecker(checkerName)
+		By("Verifying the GPU node conditions were retired rather than left behind")
+		// A leftover condition would keep asserting a verdict nothing produces any more.
+		for _, conditionType := range slices.Concat(baseCheckConditionTypes, gpuConditionTypes) {
 			Eventually(func() *corev1.NodeCondition {
 				return getNodeCondition(ctx, k8sClient, nodeName, conditionType)
 			}, "60s", "2s").Should(BeNil(), "%s should have been removed", conditionType)
@@ -194,10 +186,31 @@ var _ = Describe("GPU CheckNodeHealth flow on Kind", Serial, Ordered, func() {
 	})
 })
 
-// nodeConditionTypeForChecker mirrors the controller's per-check condition naming. Spelled out here
-// rather than reused from the controller so the test fails if the published name changes.
-func nodeConditionTypeForChecker(checkerName string) corev1.NodeConditionType {
-	return corev1.NodeConditionType("kubernetes.azure.com/" + checkerName + "Healthy")
+// baseCheckConditionTypes are the base check conditions a GPU node reports. Spelled out here rather
+// than reused from the controller so the test fails if the published name changes.
+var baseCheckConditionTypes = []corev1.NodeConditionType{
+	"kubernetes.azure.com/PodStartupHealthy",
+	"kubernetes.azure.com/PodNetworkHealthy",
+}
+
+// gpuConditionTypes are the GPU conditions, spelled out for the same reason.
+var gpuConditionTypes = []corev1.NodeConditionType{
+	"kubernetes.azure.com/GPUCountHealthy",
+	"kubernetes.azure.com/GPUHostBandwidthHealthy",
+	"kubernetes.azure.com/GPUPeerBandwidthHealthy",
+	"kubernetes.azure.com/GPUAllReduceBandwidthHealthy",
+	"kubernetes.azure.com/GPUCorrectnessHealthy",
+}
+
+// expectNodeConditionStatus waits for the condition to appear on the node and checks its status.
+func expectNodeConditionStatus(ctx context.Context, k8sClient client.Client, nodeName string, conditionType corev1.NodeConditionType, want corev1.ConditionStatus) {
+	Eventually(func() *corev1.NodeCondition {
+		return getNodeCondition(ctx, k8sClient, nodeName, conditionType)
+	}, "60s", "2s").ShouldNot(BeNil(), "expected %s on the node", conditionType)
+
+	condition := getNodeCondition(ctx, k8sClient, nodeName, conditionType)
+	Expect(condition.Status).To(Equal(want),
+		"%s: reason=%s message=%s", conditionType, condition.Reason, condition.Message)
 }
 
 // getNodeCondition returns the named condition from the node, or nil when it is absent.
@@ -253,14 +266,14 @@ func runHealthyGPUControllerFlow(ctx context.Context, k8sClient client.Client, n
 	}, "90s", "1s").Should(Succeed())
 
 	By("Verifying all core and GPU checks reported healthy results")
-	Expect(completed.Status.Results).To(HaveLen(4))
+	Expect(completed.Status.Results).To(HaveLen(5))
 	results := make(map[string]chmv1alpha1.CheckResult, len(completed.Status.Results))
 	for _, result := range completed.Status.Results {
 		_, duplicate := results[result.Name]
 		Expect(duplicate).To(BeFalse(), "duplicate result %s", result.Name)
 		results[result.Name] = result
 	}
-	for _, name := range []string{"PodStartup", "PodNetwork", "NcclAllReduce", "GpuBandwidth"} {
+	for _, name := range []string{"PodStartup", "PodNetwork", "NcclAllReduce", "GpuHostBandwidth", "GpuPeerBandwidth"} {
 		result, found := results[name]
 		Expect(found).To(BeTrue(), "%s result was not reported", name)
 		Expect(result.Status).To(Equal(chmv1alpha1.CheckStatusHealthy),
@@ -272,16 +285,16 @@ func runHealthyGPUControllerFlow(ctx context.Context, k8sClient client.Client, n
 	Expect(nccl.Message).To(ContainSubstring("480.000 GB/s"))
 	Expect(nccl.Message).To(ContainSubstring("460.000 GB/s threshold"))
 
-	bandwidth := results["GpuBandwidth"]
-	for _, testcase := range []string{
-		"host_to_device_memcpy_ce",
-		"device_to_host_memcpy_ce",
-		"device_to_device_memcpy_read_ce",
-	} {
-		Expect(bandwidth.Message).To(ContainSubstring(testcase))
-	}
-	Expect(bandwidth.Message).To(ContainSubstring("48.000 GB/s threshold"))
-	Expect(bandwidth.Message).To(ContainSubstring("335.000 GB/s threshold"))
+	hostBandwidth := results["GpuHostBandwidth"]
+	Expect(hostBandwidth.Message).To(ContainSubstring("host_to_device_memcpy_ce"))
+	Expect(hostBandwidth.Message).To(ContainSubstring("device_to_host_memcpy_ce"))
+	Expect(hostBandwidth.Message).To(ContainSubstring("48.000 GB/s threshold"))
+	Expect(hostBandwidth.Message).NotTo(ContainSubstring("device_to_device_memcpy_read_ce"))
+
+	peerBandwidth := results["GpuPeerBandwidth"]
+	Expect(peerBandwidth.Message).To(ContainSubstring("device_to_device_memcpy_read_ce"))
+	Expect(peerBandwidth.Message).To(ContainSubstring("335.000 GB/s threshold"))
+	Expect(peerBandwidth.Message).NotTo(ContainSubstring("host_to_device_memcpy_ce"))
 
 	By("Verifying the aggregate CheckNodeHealth condition is healthy")
 	Expect(completed.Status.Conditions).To(HaveLen(1))
@@ -289,7 +302,7 @@ func runHealthyGPUControllerFlow(ctx context.Context, k8sClient client.Client, n
 	Expect(condition.Type).To(Equal(checknodehealth.ConditionTypeHealthy))
 	Expect(condition.Status).To(Equal(metav1.ConditionTrue))
 	Expect(condition.Reason).To(Equal(checknodehealth.ReasonCheckPassed))
-	for _, name := range []string{"PodStartup", "PodNetwork", "NcclAllReduce", "GpuBandwidth"} {
+	for _, name := range []string{"PodStartup", "PodNetwork", "NcclAllReduce", "GpuHostBandwidth", "GpuPeerBandwidth"} {
 		Expect(condition.Message).To(ContainSubstring(name + ": Healthy"))
 	}
 

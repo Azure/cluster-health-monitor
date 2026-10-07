@@ -20,6 +20,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
+	"github.com/Azure/cluster-health-monitor/pkg/nodecheckerrunner/checkers/gpu"
 	"github.com/Azure/cluster-health-monitor/pkg/utils"
 )
 
@@ -74,25 +75,45 @@ const (
 	nodeConditionPrefix = "kubernetes.azure.com/"
 
 	// NodeConditionNodeHealthy is the condition type set on non-GPU Nodes to report ConditionTypeHealthy
-	// from CheckNodeHealth checks. GPU nodes report per-check conditions instead, so that existing
-	// remediation keyed on NodeHealthy is never triggered by a GPU node.
+	// from CheckNodeHealth checks.
+	//
+	// GPU nodes report granularNodeConditionTypes instead, so that existing remediation keyed on NodeHealthy
+	// is never triggered by a GPU node.
 	NodeConditionNodeHealthy corev1.NodeConditionType = nodeConditionPrefix + "NodeHealthy"
+
+	// NodeConditionPodStartupHealthy reports the PodStartup check on a GPU node.
+	NodeConditionPodStartupHealthy corev1.NodeConditionType = nodeConditionPrefix + "PodStartupHealthy"
+	// NodeConditionPodNetworkHealthy reports the PodNetwork check on a GPU node.
+	NodeConditionPodNetworkHealthy corev1.NodeConditionType = nodeConditionPrefix + "PodNetworkHealthy"
 )
 
-// nodeConditionTypeForChecker returns the Node condition a single check's result is published as.
-// For example, NcclAllReduce becomes kubernetes.azure.com/NcclAllReduceHealthy.
-func nodeConditionTypeForChecker(checkerName string) corev1.NodeConditionType {
-	return corev1.NodeConditionType(nodeConditionPrefix + checkerName + "Healthy")
+const (
+	CheckerPodStartup = "PodStartup"
+	CheckerPodNetwork = "PodNetwork"
+)
+
+// baseCheckConditions maps each base check to the Node condition its result is published as on a
+// GPU node.
+var baseCheckConditions = map[string]corev1.NodeConditionType{
+	CheckerPodStartup: NodeConditionPodStartupHealthy,
+	CheckerPodNetwork: NodeConditionPodNetworkHealthy,
 }
 
-// managedNodeConditionTypes are every Node condition this controller owns.
-var managedNodeConditionTypes = func() []corev1.NodeConditionType {
-	types := []corev1.NodeConditionType{NodeConditionNodeHealthy}
-	for _, name := range slices.Concat(baseCheckerNames, gpuCheckerNames) {
-		types = append(types, nodeConditionTypeForChecker(name))
+// granularNodeConditionTypes are the conditions that each report a single aspect of node health, as
+// opposed to the aggregate NodeHealthy. Only GPU nodes publish them.
+var granularNodeConditionTypes = func() []corev1.NodeConditionType {
+	types := make([]corev1.NodeConditionType, 0, len(baseCheckerNames)+len(gpuConditions))
+	for _, name := range baseCheckerNames {
+		types = append(types, baseCheckConditions[name])
+	}
+	for _, c := range gpuConditions {
+		types = append(types, c.conditionType)
 	}
 	return types
 }()
+
+// managedNodeConditionTypes are every Node condition this controller owns.
+var managedNodeConditionTypes = append([]corev1.NodeConditionType{NodeConditionNodeHealthy}, granularNodeConditionTypes...)
 
 // ManagedNodeConditionTypes returns every Node condition type this controller owns.
 func ManagedNodeConditionTypes() []corev1.NodeConditionType {
@@ -101,7 +122,7 @@ func ManagedNodeConditionTypes() []corev1.NodeConditionType {
 
 // baseCheckerNames are the checks every node reports. PodStartup comes from the
 // controller itself; the rest come from the checker pod, listed in pkg/nodecheckerrunner/runner.go.
-var baseCheckerNames = []string{"PodStartup", "PodNetwork"}
+var baseCheckerNames = []string{CheckerPodStartup, CheckerPodNetwork}
 
 // checkerSpec is everything that differs between the ordinary checker run and the GPU one. The
 // reconciler selects it once per CheckNodeHealth, so the EnableGPUChecks gate is read in one place.
@@ -126,7 +147,7 @@ func (r *CheckNodeHealthReconciler) checkerSpecFor(info gpuNodeInfo) checkerSpec
 	return checkerSpec{
 		image:        r.GPUCheckerPodImage,
 		podTimeout:   GPUPodTimeout,
-		checkerNames: append(slices.Clone(baseCheckerNames), gpuCheckerNames...),
+		checkerNames: append(slices.Clone(baseCheckerNames), gpu.CheckerNames(info.sku)...),
 		gpu:          &info,
 	}
 }
@@ -306,7 +327,7 @@ func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cn
 			return ctrl.Result{}, err
 		}
 
-		// Step 2: Update node condition based on health status. GPU nodes report per-check
+		// Step 2: Update node condition based on health status. GPU nodes report granular
 		// conditions rather than NodeHealthy, so a GPU check failure never reaches the signal
 		// existing AKS remediation acts on.
 		if r.EnableNodeCondition {
@@ -443,8 +464,7 @@ func (r *CheckNodeHealthReconciler) markCompleted(ctx context.Context, cnh *chmv
 }
 
 // updateNodeCondition publishes the check outcome onto the Node. Non-GPU nodes get the single
-// aggregate NodeHealthy condition that existing automation acts on. GPU nodes instead get one
-// condition per check.
+// aggregate NodeHealthy condition. GPU nodes instead get granualar conditions.
 func (r *CheckNodeHealthReconciler) updateNodeCondition(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, info gpuNodeInfo) error {
 	desired := desiredNodeConditions(cnh, info)
 	if len(desired) == 0 {
@@ -515,14 +535,18 @@ func desiredNodeConditions(cnh *chmv1alpha1.CheckNodeHealth, info gpuNodeInfo) [
 
 	conditions := make([]corev1.NodeCondition, 0, len(cnh.Status.Results))
 	for _, result := range cnh.Status.Results {
+		conditionType, ok := baseCheckConditions[result.Name]
+		if !ok {
+			continue
+		}
 		conditions = append(conditions, corev1.NodeCondition{
-			Type:    nodeConditionTypeForChecker(result.Name),
+			Type:    conditionType,
 			Status:  nodeConditionStatusFor(result.Status),
 			Reason:  nodeConditionReasonFor(result),
 			Message: result.Message,
 		})
 	}
-	return conditions
+	return append(conditions, gpuNodeConditions(cnh.Status.Results, gpu.CheckerNames(info.sku))...)
 }
 
 // nodeConditionStatusFor maps a single check's status onto the Node condition status.

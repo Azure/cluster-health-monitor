@@ -375,7 +375,8 @@ func TestNodeCheckMetricsEmitted(t *testing.T) {
 				{"checker_name": "PodStartup", "status": metrics.UnknownStatus, "error_code": ErrorCodeCheckNotReported},
 				{"checker_name": "PodNetwork", "status": metrics.UnknownStatus, "error_code": ErrorCodeCheckNotReported},
 				{"checker_name": "NcclAllReduce", "status": metrics.UnknownStatus, "error_code": ErrorCodeCheckNotReported},
-				{"checker_name": "GpuBandwidth", "status": metrics.UnknownStatus, "error_code": ErrorCodeCheckNotReported},
+				{"checker_name": "GpuHostBandwidth", "status": metrics.UnknownStatus, "error_code": ErrorCodeCheckNotReported},
+				{"checker_name": "GpuPeerBandwidth", "status": metrics.UnknownStatus, "error_code": ErrorCodeCheckNotReported},
 			},
 		},
 		{
@@ -403,7 +404,8 @@ func TestNodeCheckMetricsEmitted(t *testing.T) {
 				{"checker_name": "PodStartup", "status": metrics.HealthyStatus, "error_code": metrics.HealthyCode},
 				{"checker_name": "PodNetwork", "status": metrics.HealthyStatus, "error_code": metrics.HealthyCode},
 				{"checker_name": "NcclAllReduce", "status": metrics.UnhealthyStatus, "error_code": gpu.ErrorCodeCorrectness},
-				{"checker_name": "GpuBandwidth", "status": metrics.UnknownStatus, "error_code": ErrorCodeCheckNotReported},
+				{"checker_name": "GpuHostBandwidth", "status": metrics.UnknownStatus, "error_code": ErrorCodeCheckNotReported},
+				{"checker_name": "GpuPeerBandwidth", "status": metrics.UnknownStatus, "error_code": ErrorCodeCheckNotReported},
 			},
 		},
 		{

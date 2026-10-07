@@ -44,14 +44,18 @@ func NewNCCLChecker(cfg Config) *NCCLChecker {
 }
 
 func (c *NCCLChecker) Name() string {
-	return "NcclAllReduce"
+	return NCCLAllReduceCheckerName
+}
+
+func (c *NCCLChecker) appliesTo(profile skuProfile) bool {
+	return profile.NcclBusGBps > 0
 }
 
 // Run runs the all-reduce benchmark and maps its report to a check result.
 func (c *NCCLChecker) Run(ctx context.Context) (*checker.Result, error) {
 	// Nothing to judge the measurement against, so the benchmark does not make sense to run.
 	profile, ok := profileFor(c.cfg.SKU)
-	if !ok || profile.NcclBusGBps == 0 {
+	if !ok || !c.appliesTo(profile) {
 		return unsupportedSKU(c.cfg.SKU), nil
 	}
 

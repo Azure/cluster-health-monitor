@@ -986,11 +986,11 @@ func TestDetermineHealthyCondition(t *testing.T) {
 				{Name: "PodStartup", Status: chmv1alpha1.CheckStatusHealthy},
 				{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusHealthy},
 				{Name: "NcclAllReduce", Status: chmv1alpha1.CheckStatusUnhealthy},
-				{Name: "GpuBandwidth", Status: chmv1alpha1.CheckStatusUnknown},
+				{Name: "GpuHostBandwidth", Status: chmv1alpha1.CheckStatusUnknown},
 			},
 			wantStatus:  metav1.ConditionFalse,
 			wantReason:  ReasonCheckFailed,
-			wantMessage: "PodStartup: Healthy\nPodNetwork: Healthy\nNcclAllReduce: Unhealthy\nGpuBandwidth: Unknown",
+			wantMessage: "PodStartup: Healthy\nPodNetwork: Healthy\nNcclAllReduce: Unhealthy\nGpuHostBandwidth: Unknown",
 		},
 		{
 			name: "all checks healthy on a gpu node reports True",
@@ -998,11 +998,12 @@ func TestDetermineHealthyCondition(t *testing.T) {
 				{Name: "PodStartup", Status: chmv1alpha1.CheckStatusHealthy},
 				{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusHealthy},
 				{Name: "NcclAllReduce", Status: chmv1alpha1.CheckStatusHealthy},
-				{Name: "GpuBandwidth", Status: chmv1alpha1.CheckStatusHealthy},
+				{Name: "GpuHostBandwidth", Status: chmv1alpha1.CheckStatusHealthy},
+				{Name: "GpuPeerBandwidth", Status: chmv1alpha1.CheckStatusHealthy},
 			},
 			wantStatus:  metav1.ConditionTrue,
 			wantReason:  ReasonCheckPassed,
-			wantMessage: "PodStartup: Healthy\nPodNetwork: Healthy\nNcclAllReduce: Healthy\nGpuBandwidth: Healthy",
+			wantMessage: "PodStartup: Healthy\nPodNetwork: Healthy\nNcclAllReduce: Healthy\nGpuHostBandwidth: Healthy\nGpuPeerBandwidth: Healthy",
 		},
 	}
 
@@ -1059,7 +1060,7 @@ func TestCheckerSpecFor(t *testing.T) {
 	t.Parallel()
 
 	baseNames := []string{"PodStartup", "PodNetwork"}
-	gpuNames := []string{"PodStartup", "PodNetwork", "NcclAllReduce", "GpuBandwidth"}
+	gpuNames := []string{"PodStartup", "PodNetwork", "NcclAllReduce", "GpuHostBandwidth", "GpuPeerBandwidth"}
 
 	tests := []struct {
 		name            string
@@ -1109,6 +1110,16 @@ func TestCheckerSpecFor(t *testing.T) {
 			wantNames:       gpuNames,
 			wantGPU:         true,
 		},
+		{
+			name:            "gpu node only expects the gpu checks its sku runs",
+			info:            gpuNodeInfo{isGPUNode: true, gpuCount: 2, sku: "Standard_NV72ads_A10_v5"},
+			enableGPUChecks: true,
+			wantImage:       "gpu-image",
+			wantTimeout:     GPUPodTimeout,
+			// The A10 has no NVLink, so peer bandwidth is not one of its checks.
+			wantNames: []string{"PodStartup", "PodNetwork", "NcclAllReduce", "GpuHostBandwidth"},
+			wantGPU:   true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -1142,16 +1153,18 @@ func TestCheckerSpecFor(t *testing.T) {
 }
 
 // TestReconcileNodeConditionRouting checks which Node conditions a check publishes: a single
-// aggregate NodeHealthy for non-GPU nodes, and one condition per check for GPU nodes.
+// aggregate NodeHealthy for non-GPU nodes, and granular conditions for GPU nodes.
 func TestReconcileNodeConditionRouting(t *testing.T) {
 	tests := []struct {
 		name string
 		// gpuNode makes the target node a GPU node.
 		gpuNode bool
-		// enableGPUChecks gates the intrusive GPU checks, not the routing.
+		// sku overrides the GPU node's sku when set (default: Standard_ND96isr_H100_v5).
+		sku string
+		// enableGPUChecks gates the intrusive GPU checks.
 		enableGPUChecks bool
 		// seededResults stand in for the results the checker pod would have written. PodStartup is
-		// recorded by the controller itself, so it is never seeded here.
+		// recorded by the controller itself, so it is not seeded here.
 		seededResults []chmv1alpha1.CheckResult
 		// wantHealthy is the aggregate condition on the CheckNodeHealth.
 		wantHealthy metav1.ConditionStatus
@@ -1159,21 +1172,26 @@ func TestReconcileNodeConditionRouting(t *testing.T) {
 		wantNodeConditions map[corev1.NodeConditionType]corev1.ConditionStatus
 	}{
 		{
-			// Only the failing check's own condition goes False.
 			name:            "failing gpu check fails only its own condition",
 			gpuNode:         true,
 			enableGPUChecks: true,
 			seededResults: []chmv1alpha1.CheckResult{
 				{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusHealthy},
 				{Name: "NcclAllReduce", Status: chmv1alpha1.CheckStatusUnhealthy, ErrorCode: gpu.ErrorCodeCorrectness},
-				{Name: "GpuBandwidth", Status: chmv1alpha1.CheckStatusHealthy},
+				{Name: "GpuHostBandwidth", Status: chmv1alpha1.CheckStatusHealthy},
+				{Name: "GpuPeerBandwidth", Status: chmv1alpha1.CheckStatusHealthy},
 			},
 			wantHealthy: metav1.ConditionFalse,
 			wantNodeConditions: map[corev1.NodeConditionType]corev1.ConditionStatus{
-				nodeConditionTypeForChecker("PodStartup"):    corev1.ConditionTrue,
-				nodeConditionTypeForChecker("PodNetwork"):    corev1.ConditionTrue,
-				nodeConditionTypeForChecker("NcclAllReduce"): corev1.ConditionFalse,
-				nodeConditionTypeForChecker("GpuBandwidth"):  corev1.ConditionTrue,
+				NodeConditionPodStartupHealthy: corev1.ConditionTrue,
+				NodeConditionPodNetworkHealthy: corev1.ConditionTrue,
+				// Only the condition the failing check is explicitly tied to goes False. NCCL got past
+				// its GPU count check, but its bus bandwidth is unknown since NCCL did not pass.
+				NodeConditionGPUCountHealthy:              corev1.ConditionTrue,
+				NodeConditionGPUHostBandwidthHealthy:      corev1.ConditionTrue,
+				NodeConditionGPUPeerBandwidthHealthy:      corev1.ConditionTrue,
+				NodeConditionGPUAllReduceBandwidthHealthy: corev1.ConditionUnknown,
+				NodeConditionGPUCorrectnessHealthy:        corev1.ConditionFalse,
 			},
 		},
 		{
@@ -1183,14 +1201,39 @@ func TestReconcileNodeConditionRouting(t *testing.T) {
 			seededResults: []chmv1alpha1.CheckResult{
 				{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusHealthy},
 				{Name: "NcclAllReduce", Status: chmv1alpha1.CheckStatusHealthy},
-				{Name: "GpuBandwidth", Status: chmv1alpha1.CheckStatusHealthy},
+				{Name: "GpuHostBandwidth", Status: chmv1alpha1.CheckStatusHealthy},
+				{Name: "GpuPeerBandwidth", Status: chmv1alpha1.CheckStatusHealthy},
 			},
 			wantHealthy: metav1.ConditionTrue,
 			wantNodeConditions: map[corev1.NodeConditionType]corev1.ConditionStatus{
-				nodeConditionTypeForChecker("PodStartup"):    corev1.ConditionTrue,
-				nodeConditionTypeForChecker("PodNetwork"):    corev1.ConditionTrue,
-				nodeConditionTypeForChecker("NcclAllReduce"): corev1.ConditionTrue,
-				nodeConditionTypeForChecker("GpuBandwidth"):  corev1.ConditionTrue,
+				NodeConditionPodStartupHealthy:            corev1.ConditionTrue,
+				NodeConditionPodNetworkHealthy:            corev1.ConditionTrue,
+				NodeConditionGPUCountHealthy:              corev1.ConditionTrue,
+				NodeConditionGPUHostBandwidthHealthy:      corev1.ConditionTrue,
+				NodeConditionGPUPeerBandwidthHealthy:      corev1.ConditionTrue,
+				NodeConditionGPUAllReduceBandwidthHealthy: corev1.ConditionTrue,
+				NodeConditionGPUCorrectnessHealthy:        corev1.ConditionTrue,
+			},
+		},
+		{
+			name:    "gpu node without nvlink gets no peer bandwidth condition",
+			gpuNode: true,
+			// The A10 has no NVLink, so it never runs peer bandwidth and gets no condition for it.
+			sku:             "Standard_NV72ads_A10_v5",
+			enableGPUChecks: true,
+			seededResults: []chmv1alpha1.CheckResult{
+				{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusHealthy},
+				{Name: "NcclAllReduce", Status: chmv1alpha1.CheckStatusHealthy},
+				{Name: "GpuHostBandwidth", Status: chmv1alpha1.CheckStatusHealthy},
+			},
+			wantHealthy: metav1.ConditionTrue,
+			wantNodeConditions: map[corev1.NodeConditionType]corev1.ConditionStatus{
+				NodeConditionPodStartupHealthy:            corev1.ConditionTrue,
+				NodeConditionPodNetworkHealthy:            corev1.ConditionTrue,
+				NodeConditionGPUCountHealthy:              corev1.ConditionTrue,
+				NodeConditionGPUHostBandwidthHealthy:      corev1.ConditionTrue,
+				NodeConditionGPUAllReduceBandwidthHealthy: corev1.ConditionTrue,
+				NodeConditionGPUCorrectnessHealthy:        corev1.ConditionTrue,
 			},
 		},
 		{
@@ -1201,14 +1244,18 @@ func TestReconcileNodeConditionRouting(t *testing.T) {
 			seededResults: []chmv1alpha1.CheckResult{
 				{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusUnhealthy, ErrorCode: podnetwork.ErrorCodeNetworkConnectivityFailed},
 				{Name: "NcclAllReduce", Status: chmv1alpha1.CheckStatusHealthy},
-				{Name: "GpuBandwidth", Status: chmv1alpha1.CheckStatusHealthy},
+				{Name: "GpuHostBandwidth", Status: chmv1alpha1.CheckStatusHealthy},
+				{Name: "GpuPeerBandwidth", Status: chmv1alpha1.CheckStatusHealthy},
 			},
 			wantHealthy: metav1.ConditionFalse,
 			wantNodeConditions: map[corev1.NodeConditionType]corev1.ConditionStatus{
-				nodeConditionTypeForChecker("PodStartup"):    corev1.ConditionTrue,
-				nodeConditionTypeForChecker("PodNetwork"):    corev1.ConditionFalse,
-				nodeConditionTypeForChecker("NcclAllReduce"): corev1.ConditionTrue,
-				nodeConditionTypeForChecker("GpuBandwidth"):  corev1.ConditionTrue,
+				NodeConditionPodStartupHealthy:            corev1.ConditionTrue,
+				NodeConditionPodNetworkHealthy:            corev1.ConditionFalse,
+				NodeConditionGPUCountHealthy:              corev1.ConditionTrue,
+				NodeConditionGPUHostBandwidthHealthy:      corev1.ConditionTrue,
+				NodeConditionGPUPeerBandwidthHealthy:      corev1.ConditionTrue,
+				NodeConditionGPUAllReduceBandwidthHealthy: corev1.ConditionTrue,
+				NodeConditionGPUCorrectnessHealthy:        corev1.ConditionTrue,
 			},
 		},
 		{
@@ -1223,8 +1270,8 @@ func TestReconcileNodeConditionRouting(t *testing.T) {
 			},
 			wantHealthy: metav1.ConditionTrue,
 			wantNodeConditions: map[corev1.NodeConditionType]corev1.ConditionStatus{
-				nodeConditionTypeForChecker("PodStartup"): corev1.ConditionTrue,
-				nodeConditionTypeForChecker("PodNetwork"): corev1.ConditionTrue,
+				NodeConditionPodStartupHealthy: corev1.ConditionTrue,
+				NodeConditionPodNetworkHealthy: corev1.ConditionTrue,
 			},
 		},
 		{
@@ -1255,6 +1302,9 @@ func TestReconcileNodeConditionRouting(t *testing.T) {
 			}
 			if tt.gpuNode {
 				node = gpuNode("node-1")
+				if tt.sku != "" {
+					node.Labels[instanceTypeLabel] = tt.sku
+				}
 			}
 			if err := fakeClient.Create(ctx, node); err != nil {
 				t.Fatalf("creating the node: %v", err)
@@ -1344,15 +1394,15 @@ func TestUpdateNodeConditionClearsStaleConditions(t *testing.T) {
 				{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusHealthy},
 			},
 			want: map[corev1.NodeConditionType]corev1.ConditionStatus{
-				nodeConditionTypeForChecker("PodStartup"): corev1.ConditionTrue,
-				nodeConditionTypeForChecker("PodNetwork"): corev1.ConditionTrue,
+				NodeConditionPodStartupHealthy: corev1.ConditionTrue,
+				NodeConditionPodNetworkHealthy: corev1.ConditionTrue,
 			},
 		},
 		{
-			name: "node no longer seen as a gpu node drops its per-check conditions",
+			name: "node no longer seen as a gpu node drops its granular conditions",
 			stale: []corev1.NodeConditionType{
-				nodeConditionTypeForChecker("PodStartup"),
-				nodeConditionTypeForChecker("NcclAllReduce"),
+				NodeConditionPodStartupHealthy,
+				NodeConditionGPUCorrectnessHealthy,
 			},
 			info: gpuNodeInfo{},
 			results: []chmv1alpha1.CheckResult{
@@ -1360,6 +1410,25 @@ func TestUpdateNodeConditionClearsStaleConditions(t *testing.T) {
 			},
 			want: map[corev1.NodeConditionType]corev1.ConditionStatus{
 				NodeConditionNodeHealthy: corev1.ConditionTrue,
+			},
+		},
+		{
+			name: "gpu node whose gpu checks stopped running drops its gpu conditions",
+			stale: []corev1.NodeConditionType{
+				NodeConditionGPUCountHealthy,
+				NodeConditionGPUHostBandwidthHealthy,
+				NodeConditionGPUPeerBandwidthHealthy,
+				NodeConditionGPUAllReduceBandwidthHealthy,
+				NodeConditionGPUCorrectnessHealthy,
+			},
+			info: gpuNodeInfo{isGPUNode: true},
+			results: []chmv1alpha1.CheckResult{
+				{Name: "PodStartup", Status: chmv1alpha1.CheckStatusHealthy},
+				{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusHealthy},
+			},
+			want: map[corev1.NodeConditionType]corev1.ConditionStatus{
+				NodeConditionPodStartupHealthy: corev1.ConditionTrue,
+				NodeConditionPodNetworkHealthy: corev1.ConditionTrue,
 			},
 		},
 	}
@@ -1454,7 +1523,8 @@ func TestCircuitBreakersAreIndependent(t *testing.T) {
 				cnh.Status.Results = []chmv1alpha1.CheckResult{
 					{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusUnhealthy, ErrorCode: "NetworkConnectivityFailed"},
 					{Name: "NcclAllReduce", Status: chmv1alpha1.CheckStatusHealthy},
-					{Name: "GpuBandwidth", Status: chmv1alpha1.CheckStatusHealthy},
+					{Name: "GpuHostBandwidth", Status: chmv1alpha1.CheckStatusHealthy},
+					{Name: "GpuPeerBandwidth", Status: chmv1alpha1.CheckStatusHealthy},
 				}
 				if err := fakeClient.Status().Update(ctx, cnh); err != nil {
 					t.Fatalf("seeding reported results: %v", err)
@@ -1504,7 +1574,15 @@ func TestRecordMissingResults(t *testing.T) {
 			info:            gpuNodeInfo{isGPUNode: true},
 			enableGPUChecks: true,
 			reported:        []string{"PodStartup", "PodNetwork", "NcclAllReduce"},
-			wantAdded:       []string{"GpuBandwidth"},
+			wantAdded:       []string{"GpuHostBandwidth", "GpuPeerBandwidth"},
+		},
+		{
+			name: "gpu node only fills the gpu checks its sku runs",
+			// The A10 has no NVLink, so peer bandwidth never runs and is not expected.
+			info:            gpuNodeInfo{isGPUNode: true, sku: "Standard_NV72ads_A10_v5"},
+			enableGPUChecks: true,
+			reported:        []string{"PodStartup", "PodNetwork"},
+			wantAdded:       []string{"NcclAllReduce", "GpuHostBandwidth"},
 		},
 		{
 			name:      "gpu node without the checks only fills the base checks",

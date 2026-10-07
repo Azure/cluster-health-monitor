@@ -494,7 +494,7 @@ func TestRemoveStaleNodeCondition(t *testing.T) {
 			expectCondCount: 1,
 		},
 		{
-			name: "stale NcclAllReduceHealthy condition without a heartbeat — removed",
+			name: "stale GPUPeerBandwidthHealthy condition without a heartbeat — removed",
 			node: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{Name: "node-1"},
 				Status: corev1.NodeStatus{
@@ -502,7 +502,7 @@ func TestRemoveStaleNodeCondition(t *testing.T) {
 					Conditions: []corev1.NodeCondition{
 						{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
 						{
-							Type:               "kubernetes.azure.com/NcclAllReduceHealthy",
+							Type:               "kubernetes.azure.com/GPUPeerBandwidthHealthy",
 							Status:             corev1.ConditionFalse,
 							LastTransitionTime: metav1.NewTime(time.Now().Add(-1 * time.Hour)),
 						},
@@ -513,7 +513,7 @@ func TestRemoveStaleNodeCondition(t *testing.T) {
 			expectCondCount: 1,
 		},
 		{
-			name: "fresh NcclAllReduceHealthy condition without a heartbeat — not removed",
+			name: "fresh GPUPeerBandwidthHealthy condition without a heartbeat — not removed",
 			node: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{Name: "node-1"},
 				Status: corev1.NodeStatus{
@@ -521,7 +521,7 @@ func TestRemoveStaleNodeCondition(t *testing.T) {
 					Conditions: []corev1.NodeCondition{
 						{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
 						{
-							Type:               "kubernetes.azure.com/NcclAllReduceHealthy",
+							Type:               "kubernetes.azure.com/GPUPeerBandwidthHealthy",
 							Status:             corev1.ConditionFalse,
 							LastTransitionTime: metav1.Now(),
 						},
@@ -533,7 +533,7 @@ func TestRemoveStaleNodeCondition(t *testing.T) {
 		},
 		{
 			// Both conditions go stale together, so both are dropped in a single patch.
-			name: "stale NodeHealthy and NcclAllReduceHealthy conditions without heartbeats — both removed",
+			name: "stale NodeHealthy and GPUPeerBandwidthHealthy conditions without heartbeats — both removed",
 			node: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{Name: "node-1"},
 				Status: corev1.NodeStatus{
@@ -546,7 +546,7 @@ func TestRemoveStaleNodeCondition(t *testing.T) {
 							LastTransitionTime: metav1.NewTime(time.Now().Add(-1 * time.Hour)),
 						},
 						{
-							Type:               "kubernetes.azure.com/NcclAllReduceHealthy",
+							Type:               "kubernetes.azure.com/GPUPeerBandwidthHealthy",
 							Status:             corev1.ConditionFalse,
 							LastTransitionTime: metav1.NewTime(time.Now().Add(-1 * time.Hour)),
 						},
