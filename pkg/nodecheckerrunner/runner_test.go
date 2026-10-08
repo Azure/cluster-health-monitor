@@ -316,7 +316,7 @@ func TestNewRunnerCheckers(t *testing.T) {
 				CRName:   "cnh-1",
 				GPU:      &GPUOptions{SKU: "Standard_ND96isr_H100_v5"},
 			},
-			want: []string{"PodNetwork", "NcclAllReduce", "GpuBandwidth"},
+			want: []string{"PodNetwork", "NcclAllReduce", "GpuHostBandwidth", "GpuPeerBandwidth"},
 		},
 		{
 			name: "gpu node with an unknown sku still wires the gpu checkers",
@@ -325,7 +325,7 @@ func TestNewRunnerCheckers(t *testing.T) {
 				CRName:   "cnh-1",
 				GPU:      &GPUOptions{SKU: "unknown_sku"},
 			},
-			want: []string{"PodNetwork", "NcclAllReduce", "GpuBandwidth"},
+			want: []string{"PodNetwork", "NcclAllReduce", "GpuHostBandwidth", "GpuPeerBandwidth"},
 		},
 	}
 

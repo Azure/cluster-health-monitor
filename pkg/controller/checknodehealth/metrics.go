@@ -15,20 +15,39 @@ var (
 	checkCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "cluster_health_monitor_node_check_total",
-			Help: "Total number of completed node health checks, labeled by overall result and reason",
+			Help: "Total number of completed node health checks, labeled by node kind, overall result and reason",
 		},
-		[]string{"result", "reason"},
+		[]string{"node_kind", "result", "reason"},
 	)
 
 	// checkResultCounter tracks the individual check results reported within a CheckNodeHealth.
 	checkResultCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "cluster_health_monitor_node_check_result_total",
-			Help: "Total number of individual node check results, labeled by check name, status and code",
+			Help: "Total number of individual node check results, labeled by node kind, check name, status and code",
 		},
-		[]string{"checker_name", "status", "error_code"},
+		[]string{"node_kind", "checker_name", "status", "error_code"},
 	)
+
+	// TODO add latency metrics
 )
+
+const (
+	// NodeKindGPU labels results from GPU nodes.
+	NodeKindGPU = "gpu"
+
+	// NodeKindStandard labels results from non-GPU nodes.
+	NodeKindStandard = "standard"
+)
+
+// nodeKindLabel splits the counters along the same line the node conditions are split on, so that
+// GPU node health can be alerted on without the rest of the fleet diluting it, and vice versa.
+func nodeKindLabel(info gpuNodeInfo) string {
+	if info.isGPUNode {
+		return NodeKindGPU
+	}
+	return NodeKindStandard
+}
 
 // These collectors are registered into the controller-runtime registry rather than a registry of
 // our own so that they are served by the manager's existing metrics endpoint.
@@ -71,11 +90,13 @@ func errorCodeLabel(result chmv1alpha1.CheckResult) string {
 // Call only after the status update that sets FinishedAt on the CR has succeeded. That is what makes
 // subsequent reconciles short circuit through isCompleted, so emitting before it would cause double
 // counting when the reconcile is retried.
-func recordNodeCheckMetrics(cnh *chmv1alpha1.CheckNodeHealth, status metav1.ConditionStatus, reason string) {
-	checkCounter.WithLabelValues(resultLabel(status), reason).Inc()
+func recordNodeCheckMetrics(cnh *chmv1alpha1.CheckNodeHealth, info gpuNodeInfo, status metav1.ConditionStatus, reason string) {
+	nodeKind := nodeKindLabel(info)
+	checkCounter.WithLabelValues(nodeKind, resultLabel(status), reason).Inc()
 
 	for _, result := range cnh.Status.Results {
 		checkResultCounter.WithLabelValues(
+			nodeKind,
 			result.Name,
 			string(result.Status),
 			errorCodeLabel(result),

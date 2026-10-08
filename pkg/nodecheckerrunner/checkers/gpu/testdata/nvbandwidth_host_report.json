@@ -1,0 +1,67 @@
+{
+	"nvbandwidth" : 
+	{
+		"CUDA Driver API Version" : 13000,
+		"CUDA Runtime Version" : 12060,
+		"Driver Version" : "580.159.04",
+		"GPU Device list" : 
+		[
+			"0: NVIDIA H100 80GB HBM3 (00000001:00:00): (nvbw-host)",
+			"1: NVIDIA H100 80GB HBM3 (00000002:00:00): (nvbw-host)",
+			"2: NVIDIA H100 80GB HBM3 (00000003:00:00): (nvbw-host)",
+			"3: NVIDIA H100 80GB HBM3 (00000008:00:00): (nvbw-host)",
+			"4: NVIDIA H100 80GB HBM3 (00000009:00:00): (nvbw-host)",
+			"5: NVIDIA H100 80GB HBM3 (0000000a:00:00): (nvbw-host)",
+			"6: NVIDIA H100 80GB HBM3 (0000000b:00:00): (nvbw-host)",
+			"7: NVIDIA H100 80GB HBM3 (0000000c:00:00): (nvbw-host)"
+		],
+		"Version Major" : 0,
+		"Version Minor" : 10,
+		"Version Patch" : 0,
+		"bounceBufferConfComputeEnabled" : false,
+		"git_version" : "v0.10",
+		"testcases" : 
+		[
+			{
+				"bandwidth_description" : "memcpy CE CPU(row) -> GPU(column) bandwidth (GB/s)",
+				"bandwidth_matrix" : 
+				[
+					[
+						"55.5681",
+						"55.5745",
+						"55.5726",
+						"55.5519",
+						"55.579",
+						"55.5898",
+						"55.5708",
+						"55.5997"
+					]
+				],
+				"name" : "host_to_device_memcpy_ce",
+				"status" : "Passed",
+				"sum" : 444.60642630350003
+			},
+			{
+				"bandwidth_description" : "memcpy CE CPU(row) <- GPU(column) bandwidth (GB/s)",
+				"bandwidth_matrix" : 
+				[
+					[
+						"55.1627",
+						"55.1638",
+						"55.1632",
+						"55.1602",
+						"55.1296",
+						"55.1261",
+						"55.1257",
+						"55.1197"
+					]
+				],
+				"name" : "device_to_host_memcpy_ce",
+				"status" : "Passed",
+				"sum" : 441.15091842000004
+			}
+		],
+		"version" : "v0.10.0"
+	}
+}
+

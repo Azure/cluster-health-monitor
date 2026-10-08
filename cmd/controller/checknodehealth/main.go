@@ -63,7 +63,8 @@ func main() {
 		"Enable the HealthCheckRequest controller that bridges HealthCheckRequest CRD to CheckNodeHealth. "+
 			"The HealthCheckRequest CRD must be installed in the cluster by the AKS health signal component.")
 	flag.BoolVar(&enableNodeCondition, "enable-node-condition", false,
-		"Enable setting the NodeHealthy condition on Node objects when health checks fail.")
+		"Enable setting the NodeHealthy condition on Node objects when health checks fail. "+
+			"GPU nodes report granular node conditions instead, so NodeHealthy is never set on them.")
 	flag.BoolVar(&enableGPUChecks, "enable-gpu-checks", false,
 		"Enable intrusive GPU checks on CheckNodeHealth targets that are GPU nodes. "+
 			"Requires GPU_CHECKER_POD_IMAGE to be set.")
@@ -183,14 +184,14 @@ func main() {
 	}
 
 	// Setup controller
-	var circuitBreaker *checknodehealth.NodeConditionCircuitBreaker
+	var circuitBreakers *checknodehealth.NodeConditionCircuitBreakers
 	if enableNodeCondition {
-		circuitBreaker = checknodehealth.NewNodeConditionCircuitBreaker(
+		circuitBreakers = checknodehealth.NewNodeConditionCircuitBreakers(
 			checknodehealth.DefaultCircuitBreakerThreshold,
 			checknodehealth.DefaultCircuitBreakerWindow,
 			checknodehealth.DefaultCircuitBreakerCooldown,
 		)
-		klog.InfoS("Node condition circuit breaker enabled",
+		klog.InfoS("Node condition circuit breakers enabled",
 			"threshold", checknodehealth.DefaultCircuitBreakerThreshold,
 			"window", checknodehealth.DefaultCircuitBreakerWindow,
 			"cooldown", checknodehealth.DefaultCircuitBreakerCooldown,
@@ -206,7 +207,7 @@ func main() {
 		GPUCheckerPodImage:  gpuCheckerPodImage,
 		CheckerPodNamespace: checkerPodNamespace,
 		EnableNodeCondition: enableNodeCondition,
-		CircuitBreaker:      circuitBreaker,
+		CircuitBreakers:     circuitBreakers,
 		EnableGPUChecks:     enableGPUChecks,
 	}).SetupWithManager(mgr); err != nil {
 		klog.ErrorS(err, "Unable to create controller", "controller", "CheckNodeHealth")

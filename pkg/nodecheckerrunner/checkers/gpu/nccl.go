@@ -44,14 +44,18 @@ func NewNCCLChecker(cfg Config) *NCCLChecker {
 }
 
 func (c *NCCLChecker) Name() string {
-	return "NcclAllReduce"
+	return NCCLAllReduceCheckerName
+}
+
+func (c *NCCLChecker) appliesTo(profile skuProfile) bool {
+	return profile.NcclBusGBps > 0
 }
 
 // Run runs the all-reduce benchmark and maps its report to a check result.
 func (c *NCCLChecker) Run(ctx context.Context) (*checker.Result, error) {
 	// Nothing to judge the measurement against, so the benchmark does not make sense to run.
 	profile, ok := profileFor(c.cfg.SKU)
-	if !ok || profile.NcclBusGBps == 0 {
+	if !ok || !c.appliesTo(profile) {
 		return unsupportedSKU(c.cfg.SKU), nil
 	}
 
@@ -133,6 +137,9 @@ func parseNCCLResult(reportJSON, output, sku string, profile skuProfile, execErr
 	busbw := report.AverageBusBandwidth.Bandwidth
 	outOfBounds := report.OutOfBounds.Count
 
+	// The order matters: the controller's GPUCorrectnessHealthy condition treats a bandwidth error as a
+	// correctness pass because it only occurs after the correctness check has passed and the run has
+	// exited cleanly.
 	switch {
 	case outOfBounds > 0:
 		return checker.Unhealthy(ErrorCodeCorrectness,

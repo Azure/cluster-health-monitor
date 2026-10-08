@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/samber/lo"
 	"k8s.io/klog/v2"
 
 	"github.com/Azure/cluster-health-monitor/pkg/checker"
@@ -50,15 +51,36 @@ func (c Config) withDefaults() Config {
 	return c
 }
 
+// Names the GPU checkers report their results under.
+const (
+	NCCLAllReduceCheckerName = "NcclAllReduce"
+	HostBandwidthCheckerName = "GpuHostBandwidth"
+	PeerBandwidthCheckerName = "GpuPeerBandwidth"
+)
+
 // Checker is the subset of the runner's NodeChecker that this package implements.
 type Checker interface {
 	Name() string
 	Run(ctx context.Context) (*checker.Result, error)
+	// appliesTo reports whether a known SKU's profile has the thresholds this checker needs.
+	appliesTo(profile skuProfile) bool
 }
 
-// NewCheckers returns the intrusive benchmarks.
+// NewCheckers returns the intrusive benchmarks that apply to the SKU. A known SKU skips the
+// benchmarks its profile has no threshold for. An unknown SKU gets every benchmark, so each
+// reports that the SKU is unsupported.
 func NewCheckers(cfg Config) []Checker {
-	return []Checker{NewNCCLChecker(cfg), NewBandwidthChecker(cfg)}
+	all := []Checker{NewNCCLChecker(cfg), NewHostBandwidthChecker(cfg), NewPeerBandwidthChecker(cfg)}
+	profile, ok := profileFor(cfg.SKU)
+	if !ok {
+		return all
+	}
+	return lo.Filter(all, func(c Checker, _ int) bool { return c.appliesTo(profile) })
+}
+
+// CheckerNames returns the names of the checkers NewCheckers runs for the SKU.
+func CheckerNames(sku string) []string {
+	return lo.Map(NewCheckers(Config{SKU: sku}), func(c Checker, _ int) string { return c.Name() })
 }
 
 // detectGPUCount counts the GPUs nvidia-smi reports.

@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"time"
@@ -16,6 +17,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -123,7 +125,123 @@ var _ = Describe("GPU CheckNodeHealth flow on Kind", Serial, Ordered, func() {
 
 		runHealthyGPUControllerFlow(ctx, k8sClient, nodeName)
 	})
+
+	It("reports base check and GPU conditions and never NodeHealthy on a GPU node", func() {
+		By("Selecting a node with both CoreDNS replicas on remote nodes")
+		nodeName, err := nodeWithRemoteCoreDNS(ctx)
+		Expect(err).NotTo(HaveOccurred())
+
+		By("Simulating a driver-only NVIDIA H100 node")
+		restoreNode, err := simulateNVIDIAGPUNode(ctx, nodeName, gpuTestSKU)
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { Expect(restoreNode()).To(Succeed()) })
+
+		By("Running the GPU checks to completion")
+		runCheckToCompletion(ctx, k8sClient, nodeName, "gpu-node-conditions")
+
+		By("Verifying every base check and GPU condition reports healthy")
+		for _, conditionType := range slices.Concat(baseCheckConditionTypes, gpuConditionTypes) {
+			expectNodeConditionStatus(ctx, k8sClient, nodeName, conditionType, corev1.ConditionTrue)
+		}
+
+		By("Verifying NodeHealthy is never set on a GPU node")
+		// The invariant the whole split exists for: remediation keyed on NodeHealthy must not act
+		// on GPU nodes, even when every GPU check passed.
+		Consistently(func() *corev1.NodeCondition {
+			return getNodeCondition(ctx, k8sClient, nodeName, checknodehealth.NodeConditionNodeHealthy)
+		}, "15s", "3s").Should(BeNil(), "NodeHealthy must never be set on a GPU node")
+	})
+
+	It("retires the GPU node conditions when a node stops being a GPU node", func() {
+		By("Selecting a node with both CoreDNS replicas on remote nodes")
+		nodeName, err := nodeWithRemoteCoreDNS(ctx)
+		Expect(err).NotTo(HaveOccurred())
+
+		By("Simulating a GPU node and running the checks so it carries GPU node conditions")
+		restoreNode, err := simulateNVIDIAGPUNode(ctx, nodeName, gpuTestSKU)
+		Expect(err).NotTo(HaveOccurred())
+		DeferCleanup(func() { Expect(restoreNode()).To(Succeed()) })
+
+		runCheckToCompletion(ctx, k8sClient, nodeName, "gpu-cond-before")
+		Eventually(func() *corev1.NodeCondition {
+			return getNodeCondition(ctx, k8sClient, nodeName, gpuConditionTypes[0])
+		}, "60s", "2s").ShouldNot(BeNil(), "expected the GPU node conditions first")
+
+		By("Restoring the node so it is no longer seen as a GPU node")
+		Expect(restoreNode()).To(Succeed())
+
+		By("Running another health check")
+		runCheckToCompletion(ctx, k8sClient, nodeName, "gpu-cond-after")
+
+		By("Verifying the node now reports the aggregate NodeHealthy condition")
+		Eventually(func() *corev1.NodeCondition {
+			return getNodeCondition(ctx, k8sClient, nodeName, checknodehealth.NodeConditionNodeHealthy)
+		}, "60s", "2s").ShouldNot(BeNil(), "expected NodeHealthy once the node is not a GPU node")
+
+		By("Verifying the GPU node conditions were retired rather than left behind")
+		// A leftover condition would keep asserting a verdict nothing produces any more.
+		for _, conditionType := range slices.Concat(baseCheckConditionTypes, gpuConditionTypes) {
+			Eventually(func() *corev1.NodeCondition {
+				return getNodeCondition(ctx, k8sClient, nodeName, conditionType)
+			}, "60s", "2s").Should(BeNil(), "%s should have been removed", conditionType)
+		}
+	})
 })
+
+// baseCheckConditionTypes are the base check conditions a GPU node reports. Spelled out here rather
+// than reused from the controller so the test fails if the published name changes.
+var baseCheckConditionTypes = []corev1.NodeConditionType{
+	"kubernetes.azure.com/PodStartupHealthy",
+	"kubernetes.azure.com/PodNetworkHealthy",
+}
+
+// gpuConditionTypes are the GPU conditions, spelled out for the same reason.
+var gpuConditionTypes = []corev1.NodeConditionType{
+	"kubernetes.azure.com/GPUCountHealthy",
+	"kubernetes.azure.com/GPUHostBandwidthHealthy",
+	"kubernetes.azure.com/GPUPeerBandwidthHealthy",
+	"kubernetes.azure.com/GPUAllReduceBandwidthHealthy",
+	"kubernetes.azure.com/GPUCorrectnessHealthy",
+}
+
+// expectNodeConditionStatus waits for the condition to appear on the node and checks its status.
+func expectNodeConditionStatus(ctx context.Context, k8sClient client.Client, nodeName string, conditionType corev1.NodeConditionType, want corev1.ConditionStatus) {
+	Eventually(func() *corev1.NodeCondition {
+		return getNodeCondition(ctx, k8sClient, nodeName, conditionType)
+	}, "60s", "2s").ShouldNot(BeNil(), "expected %s on the node", conditionType)
+
+	condition := getNodeCondition(ctx, k8sClient, nodeName, conditionType)
+	Expect(condition.Status).To(Equal(want),
+		"%s: reason=%s message=%s", conditionType, condition.Reason, condition.Message)
+}
+
+// getNodeCondition returns the named condition from the node, or nil when it is absent.
+func getNodeCondition(ctx context.Context, k8sClient client.Client, nodeName string, conditionType corev1.NodeConditionType) *corev1.NodeCondition {
+	node := &corev1.Node{}
+	if err := k8sClient.Get(ctx, client.ObjectKey{Name: nodeName}, node); err != nil {
+		return nil
+	}
+	for i, c := range node.Status.Conditions {
+		if c.Type == conditionType {
+			return &node.Status.Conditions[i]
+		}
+	}
+	return nil
+}
+
+// runCheckToCompletion creates a CheckNodeHealth for the node and waits for the controller to
+// finish it, so the node conditions it publishes have settled before they are asserted on.
+func runCheckToCompletion(ctx context.Context, k8sClient client.Client, nodeName, prefix string) {
+	cnhName := fmt.Sprintf("%s-%d", prefix, time.Now().UnixNano())
+	DeferCleanup(func() { _ = deleteCheckNodeHealthCR(ctx, k8sClient, cnhName) })
+
+	Expect(createCheckNodeHealthCR(ctx, k8sClient, cnhName, nodeName)).To(Succeed())
+	Eventually(func(g Gomega) {
+		cnh, getErr := getCheckNodeHealthCR(ctx, k8sClient, cnhName)
+		g.Expect(getErr).NotTo(HaveOccurred())
+		g.Expect(cnh.Status.FinishedAt).NotTo(BeNil())
+	}, "120s", "2s").Should(Succeed(), "CheckNodeHealth %s did not complete", cnhName)
+}
 
 func runHealthyGPUControllerFlow(ctx context.Context, k8sClient client.Client, nodeName string) {
 	By("Verifying the simulated NVIDIA node metadata")
@@ -150,14 +268,14 @@ func runHealthyGPUControllerFlow(ctx context.Context, k8sClient client.Client, n
 	}, "90s", "1s").Should(Succeed())
 
 	By("Verifying all core and GPU checks reported healthy results")
-	Expect(completed.Status.Results).To(HaveLen(4))
+	Expect(completed.Status.Results).To(HaveLen(5))
 	results := make(map[string]chmv1alpha1.CheckResult, len(completed.Status.Results))
 	for _, result := range completed.Status.Results {
 		_, duplicate := results[result.Name]
 		Expect(duplicate).To(BeFalse(), "duplicate result %s", result.Name)
 		results[result.Name] = result
 	}
-	for _, name := range []string{"PodStartup", "PodNetwork", "NcclAllReduce", "GpuBandwidth"} {
+	for _, name := range []string{"PodStartup", "PodNetwork", "NcclAllReduce", "GpuHostBandwidth", "GpuPeerBandwidth"} {
 		result, found := results[name]
 		Expect(found).To(BeTrue(), "%s result was not reported", name)
 		Expect(result.Status).To(Equal(chmv1alpha1.CheckStatusHealthy),
@@ -169,16 +287,16 @@ func runHealthyGPUControllerFlow(ctx context.Context, k8sClient client.Client, n
 	Expect(nccl.Message).To(ContainSubstring("480.000 GB/s"))
 	Expect(nccl.Message).To(ContainSubstring("460.000 GB/s threshold"))
 
-	bandwidth := results["GpuBandwidth"]
-	for _, testcase := range []string{
-		"host_to_device_memcpy_ce",
-		"device_to_host_memcpy_ce",
-		"device_to_device_memcpy_read_ce",
-	} {
-		Expect(bandwidth.Message).To(ContainSubstring(testcase))
-	}
-	Expect(bandwidth.Message).To(ContainSubstring("48.000 GB/s threshold"))
-	Expect(bandwidth.Message).To(ContainSubstring("335.000 GB/s threshold"))
+	hostBandwidth := results["GpuHostBandwidth"]
+	Expect(hostBandwidth.Message).To(ContainSubstring("host_to_device_memcpy_ce"))
+	Expect(hostBandwidth.Message).To(ContainSubstring("device_to_host_memcpy_ce"))
+	Expect(hostBandwidth.Message).To(ContainSubstring("48.000 GB/s threshold"))
+	Expect(hostBandwidth.Message).NotTo(ContainSubstring("device_to_device_memcpy_read_ce"))
+
+	peerBandwidth := results["GpuPeerBandwidth"]
+	Expect(peerBandwidth.Message).To(ContainSubstring("device_to_device_memcpy_read_ce"))
+	Expect(peerBandwidth.Message).To(ContainSubstring("335.000 GB/s threshold"))
+	Expect(peerBandwidth.Message).NotTo(ContainSubstring("host_to_device_memcpy_ce"))
 
 	By("Verifying the aggregate CheckNodeHealth condition is healthy")
 	Expect(completed.Status.Conditions).To(HaveLen(1))
@@ -186,7 +304,7 @@ func runHealthyGPUControllerFlow(ctx context.Context, k8sClient client.Client, n
 	Expect(condition.Type).To(Equal(checknodehealth.ConditionTypeHealthy))
 	Expect(condition.Status).To(Equal(metav1.ConditionTrue))
 	Expect(condition.Reason).To(Equal(checknodehealth.ReasonCheckPassed))
-	for _, name := range []string{"PodStartup", "PodNetwork", "NcclAllReduce", "GpuBandwidth"} {
+	for _, name := range []string{"PodStartup", "PodNetwork", "NcclAllReduce", "GpuHostBandwidth", "GpuPeerBandwidth"} {
 		Expect(condition.Message).To(ContainSubstring(name + ": Healthy"))
 	}
 
@@ -251,64 +369,91 @@ func simulateNVIDIAGPUNode(ctx context.Context, nodeName, sku string) (func() er
 	}
 	original = original.DeepCopy()
 
-	node := original.DeepCopy()
-	if node.Labels == nil {
-		node.Labels = make(map[string]string)
+	// The controller and kubelet write the node concurrently. For example, relabeling it as a GPU node
+	// makes the controller remove NodeHealthy straight away. So every write starts from the latest node
+	// and retries on conflict.
+	updateNode := func(mutate func(*corev1.Node)) error {
+		return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			node, getErr := nodes.Get(ctx, nodeName, metav1.GetOptions{})
+			if getErr != nil {
+				return getErr
+			}
+			mutate(node)
+			_, updateErr := nodes.Update(ctx, node, metav1.UpdateOptions{})
+			return updateErr
+		})
 	}
-	// Mirror the controller-relevant metadata observed on an actual managed AKS GPU node.
-	node.Labels[gpuAcceleratorLabel] = "nvidia"
-	node.Labels[gpuInstanceTypeLabel] = sku
-	node.Spec.Taints = append(node.Spec.Taints, corev1.Taint{
-		Key: gpuTaintKey, Value: gpuTaintValue, Effect: corev1.TaintEffectNoSchedule,
-	})
-	node, err = nodes.Update(ctx, node, metav1.UpdateOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("label and taint node %s: %w", nodeName, err)
+	updateNodeStatus := func(mutate func(*corev1.Node)) error {
+		return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			node, getErr := nodes.Get(ctx, nodeName, metav1.GetOptions{})
+			if getErr != nil {
+				return getErr
+			}
+			mutate(node)
+			_, updateErr := nodes.UpdateStatus(ctx, node, metav1.UpdateOptions{})
+			return updateErr
+		})
+	}
+
+	restore := func() error {
+		if err := updateNode(func(current *corev1.Node) {
+			for _, key := range []string{gpuAcceleratorLabel, gpuInstanceTypeLabel} {
+				if value, existed := original.Labels[key]; existed {
+					current.Labels[key] = value
+				} else {
+					delete(current.Labels, key)
+				}
+			}
+			current.Spec.Taints = slices.Clone(original.Spec.Taints)
+		}); err != nil {
+			return fmt.Errorf("restore labels and taints on node %s: %w", nodeName, err)
+		}
+		if err := updateNodeStatus(func(current *corev1.Node) {
+			for _, resources := range []struct{ current, original corev1.ResourceList }{
+				{current.Status.Capacity, original.Status.Capacity},
+				{current.Status.Allocatable, original.Status.Allocatable},
+			} {
+				if resources.current == nil {
+					continue
+				}
+				if value, existed := resources.original[nvidiaGPUResource]; existed {
+					resources.current[nvidiaGPUResource] = value
+				} else {
+					delete(resources.current, nvidiaGPUResource)
+				}
+			}
+		}); err != nil {
+			return fmt.Errorf("restore GPU status on node %s: %w", nodeName, err)
+		}
+		return nil
+	}
+
+	gpuTaint := corev1.Taint{Key: gpuTaintKey, Value: gpuTaintValue, Effect: corev1.TaintEffectNoSchedule}
+	if err := updateNode(func(node *corev1.Node) {
+		if node.Labels == nil {
+			node.Labels = make(map[string]string)
+		}
+		// Mirror the controller-relevant metadata observed on an actual managed AKS GPU node.
+		node.Labels[gpuAcceleratorLabel] = "nvidia"
+		node.Labels[gpuInstanceTypeLabel] = sku
+		if !slices.ContainsFunc(node.Spec.Taints, func(t corev1.Taint) bool { return t.MatchTaint(&gpuTaint) }) {
+			node.Spec.Taints = append(node.Spec.Taints, gpuTaint)
+		}
+	}); err != nil {
+		return nil, errors.Join(fmt.Errorf("label and taint node %s: %w", nodeName, err), restore())
 	}
 
 	// Start every scenario without a stale device-plugin resource. The fully managed test lets its
 	// fake plugin advertise the resource through kubelet, rather than patching node status directly.
-	if node.Status.Capacity != nil {
+	if err := updateNodeStatus(func(node *corev1.Node) {
 		delete(node.Status.Capacity, nvidiaGPUResource)
-	}
-	if node.Status.Allocatable != nil {
 		delete(node.Status.Allocatable, nvidiaGPUResource)
-	}
-	if _, err := nodes.UpdateStatus(ctx, node, metav1.UpdateOptions{}); err != nil {
-		return nil, fmt.Errorf("clear GPU status on node %s: %w", nodeName, err)
+	}); err != nil {
+		// Undo the labels so a failure here does not leave the node looking like a GPU node to later specs.
+		return nil, errors.Join(fmt.Errorf("clear GPU status on node %s: %w", nodeName, err), restore())
 	}
 
-	return func() error {
-		current, getErr := nodes.Get(ctx, nodeName, metav1.GetOptions{})
-		if getErr != nil {
-			return getErr
-		}
-		for _, key := range []string{gpuAcceleratorLabel, gpuInstanceTypeLabel} {
-			if value, existed := original.Labels[key]; existed {
-				current.Labels[key] = value
-			} else {
-				delete(current.Labels, key)
-			}
-		}
-		current.Spec.Taints = slices.Clone(original.Spec.Taints)
-		current, getErr = nodes.Update(ctx, current, metav1.UpdateOptions{})
-		if getErr != nil {
-			return getErr
-		}
-
-		if value, existed := original.Status.Capacity[nvidiaGPUResource]; existed {
-			current.Status.Capacity[nvidiaGPUResource] = value
-		} else {
-			delete(current.Status.Capacity, nvidiaGPUResource)
-		}
-		if value, existed := original.Status.Allocatable[nvidiaGPUResource]; existed {
-			current.Status.Allocatable[nvidiaGPUResource] = value
-		} else {
-			delete(current.Status.Allocatable, nvidiaGPUResource)
-		}
-		_, getErr = nodes.UpdateStatus(ctx, current, metav1.UpdateOptions{})
-		return getErr
-	}, nil
+	return restore, nil
 }
 func deployFakeNVIDIADevicePlugin(ctx context.Context, nodeName string) (func() error, error) {
 	labels := map[string]string{"app": fakeDevicePluginName}
