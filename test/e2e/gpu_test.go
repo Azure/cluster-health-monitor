@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"time"
@@ -16,6 +17,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -367,64 +369,91 @@ func simulateNVIDIAGPUNode(ctx context.Context, nodeName, sku string) (func() er
 	}
 	original = original.DeepCopy()
 
-	node := original.DeepCopy()
-	if node.Labels == nil {
-		node.Labels = make(map[string]string)
+	// The controller and kubelet write the node concurrently. For example, relabeling it as a GPU node
+	// makes the controller remove NodeHealthy straight away. So every write starts from the latest node
+	// and retries on conflict.
+	updateNode := func(mutate func(*corev1.Node)) error {
+		return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			node, getErr := nodes.Get(ctx, nodeName, metav1.GetOptions{})
+			if getErr != nil {
+				return getErr
+			}
+			mutate(node)
+			_, updateErr := nodes.Update(ctx, node, metav1.UpdateOptions{})
+			return updateErr
+		})
 	}
-	// Mirror the controller-relevant metadata observed on an actual managed AKS GPU node.
-	node.Labels[gpuAcceleratorLabel] = "nvidia"
-	node.Labels[gpuInstanceTypeLabel] = sku
-	node.Spec.Taints = append(node.Spec.Taints, corev1.Taint{
-		Key: gpuTaintKey, Value: gpuTaintValue, Effect: corev1.TaintEffectNoSchedule,
-	})
-	node, err = nodes.Update(ctx, node, metav1.UpdateOptions{})
-	if err != nil {
-		return nil, fmt.Errorf("label and taint node %s: %w", nodeName, err)
+	updateNodeStatus := func(mutate func(*corev1.Node)) error {
+		return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+			node, getErr := nodes.Get(ctx, nodeName, metav1.GetOptions{})
+			if getErr != nil {
+				return getErr
+			}
+			mutate(node)
+			_, updateErr := nodes.UpdateStatus(ctx, node, metav1.UpdateOptions{})
+			return updateErr
+		})
+	}
+
+	restore := func() error {
+		if err := updateNode(func(current *corev1.Node) {
+			for _, key := range []string{gpuAcceleratorLabel, gpuInstanceTypeLabel} {
+				if value, existed := original.Labels[key]; existed {
+					current.Labels[key] = value
+				} else {
+					delete(current.Labels, key)
+				}
+			}
+			current.Spec.Taints = slices.Clone(original.Spec.Taints)
+		}); err != nil {
+			return fmt.Errorf("restore labels and taints on node %s: %w", nodeName, err)
+		}
+		if err := updateNodeStatus(func(current *corev1.Node) {
+			for _, resources := range []struct{ current, original corev1.ResourceList }{
+				{current.Status.Capacity, original.Status.Capacity},
+				{current.Status.Allocatable, original.Status.Allocatable},
+			} {
+				if resources.current == nil {
+					continue
+				}
+				if value, existed := resources.original[nvidiaGPUResource]; existed {
+					resources.current[nvidiaGPUResource] = value
+				} else {
+					delete(resources.current, nvidiaGPUResource)
+				}
+			}
+		}); err != nil {
+			return fmt.Errorf("restore GPU status on node %s: %w", nodeName, err)
+		}
+		return nil
+	}
+
+	gpuTaint := corev1.Taint{Key: gpuTaintKey, Value: gpuTaintValue, Effect: corev1.TaintEffectNoSchedule}
+	if err := updateNode(func(node *corev1.Node) {
+		if node.Labels == nil {
+			node.Labels = make(map[string]string)
+		}
+		// Mirror the controller-relevant metadata observed on an actual managed AKS GPU node.
+		node.Labels[gpuAcceleratorLabel] = "nvidia"
+		node.Labels[gpuInstanceTypeLabel] = sku
+		if !slices.ContainsFunc(node.Spec.Taints, func(t corev1.Taint) bool { return t.MatchTaint(&gpuTaint) }) {
+			node.Spec.Taints = append(node.Spec.Taints, gpuTaint)
+		}
+	}); err != nil {
+		return nil, errors.Join(fmt.Errorf("label and taint node %s: %w", nodeName, err), restore())
 	}
 
 	// Start every scenario without a stale device-plugin resource. The fully managed test lets its
 	// fake plugin advertise the resource through kubelet, rather than patching node status directly.
-	if node.Status.Capacity != nil {
+	if err := updateNodeStatus(func(node *corev1.Node) {
 		delete(node.Status.Capacity, nvidiaGPUResource)
-	}
-	if node.Status.Allocatable != nil {
 		delete(node.Status.Allocatable, nvidiaGPUResource)
-	}
-	if _, err := nodes.UpdateStatus(ctx, node, metav1.UpdateOptions{}); err != nil {
-		return nil, fmt.Errorf("clear GPU status on node %s: %w", nodeName, err)
+	}); err != nil {
+		// Undo the labels so a failure here does not leave the node looking like a GPU node to later specs.
+		return nil, errors.Join(fmt.Errorf("clear GPU status on node %s: %w", nodeName, err), restore())
 	}
 
-	return func() error {
-		current, getErr := nodes.Get(ctx, nodeName, metav1.GetOptions{})
-		if getErr != nil {
-			return getErr
-		}
-		for _, key := range []string{gpuAcceleratorLabel, gpuInstanceTypeLabel} {
-			if value, existed := original.Labels[key]; existed {
-				current.Labels[key] = value
-			} else {
-				delete(current.Labels, key)
-			}
-		}
-		current.Spec.Taints = slices.Clone(original.Spec.Taints)
-		current, getErr = nodes.Update(ctx, current, metav1.UpdateOptions{})
-		if getErr != nil {
-			return getErr
-		}
-
-		if value, existed := original.Status.Capacity[nvidiaGPUResource]; existed {
-			current.Status.Capacity[nvidiaGPUResource] = value
-		} else {
-			delete(current.Status.Capacity, nvidiaGPUResource)
-		}
-		if value, existed := original.Status.Allocatable[nvidiaGPUResource]; existed {
-			current.Status.Allocatable[nvidiaGPUResource] = value
-		} else {
-			delete(current.Status.Allocatable, nvidiaGPUResource)
-		}
-		_, getErr = nodes.UpdateStatus(ctx, current, metav1.UpdateOptions{})
-		return getErr
-	}, nil
+	return restore, nil
 }
 func deployFakeNVIDIADevicePlugin(ctx context.Context, nodeName string) (func() error, error) {
 	labels := map[string]string{"app": fakeDevicePluginName}
