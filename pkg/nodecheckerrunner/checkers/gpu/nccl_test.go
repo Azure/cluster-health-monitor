@@ -190,6 +190,23 @@ func TestParseNCCLResult(t *testing.T) {
 			wantMessage: "3 out-of-bounds values",
 		},
 		{
+			name:        "correctness failure prioritized over low bandwidth",
+			reportJSON:  strings.Replace(strings.Replace(report, `"count": 0`, `"count": 3`, 1), "480.294297", "300.000", 1),
+			sku:         h100SKU,
+			wantStatus:  checker.StatusUnhealthy,
+			wantCode:    ErrorCodeCorrectness,
+			wantMessage: "3 out-of-bounds values",
+		},
+		{
+			name:        "low bandwidth with a dirty exit is a tool failure",
+			reportJSON:  strings.Replace(report, "480.294297", "300.000", 1),
+			sku:         h100SKU,
+			execErr:     errors.New("exit status 3"),
+			wantStatus:  checker.StatusUnknown,
+			wantCode:    ErrorCodeToolFailed,
+			wantMessage: "did not exit cleanly (exit status 3)",
+		},
+		{
 			name:        "passing report with a dirty exit is a tool failure",
 			reportJSON:  report,
 			output:      "one or more processes exited with non-zero status",

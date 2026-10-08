@@ -137,6 +137,9 @@ func parseNCCLResult(reportJSON, output, sku string, profile skuProfile, execErr
 	busbw := report.AverageBusBandwidth.Bandwidth
 	outOfBounds := report.OutOfBounds.Count
 
+	// The order matters: the controller's GPUCorrectnessHealthy condition treats a bandwidth error as a
+	// correctness pass because it only occurs after the correctness check has passed and the run has
+	// exited cleanly.
 	switch {
 	case outOfBounds > 0:
 		return checker.Unhealthy(ErrorCodeCorrectness,

@@ -96,8 +96,7 @@ func TestGPUNodeConditions(t *testing.T) {
 			},
 		},
 		{
-			// Correctness is not tied to low bandwidth, so NCCL failing that way leaves it unknown.
-			name: "low nccl bus bandwidth fails all-reduce bandwidth and leaves correctness unknown",
+			name: "low nccl bus bandwidth fails only all-reduce bandwidth",
 			results: []chmv1alpha1.CheckResult{
 				withCode(CheckerNcclAllReduce, chmv1alpha1.CheckStatusUnhealthy, gpu.ErrorCodeLowBandwidth),
 				healthy(CheckerGpuHostBandwidth),
@@ -110,7 +109,7 @@ func TestGPUNodeConditions(t *testing.T) {
 				NodeConditionGPUPeerBandwidthHealthy: {corev1.ConditionTrue, ReasonCheckPassed, peerOK},
 				NodeConditionGPUAllReduceBandwidthHealthy: {corev1.ConditionFalse, gpu.ErrorCodeLowBandwidth,
 					"NcclAllReduce [BandwidthBelowThreshold]: detail"},
-				NodeConditionGPUCorrectnessHealthy: {corev1.ConditionUnknown, ReasonCheckUnknown,
+				NodeConditionGPUCorrectnessHealthy: {corev1.ConditionTrue, ReasonCheckPassed,
 					"NcclAllReduce [BandwidthBelowThreshold]: detail"},
 			},
 		},
@@ -355,6 +354,59 @@ func TestAssessFuncs(t *testing.T) {
 			}
 			if got := checkedFirst(ownCode)(tt.result); got != tt.wantCheckedFirst {
 				t.Errorf("checkedFirst = %s, want %s", got, tt.wantCheckedFirst)
+			}
+		})
+	}
+}
+
+func TestAssessNCCLCorrectness(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		result chmv1alpha1.CheckResult
+		want   corev1.ConditionStatus
+	}{
+		{
+			name:   "healthy passes",
+			result: chmv1alpha1.CheckResult{Name: CheckerNcclAllReduce, Status: chmv1alpha1.CheckStatusHealthy},
+			want:   corev1.ConditionTrue,
+		},
+		{
+			name:   "correctness error fails",
+			result: chmv1alpha1.CheckResult{Name: CheckerNcclAllReduce, Status: chmv1alpha1.CheckStatusUnhealthy, ErrorCode: gpu.ErrorCodeCorrectness},
+			want:   corev1.ConditionFalse,
+		},
+		{
+			// NCCL only reports low bandwidth once its results checked out.
+			name:   "low nccl bandwidth passes",
+			result: chmv1alpha1.CheckResult{Name: CheckerNcclAllReduce, Status: chmv1alpha1.CheckStatusUnhealthy, ErrorCode: gpu.ErrorCodeLowBandwidth},
+			want:   corev1.ConditionTrue,
+		},
+		{
+			// The ordering is specific to the NCCL checker, so no other check's low bandwidth counts.
+			name:   "low bandwidth from another check is unknown",
+			result: chmv1alpha1.CheckResult{Name: CheckerGpuPeerBandwidth, Status: chmv1alpha1.CheckStatusUnhealthy, ErrorCode: gpu.ErrorCodeLowBandwidth},
+			want:   corev1.ConditionUnknown,
+		},
+		{
+			name:   "gpu count mismatch is unknown",
+			result: chmv1alpha1.CheckResult{Name: CheckerNcclAllReduce, Status: chmv1alpha1.CheckStatusUnhealthy, ErrorCode: gpu.ErrorCodeUnexpectedGPUCount},
+			want:   corev1.ConditionUnknown,
+		},
+		{
+			name:   "tool failure is unknown",
+			result: chmv1alpha1.CheckResult{Name: CheckerNcclAllReduce, Status: chmv1alpha1.CheckStatusUnknown, ErrorCode: gpu.ErrorCodeToolFailed},
+			want:   corev1.ConditionUnknown,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := assessCorrectness(tt.result); got != tt.want {
+				t.Errorf("assessNCCLCorrectness = %s, want %s", got, tt.want)
 			}
 		})
 	}

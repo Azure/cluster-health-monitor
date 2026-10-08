@@ -62,7 +62,7 @@ var gpuConditions = []gpuCondition{
 	{
 		conditionType: NodeConditionGPUCorrectnessHealthy,
 		checkerNames:  []string{CheckerNcclAllReduce},
-		assess:        failsOn(gpu.ErrorCodeCorrectness),
+		assess:        assessCorrectness,
 	},
 }
 
@@ -97,6 +97,18 @@ func checkedFirst(codes ...string) assessFunc {
 			return corev1.ConditionUnknown
 		}
 	}
+}
+
+// assessCorrectness is failsOn(CorrectnessError) plus an NCCL special case that relies on the order
+// its parser checks results in.
+func assessCorrectness(result chmv1alpha1.CheckResult) corev1.ConditionStatus {
+	// If the NCCL all-reduce check reports low bandwidth, it means correctness has passed, so the condition is True.
+	if result.Name == CheckerNcclAllReduce &&
+		result.Status == chmv1alpha1.CheckStatusUnhealthy &&
+		result.ErrorCode == gpu.ErrorCodeLowBandwidth {
+		return corev1.ConditionTrue
+	}
+	return failsOn(gpu.ErrorCodeCorrectness)(result)
 }
 
 // gpuNodeConditions builds the GPU conditions for a node. It returns none if no GPU check reported,
