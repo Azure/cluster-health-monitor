@@ -1481,6 +1481,115 @@ func TestUpdateNodeConditionClearsStaleConditions(t *testing.T) {
 	}
 }
 
+// TestUpdateNodeConditionWithOpenBreaker checks that an open circuit breaker only stops conditions
+// being published. Conditions that no longer apply are still removed.
+func TestUpdateNodeConditionWithOpenBreaker(t *testing.T) {
+	tests := []struct {
+		name string
+		info gpuNodeInfo
+		// existing are the managed conditions already on the node, all False.
+		existing []corev1.NodeConditionType
+		results  []chmv1alpha1.CheckResult
+		want     map[corev1.NodeConditionType]corev1.ConditionStatus
+	}{
+		{
+			// The passing check would set the GPU conditions True, but the breaker blocks that.
+			name:     "gpu node drops a leftover NodeHealthy and leaves its gpu conditions untouched",
+			info:     gpuNodeInfo{isGPUNode: true, gpuCount: 8},
+			existing: []corev1.NodeConditionType{NodeConditionNodeHealthy, NodeConditionGPUCorrectnessHealthy},
+			results: []chmv1alpha1.CheckResult{
+				{Name: CheckerPodStartup, Status: chmv1alpha1.CheckStatusHealthy},
+				{Name: CheckerPodNetwork, Status: chmv1alpha1.CheckStatusHealthy},
+				{Name: CheckerNcclAllReduce, Status: chmv1alpha1.CheckStatusHealthy},
+			},
+			want: map[corev1.NodeConditionType]corev1.ConditionStatus{
+				NodeConditionGPUCorrectnessHealthy: corev1.ConditionFalse,
+			},
+		},
+		{
+			name:     "non-gpu node keeps its NodeHealthy unchanged",
+			info:     gpuNodeInfo{},
+			existing: []corev1.NodeConditionType{NodeConditionNodeHealthy},
+			results:  []chmv1alpha1.CheckResult{{Name: CheckerPodStartup, Status: chmv1alpha1.CheckStatusHealthy}},
+			want: map[corev1.NodeConditionType]corev1.ConditionStatus{
+				NodeConditionNodeHealthy: corev1.ConditionFalse,
+			},
+		},
+		{
+			name: "non-gpu node drops leftover granular conditions and leaves its NodeHealthy untouched",
+			info: gpuNodeInfo{},
+			existing: []corev1.NodeConditionType{
+				NodeConditionNodeHealthy,
+				NodeConditionPodNetworkHealthy,
+				NodeConditionGPUCorrectnessHealthy,
+			},
+			results: []chmv1alpha1.CheckResult{{Name: CheckerPodStartup, Status: chmv1alpha1.CheckStatusHealthy}},
+			want: map[corev1.NodeConditionType]corev1.ConditionStatus{
+				NodeConditionNodeHealthy: corev1.ConditionFalse,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			reconciler, fakeClient, _ := setupTest()
+			reconciler.EnableNodeCondition = true
+			reconciler.CircuitBreakers = NewNodeConditionCircuitBreakers(1, DefaultCircuitBreakerWindow, DefaultCircuitBreakerCooldown)
+			reconciler.CircuitBreakers.For(tt.info).RecordUnhealthyNode()
+
+			conditions := []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}
+			for _, existing := range tt.existing {
+				conditions = append(conditions, corev1.NodeCondition{
+					Type: existing, Status: corev1.ConditionFalse, Reason: ReasonCheckFailed,
+				})
+			}
+			node := &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{Name: "node-1", Labels: map[string]string{"kubernetes.io/os": "linux"}},
+				Status:     corev1.NodeStatus{Conditions: conditions},
+			}
+			if err := fakeClient.Create(ctx, node); err != nil {
+				t.Fatalf("creating the node: %v", err)
+			}
+
+			cnh := testCNH("cnh-open-breaker")
+			cnh.Status.Results = tt.results
+			cnh.Status.Conditions = []metav1.Condition{{
+				Type:               ConditionTypeHealthy,
+				Status:             metav1.ConditionTrue,
+				LastTransitionTime: metav1.Now(),
+				Reason:             ReasonCheckPassed,
+			}}
+			if err := reconciler.updateNodeCondition(ctx, cnh, tt.info); err != nil {
+				t.Fatalf("updateNodeCondition returned error: %v", err)
+			}
+
+			updatedNode := &corev1.Node{}
+			if err := fakeClient.Get(ctx, client.ObjectKey{Name: "node-1"}, updatedNode); err != nil {
+				t.Fatalf("reading the node: %v", err)
+			}
+
+			assertManagedNodeConditions(t, updatedNode, tt.want)
+			if getNodeConditionByType(updatedNode.Status.Conditions, corev1.NodeReady) == nil {
+				t.Error("the Ready condition was dropped")
+			}
+		})
+	}
+}
+
+func TestInapplicableNodeConditionTypes(t *testing.T) {
+	t.Parallel()
+
+	if got := InapplicableNodeConditionTypes(gpuNode("node-1")); !slices.Equal(got, []corev1.NodeConditionType{NodeConditionNodeHealthy}) {
+		t.Errorf("gpu node = %v, want only NodeHealthy", got)
+	}
+
+	plain := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-1"}}
+	if got := InapplicableNodeConditionTypes(plain); !slices.Equal(got, granularNodeConditionTypes) {
+		t.Errorf("non-gpu node = %v, want %v", got, granularNodeConditionTypes)
+	}
+}
+
 // TestCircuitBreakersAreIndependent checks that a run of failures on one kind of node does not open
 // the breaker guarding the other kind's condition.
 func TestCircuitBreakersAreIndependent(t *testing.T) {

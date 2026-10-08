@@ -120,6 +120,15 @@ func ManagedNodeConditionTypes() []corev1.NodeConditionType {
 	return slices.Clone(managedNodeConditionTypes)
 }
 
+// InapplicableNodeConditionTypes returns the managed conditions that do not apply to this kind of
+// node: NodeHealthy on GPU nodes, and the granular conditions on all others.
+func InapplicableNodeConditionTypes(node *corev1.Node) []corev1.NodeConditionType {
+	if gpuNodeInfoFrom(node).isGPUNode {
+		return []corev1.NodeConditionType{NodeConditionNodeHealthy}
+	}
+	return slices.Clone(granularNodeConditionTypes)
+}
+
 // baseCheckerNames are the checks every node reports. PodStartup comes from the
 // controller itself; the rest come from the checker pod, listed in pkg/nodecheckerrunner/runner.go.
 var baseCheckerNames = []string{CheckerPodStartup, CheckerPodNetwork}
@@ -471,13 +480,12 @@ func (r *CheckNodeHealthReconciler) updateNodeCondition(ctx context.Context, cnh
 		return nil
 	}
 
-	// Check circuit breaker before setting the node condition
-	if !r.CircuitBreakers.For(info).Allow() {
-		klog.InfoS("Circuit breaker is open, skipping node condition update",
+	publish := r.CircuitBreakers.For(info).Allow()
+	if !publish {
+		klog.InfoS("Circuit breaker is open, only removing node conditions that no longer apply",
 			"node", cnh.Spec.NodeRef.Name,
 			"checkNodeHealth", cnh.Name,
 		)
-		return nil
 	}
 
 	nodeName := cnh.Spec.NodeRef.Name
@@ -491,18 +499,25 @@ func (r *CheckNodeHealthReconciler) updateNodeCondition(ctx context.Context, cnh
 	now := metav1.Now()
 	keep := make(map[corev1.NodeConditionType]bool, len(desired))
 	for _, condition := range desired {
-		setNodeCondition(node, condition, now)
 		keep[condition.Type] = true
+		if publish {
+			setNodeCondition(node, condition, now)
+		}
 	}
 	removed := removeUnwantedNodeConditions(node, keep)
+	if !publish && len(removed) == 0 {
+		return nil
+	}
 
 	if err := r.Status().Patch(ctx, node, patch); err != nil {
 		return fmt.Errorf("failed to update node %s condition: %w", nodeName, err)
 	}
 
-	for _, condition := range desired {
-		klog.InfoS("Updated node condition", "node", nodeName, "type", condition.Type,
-			"status", condition.Status, "reason", condition.Reason)
+	if publish {
+		for _, condition := range desired {
+			klog.InfoS("Updated node condition", "node", nodeName, "type", condition.Type,
+				"status", condition.Status, "reason", condition.Reason)
+		}
 	}
 	if len(removed) > 0 {
 		klog.InfoS("Removed node conditions that no longer apply", "node", nodeName, "types", removed)

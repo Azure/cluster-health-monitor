@@ -389,6 +389,9 @@ func TestNodeRebootPredicate(t *testing.T) {
 	})
 }
 
+// gpuNodeLabels mark a node as an NVIDIA GPU node.
+var gpuNodeLabels = map[string]string{"kubernetes.azure.com/accelerator": "nvidia"}
+
 func TestRemoveStaleNodeCondition(t *testing.T) {
 	tests := []struct {
 		name            string
@@ -515,7 +518,7 @@ func TestRemoveStaleNodeCondition(t *testing.T) {
 		{
 			name: "fresh GPUPeerBandwidthHealthy condition without a heartbeat — not removed",
 			node: &corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{Name: "node-1"},
+				ObjectMeta: metav1.ObjectMeta{Name: "node-1", Labels: gpuNodeLabels},
 				Status: corev1.NodeStatus{
 					NodeInfo: corev1.NodeSystemInfo{BootID: "boot-1"},
 					Conditions: []corev1.NodeCondition{
@@ -530,6 +533,49 @@ func TestRemoveStaleNodeCondition(t *testing.T) {
 			},
 			expectRemoved:   false,
 			expectCondCount: 2,
+		},
+		{
+			// A GPU node never carries NodeHealthy, so one left by an older controller is retired
+			// right away rather than after NodeConditionTTL.
+			name: "fresh NodeHealthy condition on a GPU node — removed",
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{Name: "node-1", Labels: gpuNodeLabels},
+				Status: corev1.NodeStatus{
+					NodeInfo: corev1.NodeSystemInfo{BootID: "boot-1"},
+					Conditions: []corev1.NodeCondition{
+						{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+						{
+							Type:               "kubernetes.azure.com/NodeHealthy",
+							Status:             corev1.ConditionFalse,
+							LastTransitionTime: metav1.Now(),
+							LastHeartbeatTime:  metav1.Now(),
+						},
+					},
+				},
+			},
+			expectRemoved:   true,
+			expectCondCount: 1,
+		},
+		{
+			// A node that is not a GPU node never carries the granular conditions.
+			name: "fresh GPUPeerBandwidthHealthy condition on a non-GPU node — removed",
+			node: &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{Name: "node-1"},
+				Status: corev1.NodeStatus{
+					NodeInfo: corev1.NodeSystemInfo{BootID: "boot-1"},
+					Conditions: []corev1.NodeCondition{
+						{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
+						{
+							Type:               "kubernetes.azure.com/GPUPeerBandwidthHealthy",
+							Status:             corev1.ConditionFalse,
+							LastTransitionTime: metav1.Now(),
+							LastHeartbeatTime:  metav1.Now(),
+						},
+					},
+				},
+			},
+			expectRemoved:   true,
+			expectCondCount: 1,
 		},
 		{
 			// Both conditions go stale together, so both are dropped in a single patch.

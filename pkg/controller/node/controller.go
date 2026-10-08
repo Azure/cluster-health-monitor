@@ -338,13 +338,23 @@ func notReadyExceeds(node *corev1.Node, d time.Duration) bool {
 	return time.Since(node.CreationTimestamp.Time) > d
 }
 
-// removeStaleNodeConditions removes the node health conditions written by the CheckNodeHealth
-// controller that have not been confirmed by a check within NodeConditionTTL.
+// removeStaleNodeConditions removes managed node conditions that are older than NodeConditionTTL or
+// do not apply to this kind of node, e.g. NodeHealthy on a GPU node.
 func (r *NodeRebootReconciler) removeStaleNodeConditions(ctx context.Context, node *corev1.Node) error {
+	inapplicable := checknodehealth.InapplicableNodeConditionTypes(node)
 	kept := make([]corev1.NodeCondition, 0, len(node.Status.Conditions))
 	var removed []string
 	for _, c := range node.Status.Conditions {
-		if slices.Contains(managedNodeConditions, c.Type) && time.Since(lastConfirmed(c)) > NodeConditionTTL {
+		if !slices.Contains(managedNodeConditions, c.Type) {
+			kept = append(kept, c)
+			continue
+		}
+		if slices.Contains(inapplicable, c.Type) {
+			klog.InfoS("Removing node health condition that does not apply to the node", "node", node.Name, "type", c.Type)
+			removed = append(removed, string(c.Type))
+			continue
+		}
+		if time.Since(lastConfirmed(c)) > NodeConditionTTL {
 			klog.InfoS("Removing stale node health condition", "node", node.Name,
 				"type", c.Type, "lastConfirmed", lastConfirmed(c))
 			removed = append(removed, string(c.Type))
