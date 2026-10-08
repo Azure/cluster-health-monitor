@@ -68,3 +68,8 @@ func gpuNodeInfoFrom(node *corev1.Node) gpuNodeInfo {
 		sku:       node.Labels[instanceTypeLabel],
 	}
 }
+
+// hasNvidiaDevicePlugin reports whether the NVIDIA device plugin advertises the node's GPUs.
+func (i gpuNodeInfo) hasNvidiaDevicePlugin() bool {
+	return i.gpuCount > 0
+}

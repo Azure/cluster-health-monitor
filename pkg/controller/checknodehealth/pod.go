@@ -158,29 +158,23 @@ func (r *CheckNodeHealthReconciler) buildHealthCheckPod(cnh *chmv1alpha1.CheckNo
 }
 
 // configureGPUChecker turns the GPU checks on in the checker container and gets the node's GPU
-// devices into it.
+// devices into it. A node without the device plugin is not supported yet, so its checker is only
+// told to report that, and no GPUs are given to it.
 func configureGPUChecker(c *corev1.Container, info gpuNodeInfo) {
 	c.Args = append(c.Args,
 		"--enable-gpu-checks",
 		fmt.Sprintf("--sku=%s", info.sku),
+		fmt.Sprintf("--device-plugin-present=%t", info.hasNvidiaDevicePlugin()),
 	)
-
-	// TODO: we should figure something out so that we can reliably schedule the checks with exclusive GPU access. Current limitations in
-	// comments below.
-	if info.gpuCount > 0 {
-		// Fully managed pools use the device plugin's extended resource, so kubelet will not give the same device to another pod that
-		// requests it. Because the controller bypasses the scheduler by setting the node name directly, if we cannot claim all the GPUs,
-		// the pod goes straight to a Failed state.
-		gpus := *resource.NewQuantity(info.gpuCount, resource.DecimalSI)
-		c.Resources = corev1.ResourceRequirements{
-			Limits:   corev1.ResourceList{nvidiaGPUResourceName: gpus},
-			Requests: corev1.ResourceList{nvidiaGPUResourceName: gpus},
-		}
-	} else {
-		// Driver-only pools run no device plugin, so there is no resource to request. The NVIDIA runtime hook reads this env var and
-		// injects every GPU device into the container. Nothing tracks ownership, so other pods can be given the same GPUs. In this case,
-		// it is possible that both the checks and other workloads on the node will experience some contention/degradation.
-		c.Env = append(c.Env, corev1.EnvVar{Name: "NVIDIA_VISIBLE_DEVICES", Value: "all"})
+	if !info.hasNvidiaDevicePlugin() {
+		return
+	}
+	// Because the controller bypasses the scheduler by setting the node name directly, if we cannot claim all the GPUs, the pod goes straight to a Failed state.
+	// TODO: we should figure something out so that we can reliably schedule the checks with exclusive GPU access.
+	gpus := *resource.NewQuantity(info.gpuCount, resource.DecimalSI)
+	c.Resources = corev1.ResourceRequirements{
+		Limits:   corev1.ResourceList{nvidiaGPUResourceName: gpus},
+		Requests: corev1.ResourceList{nvidiaGPUResourceName: gpus},
 	}
 }
 

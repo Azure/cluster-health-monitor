@@ -140,7 +140,8 @@ type checkerSpec struct {
 	podTimeout time.Duration
 	// checkerNames are the checks this node owes a result for. Anything unreported becomes Unknown.
 	checkerNames []string
-	// gpu is set when the intrusive GPU checks run, and nil otherwise.
+	// gpu is set when the GPU checks run, and nil otherwise. On a node without nvidia device plugin,
+	// GPU checks report that they are unsupported.
 	gpu *gpuNodeInfo
 }
 
@@ -153,10 +154,21 @@ func (r *CheckNodeHealthReconciler) checkerSpecFor(info gpuNodeInfo) checkerSpec
 			checkerNames: baseCheckerNames,
 		}
 	}
+	checkerNames := append(slices.Clone(baseCheckerNames), gpu.CheckerNames(info.sku)...)
+	if !info.hasNvidiaDevicePlugin() {
+		// The GPU checks do not support driver-only nodes yet. They report so without touching the
+		// GPUs, which the base image can do, so there is no need to pull the GPU image.
+		return checkerSpec{
+			image:        r.CheckerPodImage,
+			podTimeout:   PodTimeout,
+			checkerNames: checkerNames,
+			gpu:          &info,
+		}
+	}
 	return checkerSpec{
 		image:        r.GPUCheckerPodImage,
 		podTimeout:   GPUPodTimeout,
-		checkerNames: append(slices.Clone(baseCheckerNames), gpu.CheckerNames(info.sku)...),
+		checkerNames: checkerNames,
 		gpu:          &info,
 	}
 }

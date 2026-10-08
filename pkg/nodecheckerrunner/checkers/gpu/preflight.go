@@ -11,6 +11,12 @@ import (
 // calls this before running its tool so it does not report a verdict against a node whose GPUs do
 // not match the profile its thresholds came from.
 func preflight(ctx context.Context, cfg Config) *checker.Result {
+	// The checks claim the GPUs through the device plugin, so they do not support nodes without
+	// one yet.
+	if !cfg.DevicePluginPresent {
+		return devicePluginRequired()
+	}
+
 	// The count comes from nvidia-smi rather than the device plugin because it has to be the
 	// devices the benchmarks will run on, not what the node advertises.
 	count, err := detectGPUCount(ctx, cfg.ToolTimeout)

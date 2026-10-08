@@ -40,6 +40,9 @@ const (
 type Config struct {
 	// SKU is the node's VM size, used to select the expected GPU count and bandwidth thresholds.
 	SKU string
+	// DevicePluginPresent is set when an NVIDIA device plugin advertises the node's GPUs. The checks
+	// only support such nodes for now, so without one they report that instead of running.
+	DevicePluginPresent bool
 	// ToolTimeout bounds each individual benchmark.
 	ToolTimeout time.Duration
 }
@@ -151,6 +154,17 @@ func unsupportedSKU(sku string) *checker.Result {
 		Detail: checker.Detail{
 			Code:    ErrorCodeUnknownSKU,
 			Message: fmt.Sprintf("GPU SKU %q is not recognized or supported, so the check did not run", sku),
+		},
+	}
+}
+
+// devicePluginRequired is returned instead of running a benchmark on a node without the device plugin.
+func devicePluginRequired() *checker.Result {
+	return &checker.Result{
+		Status: checker.StatusUnknown,
+		Detail: checker.Detail{
+			Code:    ErrorCodeDevicePluginRequired,
+			Message: "GPU checks are only supported on nodes with the NVIDIA device plugin for now, so the check did not run",
 		},
 	}
 }

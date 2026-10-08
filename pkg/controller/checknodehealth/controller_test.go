@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -1120,6 +1121,26 @@ func TestCheckerSpecFor(t *testing.T) {
 			wantNames: []string{"PodStartup", "PodNetwork", "NcclAllReduce", "GpuHostBandwidth"},
 			wantGPU:   true,
 		},
+		{
+			// Driver-only nodes are unsupported. The checker still owes the gpu results, reporting
+			// that it cannot run them, but it does so from the base image.
+			name:            "driver only gpu node with the gate on",
+			info:            gpuNodeInfo{isGPUNode: true, gpuCount: 0, sku: "Standard_ND96isr_H100_v5"},
+			enableGPUChecks: true,
+			wantImage:       "base-image",
+			wantTimeout:     PodTimeout,
+			wantNames:       gpuNames,
+			wantGPU:         true,
+		},
+		{
+			name:            "driver only gpu node with the gate off",
+			info:            gpuNodeInfo{isGPUNode: true, gpuCount: 0, sku: "Standard_ND96isr_H100_v5"},
+			enableGPUChecks: false,
+			wantImage:       "base-image",
+			wantTimeout:     PodTimeout,
+			wantNames:       baseNames,
+			wantGPU:         false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -1159,6 +1180,8 @@ func TestReconcileNodeConditionRouting(t *testing.T) {
 		name string
 		// gpuNode makes the target node a GPU node.
 		gpuNode bool
+		// driverOnly drops the device plugin's GPUs from a GPU node, leaving only the accelerator label.
+		driverOnly bool
 		// sku overrides the GPU node's sku when set (default: Standard_ND96isr_H100_v5).
 		sku string
 		// enableGPUChecks gates the intrusive GPU checks.
@@ -1170,6 +1193,8 @@ func TestReconcileNodeConditionRouting(t *testing.T) {
 		wantHealthy metav1.ConditionStatus
 		// wantNodeConditions is exactly the set of managed conditions the node may carry.
 		wantNodeConditions map[corev1.NodeConditionType]corev1.ConditionStatus
+		// wantGPUMessage, when set, must appear in every GPU condition's message.
+		wantGPUMessage string
 	}{
 		{
 			name:            "failing gpu check fails only its own condition",
@@ -1275,6 +1300,31 @@ func TestReconcileNodeConditionRouting(t *testing.T) {
 			},
 		},
 		{
+			// The checker on a driver-only node reports every gpu check as needing the device
+			// plugin, so the gpu conditions say nothing about the node. The base checks still run.
+			name:            "driver only gpu node reports the gpu conditions as unknown",
+			gpuNode:         true,
+			driverOnly:      true,
+			enableGPUChecks: true,
+			seededResults: []chmv1alpha1.CheckResult{
+				{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusHealthy},
+				{Name: "NcclAllReduce", Status: chmv1alpha1.CheckStatusUnknown, ErrorCode: gpu.ErrorCodeDevicePluginRequired},
+				{Name: "GpuHostBandwidth", Status: chmv1alpha1.CheckStatusUnknown, ErrorCode: gpu.ErrorCodeDevicePluginRequired},
+				{Name: "GpuPeerBandwidth", Status: chmv1alpha1.CheckStatusUnknown, ErrorCode: gpu.ErrorCodeDevicePluginRequired},
+			},
+			wantHealthy: metav1.ConditionUnknown,
+			wantNodeConditions: map[corev1.NodeConditionType]corev1.ConditionStatus{
+				NodeConditionPodStartupHealthy:            corev1.ConditionTrue,
+				NodeConditionPodNetworkHealthy:            corev1.ConditionTrue,
+				NodeConditionGPUCountHealthy:              corev1.ConditionUnknown,
+				NodeConditionGPUHostBandwidthHealthy:      corev1.ConditionUnknown,
+				NodeConditionGPUPeerBandwidthHealthy:      corev1.ConditionUnknown,
+				NodeConditionGPUAllReduceBandwidthHealthy: corev1.ConditionUnknown,
+				NodeConditionGPUCorrectnessHealthy:        corev1.ConditionUnknown,
+			},
+			wantGPUMessage: "[" + gpu.ErrorCodeDevicePluginRequired + "]",
+		},
+		{
 			// Non-GPU nodes keep the single aggregate condition existing automation acts on.
 			name:            "non-gpu node reports only NodeHealthy",
 			gpuNode:         false,
@@ -1304,6 +1354,9 @@ func TestReconcileNodeConditionRouting(t *testing.T) {
 				node = gpuNode("node-1")
 				if tt.sku != "" {
 					node.Labels[instanceTypeLabel] = tt.sku
+				}
+				if tt.driverOnly {
+					node.Status.Allocatable = nil
 				}
 			}
 			if err := fakeClient.Create(ctx, node); err != nil {
@@ -1351,6 +1404,18 @@ func TestReconcileNodeConditionRouting(t *testing.T) {
 			}
 
 			assertManagedNodeConditions(t, updatedNode, tt.wantNodeConditions)
+
+			if tt.wantGPUMessage != "" {
+				for _, c := range gpuConditions {
+					got := getNodeConditionByType(updatedNode.Status.Conditions, c.conditionType)
+					if got == nil {
+						continue
+					}
+					if !strings.Contains(got.Message, tt.wantGPUMessage) {
+						t.Errorf("%s message = %q, want it to contain %q", c.conditionType, got.Message, tt.wantGPUMessage)
+					}
+				}
+			}
 		})
 	}
 }

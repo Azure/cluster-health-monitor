@@ -170,22 +170,21 @@ func TestBuildHealthCheckPodShape(t *testing.T) {
 			enableGPUChecks: true,
 			want: podShape{
 				Image:           "gpu-image",
-				Args:            []string{"--name=cnh-1", "--enable-gpu-checks", "--sku=Standard_ND96isr_H100_v5"},
+				Args:            []string{"--name=cnh-1", "--enable-gpu-checks", "--sku=Standard_ND96isr_H100_v5", "--device-plugin-present=true"},
 				GPULimit:        "8",
 				GPURequest:      "8",
 				SecurityContext: wantSecurityContext,
 			},
 		},
 		{
-			// Driver-only pools run no device plugin, so there is no resource to request and the
-			// runtime has to be told to expose the devices.
-			name:            "driver only node asks the runtime for the devices",
+			// Driver-only pools are not supported by the GPU checks yet. The base image's checker is
+			// told so it can report that, and it never gets the GPU devices.
+			name:            "driver only node reports the gpu checks without claiming gpus",
 			info:            gpuNodeInfo{isGPUNode: true, gpuCount: 0, sku: "Standard_ND96isr_H100_v5"},
 			enableGPUChecks: true,
 			want: podShape{
-				Image:           "gpu-image",
-				Args:            []string{"--name=cnh-1", "--enable-gpu-checks", "--sku=Standard_ND96isr_H100_v5"},
-				Env:             map[string]string{"NVIDIA_VISIBLE_DEVICES": "all"},
+				Image:           "default-image",
+				Args:            []string{"--name=cnh-1", "--enable-gpu-checks", "--sku=Standard_ND96isr_H100_v5", "--device-plugin-present=false"},
 				SecurityContext: wantSecurityContext,
 			},
 		},

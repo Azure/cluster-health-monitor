@@ -1,9 +1,12 @@
 package gpu
 
 import (
+	"context"
 	"slices"
 	"testing"
 	"time"
+
+	"github.com/Azure/cluster-health-monitor/pkg/checker"
 )
 
 const (
@@ -63,6 +66,49 @@ func TestNewCheckers(t *testing.T) {
 			}
 			if names := CheckerNames(tt.sku); !slices.Equal(names, tt.want) {
 				t.Errorf("CheckerNames() = %v, want %v", names, tt.want)
+			}
+		})
+	}
+}
+
+// Without the device plugin every checker the SKU would run still reports, under the same name, why
+// it did not run. None of them may touch the GPUs; nvidia-smi is absent here, so a checker that
+// tried would report ToolFailed instead.
+func TestNewCheckersWithoutDevicePlugin(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		sku      string
+		wantCode string
+	}{
+		{sku: h100SKU, wantCode: ErrorCodeDevicePluginRequired},
+		{sku: a10SKU, wantCode: ErrorCodeDevicePluginRequired},
+		// Fixing the device plugin alone would still not let the checks run.
+		{sku: "unrecognized_sku", wantCode: ErrorCodeUnknownSKU},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.sku, func(t *testing.T) {
+			t.Parallel()
+
+			checkers := NewCheckers(Config{SKU: tt.sku, DevicePluginPresent: false})
+			names := make([]string, 0, len(checkers))
+			for _, c := range checkers {
+				names = append(names, c.Name())
+
+				got, err := c.Run(context.Background())
+				if err != nil {
+					t.Fatalf("%s Run() returned error %v, want nil", c.Name(), err)
+				}
+				if got.Status != checker.StatusUnknown {
+					t.Errorf("%s Status = %q, want %q", c.Name(), got.Status, checker.StatusUnknown)
+				}
+				if got.Detail.Code != tt.wantCode {
+					t.Errorf("%s Code = %q, want %q", c.Name(), got.Detail.Code, tt.wantCode)
+				}
+			}
+			if want := CheckerNames(tt.sku); !slices.Equal(names, want) {
+				t.Errorf("checkers without the device plugin = %v, want the names the SKU runs %v", names, want)
 			}
 		})
 	}
