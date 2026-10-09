@@ -18,7 +18,7 @@ jobs:
     name: lint
     runs-on: ubuntu-latest
     container:
-      image: mcr.microsoft.com/oss/go/microsoft/golang:1.26.6
+      image: mcr.microsoft.com/oss/go/microsoft/golang:1.26.9
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: golangci-lint
@@ -30,7 +30,7 @@ jobs:
     name: Unit Tests
     runs-on: ubuntu-latest
     container:
-      image: mcr.microsoft.com/oss/go/microsoft/golang:1.26.6
+      image: mcr.microsoft.com/oss/go/microsoft/golang:1.26.9
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Download dependencies
@@ -46,8 +46,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install Microsoft Go
         run: |
-          docker pull mcr.microsoft.com/oss/go/microsoft/golang:1.26.6
-          docker create --name msgo mcr.microsoft.com/oss/go/microsoft/golang:1.26.6
+          docker pull mcr.microsoft.com/oss/go/microsoft/golang:1.26.9
+          docker create --name msgo mcr.microsoft.com/oss/go/microsoft/golang:1.26.9
           docker cp msgo:/usr/local/go "$HOME/microsoft-go"
           docker rm msgo
           echo "$HOME/microsoft-go/bin" >> "$GITHUB_PATH"
