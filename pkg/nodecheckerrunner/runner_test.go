@@ -15,6 +15,7 @@ import (
 
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
 	"github.com/Azure/cluster-health-monitor/pkg/checker"
+	"github.com/Azure/cluster-health-monitor/pkg/nodecheckerrunner/checkers/gpu"
 )
 
 // mockChecker implements the NodeChecker interface for testing
@@ -303,6 +304,8 @@ func TestNewRunnerCheckers(t *testing.T) {
 		name string
 		opts Options
 		want []string
+		// wantSkipped means the gpu checkers must report the skip reason rather than run.
+		wantSkipped bool
 	}{
 		{
 			name: "non-gpu node runs only the core checkers",
@@ -327,6 +330,16 @@ func TestNewRunnerCheckers(t *testing.T) {
 			},
 			want: []string{"PodNetwork", "NcclAllReduce", "GpuHostBandwidth", "GpuPeerBandwidth"},
 		},
+		{
+			name: "gpu node with a skip reason still wires the gpu checkers",
+			opts: Options{
+				NodeName: "node-1",
+				CRName:   "cnh-1",
+				GPU:      &GPUOptions{SKU: "Standard_ND96isr_H100_v5", SkipReason: gpu.ErrorCodeGPUsNotClaimable},
+			},
+			want:        []string{"PodNetwork", "NcclAllReduce", "GpuHostBandwidth", "GpuPeerBandwidth"},
+			wantSkipped: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -346,6 +359,18 @@ func TestNewRunnerCheckers(t *testing.T) {
 			for i, want := range tt.want {
 				if got[i] != want {
 					t.Errorf("checkers[%d] = %q, want %q", i, got[i], want)
+				}
+			}
+
+			if tt.wantSkipped {
+				for _, c := range r.checkers[1:] {
+					result, err := c.Run(context.Background())
+					if err != nil {
+						t.Fatalf("%s Run() returned error %v", c.Name(), err)
+					}
+					if result.Detail.Code != gpu.ErrorCodeGPUsNotClaimable {
+						t.Errorf("%s code = %q, want %q", c.Name(), result.Detail.Code, gpu.ErrorCodeGPUsNotClaimable)
+					}
 				}
 			}
 		})

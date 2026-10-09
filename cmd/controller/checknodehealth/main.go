@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"os"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -51,6 +52,7 @@ func main() {
 	var enableHealthCheckRequest bool
 	var enableNodeCondition bool
 	var enableGPUChecks bool
+	var gpuWait time.Duration
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to")
@@ -68,6 +70,9 @@ func main() {
 	flag.BoolVar(&enableGPUChecks, "enable-gpu-checks", false,
 		"Enable intrusive GPU checks on CheckNodeHealth targets that are GPU nodes. "+
 			"Requires GPU_CHECKER_POD_IMAGE to be set.")
+	flag.DurationVar(&gpuWait, "gpu-wait", checknodehealth.DefaultGPUWait,
+		"How long a GPU node without GPUs the checks can claim is given to get some before its GPU checks start. "+
+			"Covers the GPUs being registered after the node, e.g. by the NVIDIA device plugin, when it boots.")
 
 	// Set up logging configuration with JSON format (no CLI override needed)
 	logConfig := logsapi.NewLoggingConfiguration()
@@ -209,6 +214,7 @@ func main() {
 		EnableNodeCondition: enableNodeCondition,
 		CircuitBreakers:     circuitBreakers,
 		EnableGPUChecks:     enableGPUChecks,
+		GPUWait:             gpuWait,
 	}).SetupWithManager(mgr); err != nil {
 		klog.ErrorS(err, "Unable to create controller", "controller", "CheckNodeHealth")
 		klog.FlushAndExit(klog.ExitFlushTimeout, 1)
