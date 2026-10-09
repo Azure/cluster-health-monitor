@@ -46,6 +46,14 @@ const (
 	// CheckNodeHealthLabel is the label key used to identify check node health pods
 	CheckNodeHealthLabel = "clusterhealthmonitor.azure.com/checknodehealth"
 
+	// annotationNodeKind records on a checker pod whether its node was a GPU node when the pod was
+	// created, as NodeKindGPU or NodeKindStandard.
+	annotationNodeKind = "clusterhealthmonitor.azure.com/node-kind"
+
+	// annotationGPUChecksSKU records on a checker pod the SKU its GPU checks run for. It is only set
+	// when the pod runs the GPU checks.
+	annotationGPUChecksSKU = "clusterhealthmonitor.azure.com/gpu-checks-sku"
+
 	// DefaultCheckerServiceAccount is the default service account name for checker pods
 	DefaultCheckerServiceAccount = "checknodehealth-checker"
 
@@ -55,9 +63,6 @@ const (
 	// permissions (e.g., "default"), E2E tests can verify the controller's behavior when the checker
 	// fails to write results to the CheckNodeHealth status, which should result in Healthy=Unknown.
 	AnnotationCheckerServiceAccount = "checknodehealth.azure.com/checker-service-account"
-
-	// annotationCheckerTimeout records on a checker pod the timeout it was created with.
-	annotationCheckerTimeout = "checknodehealth.azure.com/checker-timeout"
 
 	// ConditionTypeHealthy is the condition type used to indicate a healthy state.
 	ConditionTypeHealthy = "Healthy"
@@ -137,11 +142,13 @@ func InapplicableNodeConditionTypes(node *corev1.Node) []corev1.NodeConditionTyp
 var baseCheckerNames = []string{CheckerPodStartup, CheckerPodNetwork}
 
 // checkerSpec is the checker run a CheckNodeHealth gets. The reconciler selects it in one place,
-// checkerSpecFor, so the EnableGPUChecks gate and every GPU decision are read there.
+// checkerSpecFor, so the EnableGPUChecks gate and every GPU decision are read there. Once the
+// checker pod exists, the spec is read back from its annotations instead; see recordedRun.
 type checkerSpec struct {
 	image string
-	// timeout bounds the checker pod. It is recorded on the pod, so a later reconcile reads the
-	// timeout the pod was created with even if the node has changed since.
+	// gpuNode decides which Node conditions, metrics and circuit breaker the result goes to.
+	gpuNode bool
+	// timeout bounds the checker pod.
 	timeout time.Duration
 	// checkerNames are the checks this node owes a result for. Anything unreported becomes Unknown.
 	checkerNames []string
@@ -155,17 +162,14 @@ type checkerSpec struct {
 // checkerSpecFor picks the checker run for a node. A GPU node without claimable GPUs waits up to
 // GPUWait after the CheckNodeHealth is created for them to appear before reporting it has none.
 func (r *CheckNodeHealthReconciler) checkerSpecFor(info gpuNodeInfo, age time.Duration) checkerSpec {
-	spec := checkerSpec{
-		image:        r.CheckerPodImage,
-		timeout:      PodTimeout,
-		checkerNames: baseCheckerNames,
-	}
+	spec := checkerSpec{image: r.CheckerPodImage, gpuNode: info.isGPUNode}
 	if !info.isGPUNode || !r.EnableGPUChecks {
+		spec.checkerNames, spec.timeout = expectedRun(false, "")
 		return spec
 	}
 
-	spec.image, spec.timeout = r.GPUCheckerPodImage, GPUPodTimeout
-	spec.checkerNames = append(slices.Clone(baseCheckerNames), gpu.CheckerNames(info.sku)...)
+	spec.image = r.GPUCheckerPodImage
+	spec.checkerNames, spec.timeout = expectedRun(true, info.sku)
 	switch {
 	case info.claimableGPUs > 0:
 		spec.gpu = &gpuChecks{sku: info.sku, gpus: info.claimableGPUs}
@@ -175,6 +179,14 @@ func (r *CheckNodeHealthReconciler) checkerSpecFor(info gpuNodeInfo, age time.Du
 		spec.gpu = &gpuChecks{sku: info.sku, skipReason: gpu.ErrorCodeGPUsNotClaimable}
 	}
 	return spec
+}
+
+// expectedRun returns the checks a checker run owes a result for, and its pod timeout.
+func expectedRun(gpuChecks bool, sku string) ([]string, time.Duration) {
+	if !gpuChecks {
+		return baseCheckerNames, PodTimeout
+	}
+	return append(slices.Clone(baseCheckerNames), gpu.CheckerNames(sku)...), GPUPodTimeout
 }
 
 // recordMissingResults marks every check the pod never reported as Unknown. Refetched so a
@@ -338,7 +350,9 @@ func (r *CheckNodeHealthReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			return ctrl.Result{}, err
 		}
 	}
-	timeout := podTimeoutFor(pod)
+	// Handle the results according to the pod's annotations rather than the live node, whose GPU state
+	// can change mid-run. Otherwise a GPU node that stops looking like one could get NodeHealthy.
+	info, spec = recordedRun(pod, info)
 
 	// Mark the CheckNodeHealth as started
 	if err := r.markStarted(ctx, cnh); err != nil {
@@ -346,18 +360,19 @@ func (r *CheckNodeHealthReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, err
 	}
 
-	if err := r.updatePodstartCheckerResult(ctx, cnh, pod, timeout); err != nil {
+	if err := r.updatePodstartCheckerResult(ctx, cnh, pod, spec.timeout); err != nil {
 		klog.ErrorS(err, "Failed to update PodStartup check result")
 		return ctrl.Result{}, err
 	}
 
 	// Determine the overall result based on pod status
-	return r.determineCheckResult(ctx, cnh, pod, info, spec, timeout)
+	return r.determineCheckResult(ctx, cnh, pod, info, spec)
 }
 
-func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, pod *corev1.Pod, info gpuNodeInfo, spec checkerSpec, timeout time.Duration) (ctrl.Result, error) {
+func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, pod *corev1.Pod, info gpuNodeInfo, spec checkerSpec) (ctrl.Result, error) {
 	// Check if pod succeeded or failed (completed), or if it's timed out
 	isPodCompleted := pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed
+	timeout := spec.timeout
 
 	if isPodCompleted || isPodTimeout(pod, timeout) {
 		if isPodCompleted {

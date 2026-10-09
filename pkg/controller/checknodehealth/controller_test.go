@@ -1038,13 +1038,15 @@ func testCNH(name string) *chmv1alpha1.CheckNodeHealth {
 }
 
 // finishedCheckerPod returns a checker pod the reconciler treats as finished, with a container that
-// started so PodStartup is recorded as Healthy.
-func finishedCheckerPod(cnhName string) *corev1.Pod {
+// started so PodStartup is recorded as Healthy. It carries the run annotations the controller puts on
+// the checker pods it creates; see runAnnotations.
+func finishedCheckerPod(cnhName string, gpuNode bool, sku string) *corev1.Pod {
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "check-node-health-" + cnhName,
-			Namespace: "default",
-			Labels:    map[string]string{CheckNodeHealthLabel: cnhName},
+			Name:        "check-node-health-" + cnhName,
+			Namespace:   "default",
+			Labels:      map[string]string{CheckNodeHealthLabel: cnhName},
+			Annotations: runAnnotations(gpuNode, sku),
 		},
 		Status: corev1.PodStatus{
 			Phase: corev1.PodSucceeded,
@@ -1056,6 +1058,27 @@ func finishedCheckerPod(cnhName string) *corev1.Pod {
 			}},
 		},
 	}
+}
+
+// runAnnotations returns the annotations the controller puts on the checker pods it creates. An empty
+// sku means the pod does not run the GPU checks.
+func runAnnotations(gpuNode bool, sku string) map[string]string {
+	annotations := map[string]string{annotationNodeKind: NodeKindStandard}
+	if gpuNode {
+		annotations[annotationNodeKind] = NodeKindGPU
+	}
+	if sku != "" {
+		annotations[annotationGPUChecksSKU] = sku
+	}
+	return annotations
+}
+
+// withoutRunAnnotations strips the run annotations, as on a checker pod created before the controller
+// recorded them.
+func withoutRunAnnotations(pod *corev1.Pod) *corev1.Pod {
+	delete(pod.Annotations, annotationNodeKind)
+	delete(pod.Annotations, annotationGPUChecksSKU)
+	return pod
 }
 
 func TestCheckerSpecFor(t *testing.T) {
@@ -1091,14 +1114,15 @@ func TestCheckerSpecFor(t *testing.T) {
 			name:            "gpu node with the gate off",
 			info:            gpuNodeInfo{isGPUNode: true, claimableGPUs: 8, sku: h100},
 			enableGPUChecks: false,
-			want:            checkerSpec{image: "base-image", timeout: PodTimeout, checkerNames: baseNames},
+			want:            checkerSpec{gpuNode: true, image: "base-image", timeout: PodTimeout, checkerNames: baseNames},
 		},
 		{
 			name:            "gpu node with healthy gpus benchmarks them",
 			info:            gpuNodeInfo{isGPUNode: true, claimableGPUs: 8, sku: h100},
 			enableGPUChecks: true,
 			want: checkerSpec{
-				image: "gpu-image", timeout: GPUPodTimeout, checkerNames: gpuNames,
+				gpuNode: true,
+				image:   "gpu-image", timeout: GPUPodTimeout, checkerNames: gpuNames,
 				gpu: &gpuChecks{sku: h100, gpus: 8},
 			},
 		},
@@ -1108,7 +1132,8 @@ func TestCheckerSpecFor(t *testing.T) {
 			info:            gpuNodeInfo{isGPUNode: true, claimableGPUs: 7, sku: h100},
 			enableGPUChecks: true,
 			want: checkerSpec{
-				image: "gpu-image", timeout: GPUPodTimeout, checkerNames: gpuNames,
+				gpuNode: true,
+				image:   "gpu-image", timeout: GPUPodTimeout, checkerNames: gpuNames,
 				gpu: &gpuChecks{sku: h100, gpus: 7},
 			},
 		},
@@ -1117,7 +1142,8 @@ func TestCheckerSpecFor(t *testing.T) {
 			info:            gpuNodeInfo{isGPUNode: true, claimableGPUs: 2, sku: "Standard_NV72ads_A10_v5"},
 			enableGPUChecks: true,
 			want: checkerSpec{
-				image: "gpu-image", timeout: GPUPodTimeout,
+				gpuNode: true,
+				image:   "gpu-image", timeout: GPUPodTimeout,
 				// The A10 has no NVLink, so peer bandwidth is not one of its checks.
 				checkerNames: []string{"PodStartup", "PodNetwork", "NcclAllReduce", "GpuHostBandwidth"},
 				gpu:          &gpuChecks{sku: "Standard_NV72ads_A10_v5", gpus: 2},
@@ -1129,7 +1155,8 @@ func TestCheckerSpecFor(t *testing.T) {
 			enableGPUChecks: true,
 			age:             10 * time.Second,
 			want: checkerSpec{
-				image: "gpu-image", timeout: GPUPodTimeout, checkerNames: gpuNames,
+				gpuNode: true,
+				image:   "gpu-image", timeout: GPUPodTimeout, checkerNames: gpuNames,
 				wait: gpuPollInterval,
 			},
 		},
@@ -1139,7 +1166,8 @@ func TestCheckerSpecFor(t *testing.T) {
 			enableGPUChecks: true,
 			age:             wait - time.Second,
 			want: checkerSpec{
-				image: "gpu-image", timeout: GPUPodTimeout, checkerNames: gpuNames,
+				gpuNode: true,
+				image:   "gpu-image", timeout: GPUPodTimeout, checkerNames: gpuNames,
 				wait: time.Second,
 			},
 		},
@@ -1151,7 +1179,8 @@ func TestCheckerSpecFor(t *testing.T) {
 			enableGPUChecks: true,
 			age:             wait,
 			want: checkerSpec{
-				image: "gpu-image", timeout: GPUPodTimeout, checkerNames: gpuNames,
+				gpuNode: true,
+				image:   "gpu-image", timeout: GPUPodTimeout, checkerNames: gpuNames,
 				gpu: &gpuChecks{sku: h100, skipReason: gpu.ErrorCodeGPUsNotClaimable},
 			},
 		},
@@ -1159,7 +1188,7 @@ func TestCheckerSpecFor(t *testing.T) {
 			name:            "driver-only gpu node with the gate off",
 			info:            gpuNodeInfo{isGPUNode: true, sku: h100},
 			enableGPUChecks: false,
-			want:            checkerSpec{image: "base-image", timeout: PodTimeout, checkerNames: baseNames},
+			want:            checkerSpec{gpuNode: true, image: "base-image", timeout: PodTimeout, checkerNames: baseNames},
 		},
 	}
 
@@ -1195,6 +1224,8 @@ func TestReconcileNodeConditionRouting(t *testing.T) {
 		sku string
 		// enableGPUChecks gates the intrusive GPU checks.
 		enableGPUChecks bool
+		// removePodAnnotations strips the run annotations off the checker pod.
+		removePodAnnotations bool
 		// seededResults stand in for the results the checker pod would have written. PodStartup is
 		// recorded by the controller itself, so it is not seeded here.
 		seededResults []chmv1alpha1.CheckResult
@@ -1346,6 +1377,37 @@ func TestReconcileNodeConditionRouting(t *testing.T) {
 				NodeConditionNodeHealthy: corev1.ConditionTrue,
 			},
 		},
+		// The below two test cases should pretty much never happen as the annotations will always be set in the pod spec.
+		// Mainly for coverage.
+		{
+			name:                 "pod without annotations on a non-gpu node falls back to the live node",
+			gpuNode:              false,
+			enableGPUChecks:      true,
+			removePodAnnotations: true,
+			seededResults: []chmv1alpha1.CheckResult{
+				{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusHealthy},
+			},
+			wantHealthy: metav1.ConditionTrue,
+			wantNodeConditions: map[corev1.NodeConditionType]corev1.ConditionStatus{
+				NodeConditionNodeHealthy: corev1.ConditionTrue,
+			},
+		},
+		{
+			// The live node decides the routing, but the pod recorded no GPU checks SKU, so it owes only
+			// the base checks even with the gate on. Expecting the GPU checks would leave them Unknown.
+			name:                 "pod without annotations on a gpu node falls back to the live node",
+			gpuNode:              true,
+			enableGPUChecks:      true,
+			removePodAnnotations: true,
+			seededResults: []chmv1alpha1.CheckResult{
+				{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusHealthy},
+			},
+			wantHealthy: metav1.ConditionTrue,
+			wantNodeConditions: map[corev1.NodeConditionType]corev1.ConditionStatus{
+				NodeConditionPodStartupHealthy: corev1.ConditionTrue,
+				NodeConditionPodNetworkHealthy: corev1.ConditionTrue,
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -1380,7 +1442,15 @@ func TestReconcileNodeConditionRouting(t *testing.T) {
 			if err := fakeClient.Status().Update(ctx, cnh); err != nil {
 				t.Fatalf("seeding reported results: %v", err)
 			}
-			if err := fakeClient.Create(ctx, finishedCheckerPod(cnh.Name)); err != nil {
+			sku := ""
+			if tt.gpuNode && tt.enableGPUChecks {
+				sku = node.Labels[instanceTypeLabel]
+			}
+			pod := finishedCheckerPod(cnh.Name, tt.gpuNode, sku)
+			if tt.removePodAnnotations {
+				withoutRunAnnotations(pod)
+			}
+			if err := fakeClient.Create(ctx, pod); err != nil {
 				t.Fatalf("creating the checker pod: %v", err)
 			}
 
@@ -1712,7 +1782,11 @@ func TestCircuitBreakersAreIndependent(t *testing.T) {
 				if err := fakeClient.Status().Update(ctx, cnh); err != nil {
 					t.Fatalf("seeding reported results: %v", err)
 				}
-				if err := fakeClient.Create(ctx, finishedCheckerPod(cnh.Name)); err != nil {
+				sku := ""
+				if tt.failingNodeIsGPU {
+					sku = node.Labels[instanceTypeLabel]
+				}
+				if err := fakeClient.Create(ctx, finishedCheckerPod(cnh.Name, tt.failingNodeIsGPU, sku)); err != nil {
 					t.Fatalf("creating the checker pod: %v", err)
 				}
 

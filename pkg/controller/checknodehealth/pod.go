@@ -94,21 +94,38 @@ func (r *CheckNodeHealthReconciler) createHealthCheckPod(ctx context.Context, cn
 	return createdPod, nil
 }
 
-// podTimeoutFor returns the timeout the checker pod was created with. It is read off the checker pod
-// rather than computed from the node because the GPU state can change mid-run. For example, a device
-// plugin restart could make the node appear to be a non-GPU node, which would cut a running GPU checker
-// pod off at the base timeout.
-func podTimeoutFor(pod *corev1.Pod) time.Duration {
-	if timeout, err := time.ParseDuration(pod.Annotations[annotationCheckerTimeout]); err == nil && timeout > 0 {
-		return timeout
+// recordedRun reads the node kind and GPU checks SKU annotations off a checker pod, and derives the
+// expected checks and timeout from them. Anything the pod did not record falls back to the live node.
+func recordedRun(pod *corev1.Pod, live gpuNodeInfo) (gpuNodeInfo, checkerSpec) {
+	info := live
+	switch pod.Annotations[annotationNodeKind] {
+	case NodeKindGPU:
+		info.isGPUNode = true
+	case NodeKindStandard:
+		info.isGPUNode = false
 	}
-	return PodTimeout
+	sku, gpuChecks := pod.Annotations[annotationGPUChecksSKU]
+	if gpuChecks {
+		info.sku = sku
+	}
+
+	spec := checkerSpec{gpuNode: info.isGPUNode}
+	spec.checkerNames, spec.timeout = expectedRun(gpuChecks, info.sku)
+	return info, spec
 }
 
 func (r *CheckNodeHealthReconciler) buildHealthCheckPod(cnh *chmv1alpha1.CheckNodeHealth, spec checkerSpec) (*corev1.Pod, error) {
 	podName := generateHealthCheckPodName(cnh)
 	labels := map[string]string{
 		CheckNodeHealthLabel: cnh.Name,
+	}
+	// Record how this pod's results must be handled, since the node can change while it runs. See recordedRun.
+	annotations := map[string]string{annotationNodeKind: NodeKindStandard}
+	if spec.gpuNode {
+		annotations[annotationNodeKind] = NodeKindGPU
+	}
+	if spec.gpu != nil {
+		annotations[annotationGPUChecksSKU] = spec.gpu.sku
 	}
 
 	// Determine service account name from annotation or use default
@@ -122,7 +139,7 @@ func (r *CheckNodeHealthReconciler) buildHealthCheckPod(cnh *chmv1alpha1.CheckNo
 			Name:        podName,
 			Namespace:   r.CheckerPodNamespace,
 			Labels:      labels,
-			Annotations: map[string]string{annotationCheckerTimeout: spec.timeout.String()},
+			Annotations: annotations,
 		},
 		Spec: corev1.PodSpec{
 			ServiceAccountName: serviceAccountName,

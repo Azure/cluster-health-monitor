@@ -125,6 +125,7 @@ func TestBuildHealthCheckPodShape(t *testing.T) {
 	type podShape struct {
 		Image           string
 		Timeout         time.Duration
+		NodeKind        string
 		Args            []string
 		GPULimit        string
 		GPURequest      string
@@ -150,6 +151,7 @@ func TestBuildHealthCheckPodShape(t *testing.T) {
 			want: podShape{
 				Image:           "default-image",
 				Timeout:         PodTimeout,
+				NodeKind:        NodeKindStandard,
 				Args:            []string{"--name=cnh-1"},
 				SecurityContext: wantSecurityContext,
 			},
@@ -161,6 +163,7 @@ func TestBuildHealthCheckPodShape(t *testing.T) {
 			want: podShape{
 				Image:           "default-image",
 				Timeout:         PodTimeout,
+				NodeKind:        NodeKindGPU,
 				Args:            []string{"--name=cnh-1"},
 				SecurityContext: wantSecurityContext,
 			},
@@ -174,6 +177,7 @@ func TestBuildHealthCheckPodShape(t *testing.T) {
 			want: podShape{
 				Image:           "gpu-image",
 				Timeout:         GPUPodTimeout,
+				NodeKind:        NodeKindGPU,
 				Args:            []string{"--name=cnh-1", "--enable-gpu-checks", "--sku=Standard_ND96isr_H100_v5"},
 				GPULimit:        "8",
 				GPURequest:      "8",
@@ -189,6 +193,7 @@ func TestBuildHealthCheckPodShape(t *testing.T) {
 			want: podShape{
 				Image:           "gpu-image",
 				Timeout:         GPUPodTimeout,
+				NodeKind:        NodeKindGPU,
 				Args:            []string{"--name=cnh-1", "--enable-gpu-checks", "--sku=Standard_ND96isr_H100_v5", "--gpu-skip-reason=GPUsNotClaimable"},
 				SecurityContext: wantSecurityContext,
 			},
@@ -210,11 +215,13 @@ func TestBuildHealthCheckPodShape(t *testing.T) {
 			}
 
 			c := pod.Spec.Containers[0]
+			_, recorded := recordedRun(pod, gpuNodeInfo{})
 
 			// set up the struct to compare fields we care about
 			got := podShape{
 				Image:           c.Image,
-				Timeout:         podTimeoutFor(pod),
+				Timeout:         recorded.timeout,
+				NodeKind:        pod.Annotations[annotationNodeKind],
 				Args:            c.Args,
 				SecurityContext: c.SecurityContext,
 			}

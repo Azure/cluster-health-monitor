@@ -83,13 +83,15 @@ const (
 )
 
 // succeededCheckerPod returns a checker pod that the reconciler treats as finished. It carries no
-// container statuses, so the PodStartup check is left unreported.
+// container statuses, so the PodStartup check is left unreported. It records a standard run, as the
+// controller does on the pods it creates for a non-GPU node.
 func succeededCheckerPod(cnhName string) *corev1.Pod {
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "check-node-health-" + cnhName,
-			Namespace: testCheckerPodNamespace,
-			Labels:    map[string]string{CheckNodeHealthLabel: cnhName},
+			Name:        "check-node-health-" + cnhName,
+			Namespace:   testCheckerPodNamespace,
+			Labels:      map[string]string{CheckNodeHealthLabel: cnhName},
+			Annotations: runAnnotations(false, ""),
 		},
 		Status: corev1.PodStatus{Phase: corev1.PodSucceeded},
 	}
@@ -106,6 +108,16 @@ func startedCheckerPod(cnhName string) *corev1.Pod {
 		},
 	}}
 	return pod
+}
+
+// gpuCheckerPod wraps a checker pod builder so the pod records a GPU run on an H100, as the controller
+// records on the pods it creates for a GPU node.
+func gpuCheckerPod(build func(cnhName string) *corev1.Pod) func(cnhName string) *corev1.Pod {
+	return func(cnhName string) *corev1.Pod {
+		pod := build(cnhName)
+		pod.Annotations = runAnnotations(true, "Standard_ND96isr_H100_v5")
+		return pod
+	}
 }
 
 // errSimulatedTerminalUpdate is injected in place of the status update that sets FinishedAt.
@@ -365,7 +377,7 @@ func TestNodeCheckMetricsEmitted(t *testing.T) {
 			name:            "gpu node counts the gpu checks too",
 			wantNodeKind:    NodeKindGPU,
 			node:            gpuNode("node-1"),
-			pod:             succeededCheckerPod,
+			pod:             gpuCheckerPod(succeededCheckerPod),
 			enableGPUChecks: true,
 			wantCHMNodeCheckTotal: map[string]string{
 				"result": metrics.UnknownStatus,
@@ -384,7 +396,7 @@ func TestNodeCheckMetricsEmitted(t *testing.T) {
 			name:            "gpu check reports unhealthy alongside healthy and unreported checks",
 			wantNodeKind:    NodeKindGPU,
 			node:            gpuNode("node-1"),
-			pod:             startedCheckerPod,
+			pod:             gpuCheckerPod(startedCheckerPod),
 			enableGPUChecks: true,
 			seededResults: []chmv1alpha1.CheckResult{
 				{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusHealthy, Message: "reported by the checker pod"},
