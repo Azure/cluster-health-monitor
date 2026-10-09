@@ -56,6 +56,9 @@ const (
 	// fails to write results to the CheckNodeHealth status, which should result in Healthy=Unknown.
 	AnnotationCheckerServiceAccount = "checknodehealth.azure.com/checker-service-account"
 
+	// annotationCheckerTimeout records on a checker pod the timeout it was created with.
+	annotationCheckerTimeout = "checknodehealth.azure.com/checker-timeout"
+
 	// ConditionTypeHealthy is the condition type used to indicate a healthy state.
 	ConditionTypeHealthy = "Healthy"
 
@@ -133,44 +136,45 @@ func InapplicableNodeConditionTypes(node *corev1.Node) []corev1.NodeConditionTyp
 // controller itself; the rest come from the checker pod, listed in pkg/nodecheckerrunner/runner.go.
 var baseCheckerNames = []string{CheckerPodStartup, CheckerPodNetwork}
 
-// checkerSpec is everything that differs between the ordinary checker run and the GPU one. The
-// reconciler selects it once per CheckNodeHealth, so the EnableGPUChecks gate is read in one place.
+// checkerSpec is the checker run a CheckNodeHealth gets. The reconciler selects it in one place,
+// checkerSpecFor, so the EnableGPUChecks gate and every GPU decision are read there.
 type checkerSpec struct {
-	image      string
-	podTimeout time.Duration
+	image string
+	// timeout bounds the checker pod. It is recorded on the pod, so a later reconcile reads the
+	// timeout the pod was created with even if the node has changed since.
+	timeout time.Duration
 	// checkerNames are the checks this node owes a result for. Anything unreported becomes Unknown.
 	checkerNames []string
-	// gpu is set when the GPU checks run, and nil otherwise. On a node without nvidia device plugin,
-	// GPU checks report that they are unsupported.
-	gpu *gpuNodeInfo
+	// gpu is set when the checker runs the GPU checks, and nil otherwise.
+	gpu *gpuChecks
+	// wait, when set, means the GPU checks cannot be decided yet: select again after this long, and
+	// create no checker pod meanwhile.
+	wait time.Duration
 }
 
-// checkerSpecFor picks the checker variant for a node.
-func (r *CheckNodeHealthReconciler) checkerSpecFor(info gpuNodeInfo) checkerSpec {
+// checkerSpecFor picks the checker run for a node. A GPU node without claimable GPUs waits up to
+// GPUWait after the CheckNodeHealth is created for them to appear before reporting it has none.
+func (r *CheckNodeHealthReconciler) checkerSpecFor(info gpuNodeInfo, age time.Duration) checkerSpec {
+	spec := checkerSpec{
+		image:        r.CheckerPodImage,
+		timeout:      PodTimeout,
+		checkerNames: baseCheckerNames,
+	}
 	if !info.isGPUNode || !r.EnableGPUChecks {
-		return checkerSpec{
-			image:        r.CheckerPodImage,
-			podTimeout:   PodTimeout,
-			checkerNames: baseCheckerNames,
-		}
+		return spec
 	}
-	checkerNames := append(slices.Clone(baseCheckerNames), gpu.CheckerNames(info.sku)...)
-	if !info.hasNvidiaDevicePlugin() {
-		// The GPU checks do not support driver-only nodes yet. They report so without touching the
-		// GPUs, which the base image can do, so there is no need to pull the GPU image.
-		return checkerSpec{
-			image:        r.CheckerPodImage,
-			podTimeout:   PodTimeout,
-			checkerNames: checkerNames,
-			gpu:          &info,
-		}
+
+	spec.image, spec.timeout = r.GPUCheckerPodImage, GPUPodTimeout
+	spec.checkerNames = append(slices.Clone(baseCheckerNames), gpu.CheckerNames(info.sku)...)
+	switch {
+	case info.claimableGPUs > 0:
+		spec.gpu = &gpuChecks{sku: info.sku, gpus: info.claimableGPUs}
+	case age < r.GPUWait:
+		spec.wait = min(r.GPUWait-age, gpuPollInterval)
+	default:
+		spec.gpu = &gpuChecks{sku: info.sku, skipReason: gpu.ErrorCodeGPUsNotClaimable}
 	}
-	return checkerSpec{
-		image:        r.GPUCheckerPodImage,
-		podTimeout:   GPUPodTimeout,
-		checkerNames: checkerNames,
-		gpu:          &info,
-	}
+	return spec
 }
 
 // recordMissingResults marks every check the pod never reported as Unknown. Refetched so a
@@ -219,6 +223,9 @@ type CheckNodeHealthReconciler struct {
 	EnableNodeCondition bool                          // Whether to set NodeHealthy condition on the Node
 	CircuitBreakers     *NodeConditionCircuitBreakers // Circuit breakers for node condition updates. Required when EnableNodeCondition is set.
 	EnableGPUChecks     bool                          // Whether to run GPU checks on supported GPU nodes
+	// GPUWait is how long a GPU node without claimable GPUs is given to get some before its GPU
+	// checks start. Zero starts them immediately. See DefaultGPUWait.
+	GPUWait time.Duration
 }
 
 // +kubebuilder:rbac:groups=clusterhealthmonitor.azure.com,resources=checknodehealths,verbs=get;list;watch;create;update;patch;delete
@@ -301,18 +308,37 @@ func (r *CheckNodeHealthReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		}
 	}
 
-	spec := r.checkerSpecFor(info)
+	spec := r.checkerSpecFor(info, time.Since(cnh.CreationTimestamp.Time))
 	if info.isGPUNode {
 		klog.InfoS("Detected GPU node", "name", cnh.Name, "node", cnh.Spec.NodeRef.Name,
-			"gpuCount", info.gpuCount, "sku", info.sku, "runGPUChecks", spec.gpu != nil)
+			"claimableGPUs", info.claimableGPUs, "sku", info.sku)
 	}
 
-	// Check if pod exists and get its status, or create one if it doesn't exist
-	pod, err := r.ensureHealthCheckPod(ctx, cnh, spec)
+	pod, err := r.findHealthCheckPod(ctx, cnh)
 	if err != nil {
-		klog.ErrorS(err, "Failed to ensure health check pod")
+		klog.ErrorS(err, "Failed to look up health check pod")
 		return ctrl.Result{}, err
 	}
+	if pod == nil {
+		// The wait only gates creating the pod. Once it exists the check is underway, whatever the
+		// node reports since.
+		if spec.wait > 0 {
+			klog.InfoS("Waiting for claimable GPUs before starting the GPU checks",
+				"name", cnh.Name, "node", cnh.Spec.NodeRef.Name, "requeueAfter", spec.wait)
+			return ctrl.Result{RequeueAfter: spec.wait}, nil
+		}
+		if spec.gpu != nil {
+			// How long after the CheckNodeHealth the GPU checks started, for tuning GPUWait.
+			klog.InfoS("Starting GPU checks", "name", cnh.Name, "node", cnh.Spec.NodeRef.Name,
+				"sinceCreated", time.Since(cnh.CreationTimestamp.Time).Round(time.Millisecond),
+				"gpus", spec.gpu.gpus, "skipReason", spec.gpu.skipReason)
+		}
+		if pod, err = r.createHealthCheckPod(ctx, cnh, spec); err != nil {
+			klog.ErrorS(err, "Failed to create health check pod")
+			return ctrl.Result{}, err
+		}
+	}
+	timeout := podTimeoutFor(pod)
 
 	// Mark the CheckNodeHealth as started
 	if err := r.markStarted(ctx, cnh); err != nil {
@@ -320,19 +346,18 @@ func (r *CheckNodeHealthReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, err
 	}
 
-	if err := r.updatePodstartCheckerResult(ctx, cnh, pod, spec.podTimeout); err != nil {
+	if err := r.updatePodstartCheckerResult(ctx, cnh, pod, timeout); err != nil {
 		klog.ErrorS(err, "Failed to update PodStartup check result")
 		return ctrl.Result{}, err
 	}
 
 	// Determine the overall result based on pod status
-	return r.determineCheckResult(ctx, cnh, pod, info, spec)
+	return r.determineCheckResult(ctx, cnh, pod, info, spec, timeout)
 }
 
-func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, pod *corev1.Pod, info gpuNodeInfo, spec checkerSpec) (ctrl.Result, error) {
+func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, pod *corev1.Pod, info gpuNodeInfo, spec checkerSpec, timeout time.Duration) (ctrl.Result, error) {
 	// Check if pod succeeded or failed (completed), or if it's timed out
 	isPodCompleted := pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed
-	timeout := spec.podTimeout
 
 	if isPodCompleted || isPodTimeout(pod, timeout) {
 		if isPodCompleted {

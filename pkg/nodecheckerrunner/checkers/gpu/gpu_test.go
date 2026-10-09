@@ -71,27 +71,28 @@ func TestNewCheckers(t *testing.T) {
 	}
 }
 
-// Without the device plugin every checker the SKU would run still reports, under the same name, why
-// it did not run. None of them may touch the GPUs; nvidia-smi is absent here, so a checker that
-// tried would report ToolFailed instead.
-func TestNewCheckersWithoutDevicePlugin(t *testing.T) {
+// When the controller sets a skip reason, every checker the SKU would run still reports it under the
+// same name. None of them may touch the GPUs; nvidia-smi is absent here, so a checker that tried
+// would report ToolFailed instead.
+func TestNewCheckersWithSkipReason(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		sku      string
+		name string
+		cfg  Config
+		// wantCode is what every checker reports.
 		wantCode string
 	}{
-		{sku: h100SKU, wantCode: ErrorCodeDevicePluginRequired},
-		{sku: a10SKU, wantCode: ErrorCodeDevicePluginRequired},
-		// Fixing the device plugin alone would still not let the checks run.
-		{sku: "unrecognized_sku", wantCode: ErrorCodeUnknownSKU},
+		{name: "h100", cfg: Config{SKU: h100SKU, SkipReason: ErrorCodeGPUsNotClaimable}, wantCode: ErrorCodeGPUsNotClaimable},
+		{name: "a10", cfg: Config{SKU: a10SKU, SkipReason: ErrorCodeGPUsNotClaimable}, wantCode: ErrorCodeGPUsNotClaimable},
+		{name: "unknown sku", cfg: Config{SKU: "unrecognized_sku", SkipReason: ErrorCodeGPUsNotClaimable}, wantCode: ErrorCodeUnknownSKU},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.sku, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			checkers := NewCheckers(Config{SKU: tt.sku, DevicePluginPresent: false})
+			checkers := NewCheckers(tt.cfg)
 			names := make([]string, 0, len(checkers))
 			for _, c := range checkers {
 				names = append(names, c.Name())
@@ -107,8 +108,8 @@ func TestNewCheckersWithoutDevicePlugin(t *testing.T) {
 					t.Errorf("%s Code = %q, want %q", c.Name(), got.Detail.Code, tt.wantCode)
 				}
 			}
-			if want := CheckerNames(tt.sku); !slices.Equal(names, want) {
-				t.Errorf("checkers without the device plugin = %v, want the names the SKU runs %v", names, want)
+			if want := CheckerNames(tt.cfg.SKU); !slices.Equal(names, want) {
+				t.Errorf("checkers = %v, want the names the SKU runs %v", names, want)
 			}
 		})
 	}

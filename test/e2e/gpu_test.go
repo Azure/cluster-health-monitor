@@ -63,9 +63,15 @@ var _ = Describe("GPU CheckNodeHealth flow on Kind", Serial, Ordered, func() {
 			ctx, "checknodehealth-controller", metav1.GetOptions{})
 		Expect(err).NotTo(HaveOccurred())
 		originalControllerArgs = slices.Clone(deployment.Spec.Template.Spec.Containers[0].Args)
-		if !slices.Contains(deployment.Spec.Template.Spec.Containers[0].Args, "-enable-gpu-checks") {
-			deployment.Spec.Template.Spec.Containers[0].Args = append(
-				deployment.Spec.Template.Spec.Containers[0].Args, "-enable-gpu-checks")
+		// The driver-only specs would otherwise sit out the full GPU wait before the controller
+		// decides the node has no claimable GPUs.
+		for _, arg := range []string{"-enable-gpu-checks", "-gpu-wait=10s"} {
+			if !slices.Contains(deployment.Spec.Template.Spec.Containers[0].Args, arg) {
+				deployment.Spec.Template.Spec.Containers[0].Args = append(
+					deployment.Spec.Template.Spec.Containers[0].Args, arg)
+			}
+		}
+		if !slices.Equal(deployment.Spec.Template.Spec.Containers[0].Args, originalControllerArgs) {
 			deployment, err = clientset.AppsV1().Deployments(checkerNamespace).Update(
 				ctx, deployment, metav1.UpdateOptions{})
 			Expect(err).NotTo(HaveOccurred())
@@ -331,14 +337,14 @@ func runDriverOnlyGPUControllerFlow(ctx context.Context, k8sClient client.Client
 			"%s result: code=%s message=%s", name, results[name].ErrorCode, results[name].Message)
 	}
 
-	By("Verifying every GPU check reports that the device plugin is required")
+	By("Verifying every GPU check reports that no GPUs could be claimed")
 	// Had the GPU checker run, its test doubles would have reported these as Healthy.
 	for _, name := range []string{"NcclAllReduce", "GpuHostBandwidth", "GpuPeerBandwidth"} {
 		result, found := results[name]
 		Expect(found).To(BeTrue(), "%s result was not reported", name)
 		Expect(result.Status).To(Equal(chmv1alpha1.CheckStatusUnknown))
-		Expect(result.ErrorCode).To(Equal(gpu.ErrorCodeDevicePluginRequired))
-		Expect(result.Message).To(ContainSubstring("only supported on nodes with the NVIDIA device plugin"))
+		Expect(result.ErrorCode).To(Equal(gpu.ErrorCodeGPUsNotClaimable))
+		Expect(result.Message).To(ContainSubstring("advertised as healthy by the NVIDIA device plugin"))
 	}
 
 	By("Verifying the aggregate CheckNodeHealth condition is unknown")
@@ -352,7 +358,7 @@ func runDriverOnlyGPUControllerFlow(ctx context.Context, k8sClient client.Client
 	for _, conditionType := range gpuConditionTypes {
 		expectNodeConditionStatus(ctx, k8sClient, nodeName, conditionType, corev1.ConditionUnknown)
 		Expect(getNodeCondition(ctx, k8sClient, nodeName, conditionType).Message).
-			To(ContainSubstring(gpu.ErrorCodeDevicePluginRequired))
+			To(ContainSubstring(gpu.ErrorCodeGPUsNotClaimable))
 	}
 	Expect(getNodeCondition(ctx, k8sClient, nodeName, checknodehealth.NodeConditionNodeHealthy)).To(BeNil(),
 		"NodeHealthy must never be set on a GPU node")

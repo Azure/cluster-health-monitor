@@ -124,6 +124,7 @@ func TestBuildHealthCheckPodShape(t *testing.T) {
 	// podShape is the part of a built checker pod that buildHealthCheckPod is responsible for.
 	type podShape struct {
 		Image           string
+		Timeout         time.Duration
 		Args            []string
 		GPULimit        string
 		GPURequest      string
@@ -148,16 +149,18 @@ func TestBuildHealthCheckPodShape(t *testing.T) {
 			info: gpuNodeInfo{},
 			want: podShape{
 				Image:           "default-image",
+				Timeout:         PodTimeout,
 				Args:            []string{"--name=cnh-1"},
 				SecurityContext: wantSecurityContext,
 			},
 		},
 		{
 			name:            "gpu node with the gpu checks disabled uses standard pod shape",
-			info:            gpuNodeInfo{isGPUNode: true, gpuCount: 8, sku: "Standard_ND96isr_H100_v5"},
+			info:            gpuNodeInfo{isGPUNode: true, claimableGPUs: 8, sku: "Standard_ND96isr_H100_v5"},
 			enableGPUChecks: false,
 			want: podShape{
 				Image:           "default-image",
+				Timeout:         PodTimeout,
 				Args:            []string{"--name=cnh-1"},
 				SecurityContext: wantSecurityContext,
 			},
@@ -166,25 +169,27 @@ func TestBuildHealthCheckPodShape(t *testing.T) {
 			// Fully managed pools advertise the extended resource, so the device plugin assigns
 			// the devices and no env var is needed.
 			name:            "device plugin node requests its gpus",
-			info:            gpuNodeInfo{isGPUNode: true, gpuCount: 8, sku: "Standard_ND96isr_H100_v5"},
+			info:            gpuNodeInfo{isGPUNode: true, claimableGPUs: 8, sku: "Standard_ND96isr_H100_v5"},
 			enableGPUChecks: true,
 			want: podShape{
 				Image:           "gpu-image",
-				Args:            []string{"--name=cnh-1", "--enable-gpu-checks", "--sku=Standard_ND96isr_H100_v5", "--device-plugin-present=true"},
+				Timeout:         GPUPodTimeout,
+				Args:            []string{"--name=cnh-1", "--enable-gpu-checks", "--sku=Standard_ND96isr_H100_v5"},
 				GPULimit:        "8",
 				GPURequest:      "8",
 				SecurityContext: wantSecurityContext,
 			},
 		},
 		{
-			// Driver-only pools are not supported by the GPU checks yet. The base image's checker is
-			// told so it can report that, and it never gets the GPU devices.
-			name:            "driver only node reports the gpu checks without claiming gpus",
-			info:            gpuNodeInfo{isGPUNode: true, gpuCount: 0, sku: "Standard_ND96isr_H100_v5"},
+			// Without claimable GPUs, e.g. a driver-only pool, the checker is told so it can report that,
+			// and it never gets the GPU devices.
+			name:            "gpu node without claimable gpus reports the gpu checks without claiming any",
+			info:            gpuNodeInfo{isGPUNode: true, sku: "Standard_ND96isr_H100_v5"},
 			enableGPUChecks: true,
 			want: podShape{
-				Image:           "default-image",
-				Args:            []string{"--name=cnh-1", "--enable-gpu-checks", "--sku=Standard_ND96isr_H100_v5", "--device-plugin-present=false"},
+				Image:           "gpu-image",
+				Timeout:         GPUPodTimeout,
+				Args:            []string{"--name=cnh-1", "--enable-gpu-checks", "--sku=Standard_ND96isr_H100_v5", "--gpu-skip-reason=GPUsNotClaimable"},
 				SecurityContext: wantSecurityContext,
 			},
 		},
@@ -199,7 +204,7 @@ func TestBuildHealthCheckPodShape(t *testing.T) {
 			reconciler.GPUCheckerPodImage = "gpu-image"
 			reconciler.EnableGPUChecks = tt.enableGPUChecks
 
-			pod, err := reconciler.buildHealthCheckPod(testCNH("cnh-1"), reconciler.checkerSpecFor(tt.info))
+			pod, err := reconciler.buildHealthCheckPod(testCNH("cnh-1"), reconciler.checkerSpecFor(tt.info, 0))
 			if err != nil {
 				t.Fatalf("buildHealthCheckPod returned error: %v", err)
 			}
@@ -209,6 +214,7 @@ func TestBuildHealthCheckPodShape(t *testing.T) {
 			// set up the struct to compare fields we care about
 			got := podShape{
 				Image:           c.Image,
+				Timeout:         podTimeoutFor(pod),
 				Args:            c.Args,
 				SecurityContext: c.SecurityContext,
 			}

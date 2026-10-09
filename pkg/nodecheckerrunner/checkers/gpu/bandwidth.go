@@ -84,11 +84,8 @@ func (c *BandwidthChecker) appliesTo(profile skuProfile) bool {
 }
 
 func (c *BandwidthChecker) Run(ctx context.Context) (*checker.Result, error) {
-	profile, ok := profileFor(c.cfg.SKU)
-	if !ok || !c.appliesTo(profile) {
-		return unsupportedSKU(c.cfg.SKU), nil
-	}
-	if result := preflight(ctx, c.cfg); result != nil {
+	profile, result := preflight(ctx, c.cfg, c)
+	if result != nil {
 		return result, nil
 	}
 	args := append([]string{"-t"}, c.path.testcases...)

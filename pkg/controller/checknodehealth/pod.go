@@ -51,8 +51,8 @@ func (r *CheckNodeHealthReconciler) cleanupPod(ctx context.Context, cnh *chmv1al
 	return nil
 }
 
-func (r *CheckNodeHealthReconciler) ensureHealthCheckPod(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, spec checkerSpec) (*corev1.Pod, error) {
-	// Check if pods already exist using label selector
+// findHealthCheckPod returns the CheckNodeHealth's checker pod, or nil when none exists yet.
+func (r *CheckNodeHealthReconciler) findHealthCheckPod(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth) (*corev1.Pod, error) {
 	podList := &corev1.PodList{}
 	listOpts := []client.ListOption{
 		client.InNamespace(r.CheckerPodNamespace),
@@ -62,18 +62,19 @@ func (r *CheckNodeHealthReconciler) ensureHealthCheckPod(ctx context.Context, cn
 	if err := r.List(ctx, podList, listOpts...); err != nil {
 		return nil, fmt.Errorf("failed to list existing pods: %w", err)
 	}
-
-	if len(podList.Items) > 0 {
-		// Pod already exists, return the first one
-		pod := &podList.Items[0]
-		if len(podList.Items) > 1 {
-			klog.InfoS("Multiple health check pods found, using first one", "count", len(podList.Items))
-		}
-		klog.InfoS("Health check pod already exists", "pod", pod.Name)
-		return pod, nil
+	if len(podList.Items) == 0 {
+		return nil, nil
 	}
 
-	// Create the pod
+	pod := &podList.Items[0]
+	if len(podList.Items) > 1 {
+		klog.InfoS("Multiple health check pods found, using first one", "count", len(podList.Items))
+	}
+	klog.InfoS("Health check pod already exists", "pod", pod.Name)
+	return pod, nil
+}
+
+func (r *CheckNodeHealthReconciler) createHealthCheckPod(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, spec checkerSpec) (*corev1.Pod, error) {
 	pod, err := r.buildHealthCheckPod(cnh, spec)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build health check pod: %w", err)
@@ -93,6 +94,17 @@ func (r *CheckNodeHealthReconciler) ensureHealthCheckPod(ctx context.Context, cn
 	return createdPod, nil
 }
 
+// podTimeoutFor returns the timeout the checker pod was created with. It is read off the checker pod
+// rather than computed from the node because the GPU state can change mid-run. For example, a device
+// plugin restart could make the node appear to be a non-GPU node, which would cut a running GPU checker
+// pod off at the base timeout.
+func podTimeoutFor(pod *corev1.Pod) time.Duration {
+	if timeout, err := time.ParseDuration(pod.Annotations[annotationCheckerTimeout]); err == nil && timeout > 0 {
+		return timeout
+	}
+	return PodTimeout
+}
+
 func (r *CheckNodeHealthReconciler) buildHealthCheckPod(cnh *chmv1alpha1.CheckNodeHealth, spec checkerSpec) (*corev1.Pod, error) {
 	podName := generateHealthCheckPodName(cnh)
 	labels := map[string]string{
@@ -107,9 +119,10 @@ func (r *CheckNodeHealthReconciler) buildHealthCheckPod(cnh *chmv1alpha1.CheckNo
 
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      podName,
-			Namespace: r.CheckerPodNamespace,
-			Labels:    labels,
+			Name:        podName,
+			Namespace:   r.CheckerPodNamespace,
+			Labels:      labels,
+			Annotations: map[string]string{annotationCheckerTimeout: spec.timeout.String()},
 		},
 		Spec: corev1.PodSpec{
 			ServiceAccountName: serviceAccountName,
@@ -157,21 +170,20 @@ func (r *CheckNodeHealthReconciler) buildHealthCheckPod(cnh *chmv1alpha1.CheckNo
 	return pod, nil
 }
 
-// configureGPUChecker turns the GPU checks on in the checker container and gets the node's GPU
-// devices into it. A node without the device plugin is not supported yet, so its checker is only
-// told to report that, and no GPUs are given to it.
-func configureGPUChecker(c *corev1.Container, info gpuNodeInfo) {
+// configureGPUChecker turns the GPU checks on in the checker container. It either claims the GPUs to
+// benchmark, or, when there are none, gives the checker the reason to report instead.
+func configureGPUChecker(c *corev1.Container, g gpuChecks) {
 	c.Args = append(c.Args,
 		"--enable-gpu-checks",
-		fmt.Sprintf("--sku=%s", info.sku),
-		fmt.Sprintf("--device-plugin-present=%t", info.hasNvidiaDevicePlugin()),
+		fmt.Sprintf("--sku=%s", g.sku),
 	)
-	if !info.hasNvidiaDevicePlugin() {
+	if g.skipReason != "" {
+		c.Args = append(c.Args, fmt.Sprintf("--gpu-skip-reason=%s", g.skipReason))
 		return
 	}
 	// Because the controller bypasses the scheduler by setting the node name directly, if we cannot claim all the GPUs, the pod goes straight to a Failed state.
 	// TODO: we should figure something out so that we can reliably schedule the checks with exclusive GPU access.
-	gpus := *resource.NewQuantity(info.gpuCount, resource.DecimalSI)
+	gpus := *resource.NewQuantity(g.gpus, resource.DecimalSI)
 	c.Resources = corev1.ResourceRequirements{
 		Limits:   corev1.ResourceList{nvidiaGPUResourceName: gpus},
 		Requests: corev1.ResourceList{nvidiaGPUResourceName: gpus},

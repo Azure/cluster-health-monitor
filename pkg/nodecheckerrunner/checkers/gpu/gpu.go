@@ -40,9 +40,9 @@ const (
 type Config struct {
 	// SKU is the node's VM size, used to select the expected GPU count and bandwidth thresholds.
 	SKU string
-	// DevicePluginPresent is set when an NVIDIA device plugin advertises the node's GPUs. The checks
-	// only support such nodes for now, so without one they report that instead of running.
-	DevicePluginPresent bool
+	// SkipReason, when set, is the error code every checker reports instead of running, because the
+	// controller found the node's GPUs cannot be benchmarked, e.g. ErrorCodeGPUsNotClaimable.
+	SkipReason string
 	// ToolTimeout bounds each individual benchmark.
 	ToolTimeout time.Duration
 }
@@ -158,14 +158,23 @@ func unsupportedSKU(sku string) *checker.Result {
 	}
 }
 
-// devicePluginRequired is returned instead of running a benchmark on a node without the device plugin.
-func devicePluginRequired() *checker.Result {
+// skipMessages explain the skip reasons the controller sets.
+var skipMessages = map[string]string{
+	// The NVIDIA device plugin is the only way the checks claim GPUs today, so the message says so.
+	ErrorCodeGPUsNotClaimable: "GPU checks are only supported on nodes whose GPUs are advertised as healthy by the NVIDIA device plugin for now, and this node has none, so the check did not run",
+}
+
+// skipped is returned instead of running a benchmark when the controller found the node's GPUs
+// cannot be benchmarked. It is Unknown rather than a failure: the GPUs may only be unavailable for
+// a while, e.g. while the device plugin restarts.
+func skipped(reason string) *checker.Result {
+	message, ok := skipMessages[reason]
+	if !ok {
+		message = "the controller found the node's GPUs cannot be benchmarked, so the check did not run"
+	}
 	return &checker.Result{
 		Status: checker.StatusUnknown,
-		Detail: checker.Detail{
-			Code:    ErrorCodeDevicePluginRequired,
-			Message: "GPU checks are only supported on nodes with the NVIDIA device plugin for now, so the check did not run",
-		},
+		Detail: checker.Detail{Code: reason, Message: message},
 	}
 }
 

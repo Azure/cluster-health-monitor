@@ -16,9 +16,9 @@ const (
 	// produce a verdict.
 	ErrorCodeUnknownSKU = "UnknownSKU"
 
-	// ErrorCodeDevicePluginRequired indicates the node has no NVIDIA device plugin advertising its
-	// GPUs, which the GPU checks do not support yet.
-	ErrorCodeDevicePluginRequired = "DevicePluginRequired"
+	// ErrorCodeGPUsNotClaimable indicates the checks could not get exclusive use of any of the node's
+	// GPUs, so there were none to benchmark.
+	ErrorCodeGPUsNotClaimable = "GPUsNotClaimable"
 
 	// ErrorCodeCorrectness indicates a benchmark returned incorrect data.
 	ErrorCodeCorrectness = "CorrectnessError"

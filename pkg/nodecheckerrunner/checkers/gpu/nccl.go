@@ -53,13 +53,8 @@ func (c *NCCLChecker) appliesTo(profile skuProfile) bool {
 
 // Run runs the all-reduce benchmark and maps its report to a check result.
 func (c *NCCLChecker) Run(ctx context.Context) (*checker.Result, error) {
-	// Nothing to judge the measurement against, so the benchmark does not make sense to run.
-	profile, ok := profileFor(c.cfg.SKU)
-	if !ok || !c.appliesTo(profile) {
-		return unsupportedSKU(c.cfg.SKU), nil
-	}
-
-	if result := preflight(ctx, c.cfg); result != nil {
+	profile, result := preflight(ctx, c.cfg, c)
+	if result != nil {
 		return result, nil
 	}
 

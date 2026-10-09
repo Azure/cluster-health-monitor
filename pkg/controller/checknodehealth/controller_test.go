@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -1062,84 +1063,103 @@ func TestCheckerSpecFor(t *testing.T) {
 
 	baseNames := []string{"PodStartup", "PodNetwork"}
 	gpuNames := []string{"PodStartup", "PodNetwork", "NcclAllReduce", "GpuHostBandwidth", "GpuPeerBandwidth"}
+	h100 := "Standard_ND96isr_H100_v5"
+	wait := 2 * time.Minute
 
 	tests := []struct {
 		name            string
 		info            gpuNodeInfo
 		enableGPUChecks bool
-		wantImage       string
-		wantTimeout     time.Duration
-		wantNames       []string
-		// wantGPU is true when the spec must carry the GPU parameters, which is also what makes the
-		// pod get the GPU shape.
-		wantGPU bool
+		// age is how long ago the CheckNodeHealth was created.
+		age  time.Duration
+		want checkerSpec
 	}{
 		{
 			name:            "non-gpu node with the gate off",
-			info:            gpuNodeInfo{isGPUNode: false, gpuCount: 0, sku: "Standard_D8d_v5"},
+			info:            gpuNodeInfo{sku: "Standard_D8d_v5"},
 			enableGPUChecks: false,
-			wantImage:       "base-image",
-			wantTimeout:     PodTimeout,
-			wantNames:       baseNames,
-			wantGPU:         false,
+			want:            checkerSpec{image: "base-image", timeout: PodTimeout, checkerNames: baseNames},
 		},
 		{
 			name:            "non-gpu node with the gate on",
-			info:            gpuNodeInfo{isGPUNode: false, gpuCount: 0, sku: "Standard_D8d_v5"},
+			info:            gpuNodeInfo{sku: "Standard_D8d_v5"},
 			enableGPUChecks: true,
-			wantImage:       "base-image",
-			wantTimeout:     PodTimeout,
-			wantNames:       baseNames,
-			wantGPU:         false,
+			want:            checkerSpec{image: "base-image", timeout: PodTimeout, checkerNames: baseNames},
 		},
 		{
 			// The node still reports per-check conditions, but it runs the ordinary checker.
 			name:            "gpu node with the gate off",
-			info:            gpuNodeInfo{isGPUNode: true, gpuCount: 8, sku: "Standard_ND96isr_H100_v5"},
+			info:            gpuNodeInfo{isGPUNode: true, claimableGPUs: 8, sku: h100},
 			enableGPUChecks: false,
-			wantImage:       "base-image",
-			wantTimeout:     PodTimeout,
-			wantNames:       baseNames,
-			wantGPU:         false,
+			want:            checkerSpec{image: "base-image", timeout: PodTimeout, checkerNames: baseNames},
 		},
 		{
-			name:            "gpu node with the gate on",
-			info:            gpuNodeInfo{isGPUNode: true, gpuCount: 8, sku: "Standard_ND96isr_H100_v5"},
+			name:            "gpu node with healthy gpus benchmarks them",
+			info:            gpuNodeInfo{isGPUNode: true, claimableGPUs: 8, sku: h100},
 			enableGPUChecks: true,
-			wantImage:       "gpu-image",
-			wantTimeout:     GPUPodTimeout,
-			wantNames:       gpuNames,
-			wantGPU:         true,
+			want: checkerSpec{
+				image: "gpu-image", timeout: GPUPodTimeout, checkerNames: gpuNames,
+				gpu: &gpuChecks{sku: h100, gpus: 8},
+			},
+		},
+		{
+			// Only the healthy GPUs can be claimed, and the GPU count check reports the rest missing.
+			name:            "gpu node with some unhealthy gpus benchmarks the healthy ones",
+			info:            gpuNodeInfo{isGPUNode: true, claimableGPUs: 7, sku: h100},
+			enableGPUChecks: true,
+			want: checkerSpec{
+				image: "gpu-image", timeout: GPUPodTimeout, checkerNames: gpuNames,
+				gpu: &gpuChecks{sku: h100, gpus: 7},
+			},
 		},
 		{
 			name:            "gpu node only expects the gpu checks its sku runs",
-			info:            gpuNodeInfo{isGPUNode: true, gpuCount: 2, sku: "Standard_NV72ads_A10_v5"},
+			info:            gpuNodeInfo{isGPUNode: true, claimableGPUs: 2, sku: "Standard_NV72ads_A10_v5"},
 			enableGPUChecks: true,
-			wantImage:       "gpu-image",
-			wantTimeout:     GPUPodTimeout,
-			// The A10 has no NVLink, so peer bandwidth is not one of its checks.
-			wantNames: []string{"PodStartup", "PodNetwork", "NcclAllReduce", "GpuHostBandwidth"},
-			wantGPU:   true,
+			want: checkerSpec{
+				image: "gpu-image", timeout: GPUPodTimeout,
+				// The A10 has no NVLink, so peer bandwidth is not one of its checks.
+				checkerNames: []string{"PodStartup", "PodNetwork", "NcclAllReduce", "GpuHostBandwidth"},
+				gpu:          &gpuChecks{sku: "Standard_NV72ads_A10_v5", gpus: 2},
+			},
 		},
 		{
-			// Driver-only nodes are unsupported. The checker still owes the gpu results, reporting
-			// that it cannot run them, but it does so from the base image.
-			name:            "driver only gpu node with the gate on",
-			info:            gpuNodeInfo{isGPUNode: true, gpuCount: 0, sku: "Standard_ND96isr_H100_v5"},
+			name:            "gpu node without claimable gpus waits for them",
+			info:            gpuNodeInfo{isGPUNode: true, sku: h100},
 			enableGPUChecks: true,
-			wantImage:       "base-image",
-			wantTimeout:     PodTimeout,
-			wantNames:       gpuNames,
-			wantGPU:         true,
+			age:             10 * time.Second,
+			want: checkerSpec{
+				image: "gpu-image", timeout: GPUPodTimeout, checkerNames: gpuNames,
+				wait: gpuPollInterval,
+			},
 		},
 		{
-			name:            "driver only gpu node with the gate off",
-			info:            gpuNodeInfo{isGPUNode: true, gpuCount: 0, sku: "Standard_ND96isr_H100_v5"},
+			name:            "the last wait only runs out the gpu wait",
+			info:            gpuNodeInfo{isGPUNode: true, sku: h100},
+			enableGPUChecks: true,
+			age:             wait - time.Second,
+			want: checkerSpec{
+				image: "gpu-image", timeout: GPUPodTimeout, checkerNames: gpuNames,
+				wait: time.Second,
+			},
+		},
+		{
+			// Driver-only, or every GPU unhealthy. The checker still owes the gpu results, reporting why it
+			// cannot run them.
+			name:            "gpu node without claimable gpus after the wait reports so",
+			info:            gpuNodeInfo{isGPUNode: true, sku: h100},
+			enableGPUChecks: true,
+			age:             wait,
+			want: checkerSpec{
+				image: "gpu-image", timeout: GPUPodTimeout, checkerNames: gpuNames,
+				gpu: &gpuChecks{sku: h100, skipReason: gpu.ErrorCodeGPUsNotClaimable},
+			},
+		},
+		{
+			name:            "driver-only gpu node with the gate off",
+			info:            gpuNodeInfo{isGPUNode: true, sku: h100},
 			enableGPUChecks: false,
-			wantImage:       "base-image",
-			wantTimeout:     PodTimeout,
-			wantNames:       baseNames,
-			wantGPU:         false,
+			want:            checkerSpec{image: "base-image", timeout: PodTimeout, checkerNames: baseNames},
 		},
 	}
 
@@ -1151,23 +1171,12 @@ func TestCheckerSpecFor(t *testing.T) {
 				CheckerPodImage:    "base-image",
 				GPUCheckerPodImage: "gpu-image",
 				EnableGPUChecks:    tt.enableGPUChecks,
+				GPUWait:            wait,
 			}
 
-			spec := r.checkerSpecFor(tt.info)
-			if spec.image != tt.wantImage {
-				t.Errorf("image = %q, want %q", spec.image, tt.wantImage)
-			}
-			if spec.podTimeout != tt.wantTimeout {
-				t.Errorf("podTimeout = %s, want %s", spec.podTimeout, tt.wantTimeout)
-			}
-			if !slices.Equal(spec.checkerNames, tt.wantNames) {
-				t.Errorf("checkerNames = %v, want %v", spec.checkerNames, tt.wantNames)
-			}
-			if gotGPU := spec.gpu != nil; gotGPU != tt.wantGPU {
-				t.Errorf("gpu set = %v, want %v", gotGPU, tt.wantGPU)
-			}
-			if tt.wantGPU && *spec.gpu != tt.info {
-				t.Errorf("gpu = %+v, want %+v", *spec.gpu, tt.info)
+			got := r.checkerSpecFor(tt.info, tt.age)
+			if diff := cmp.Diff(tt.want, got, cmp.AllowUnexported(checkerSpec{}, gpuChecks{})); diff != "" {
+				t.Errorf("checkerSpecFor() mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}
@@ -1300,17 +1309,17 @@ func TestReconcileNodeConditionRouting(t *testing.T) {
 			},
 		},
 		{
-			// The checker on a driver-only node reports every gpu check as needing the device
-			// plugin, so the gpu conditions say nothing about the node. The base checks still run.
+			// The checker on a driver-only node reports every gpu check as not claimable, so the
+			// gpu conditions say nothing about the node. The base checks still run.
 			name:            "driver only gpu node reports the gpu conditions as unknown",
 			gpuNode:         true,
 			driverOnly:      true,
 			enableGPUChecks: true,
 			seededResults: []chmv1alpha1.CheckResult{
 				{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusHealthy},
-				{Name: "NcclAllReduce", Status: chmv1alpha1.CheckStatusUnknown, ErrorCode: gpu.ErrorCodeDevicePluginRequired},
-				{Name: "GpuHostBandwidth", Status: chmv1alpha1.CheckStatusUnknown, ErrorCode: gpu.ErrorCodeDevicePluginRequired},
-				{Name: "GpuPeerBandwidth", Status: chmv1alpha1.CheckStatusUnknown, ErrorCode: gpu.ErrorCodeDevicePluginRequired},
+				{Name: "NcclAllReduce", Status: chmv1alpha1.CheckStatusUnknown, ErrorCode: gpu.ErrorCodeGPUsNotClaimable},
+				{Name: "GpuHostBandwidth", Status: chmv1alpha1.CheckStatusUnknown, ErrorCode: gpu.ErrorCodeGPUsNotClaimable},
+				{Name: "GpuPeerBandwidth", Status: chmv1alpha1.CheckStatusUnknown, ErrorCode: gpu.ErrorCodeGPUsNotClaimable},
 			},
 			wantHealthy: metav1.ConditionUnknown,
 			wantNodeConditions: map[corev1.NodeConditionType]corev1.ConditionStatus{
@@ -1322,7 +1331,7 @@ func TestReconcileNodeConditionRouting(t *testing.T) {
 				NodeConditionGPUAllReduceBandwidthHealthy: corev1.ConditionUnknown,
 				NodeConditionGPUCorrectnessHealthy:        corev1.ConditionUnknown,
 			},
-			wantGPUMessage: "[" + gpu.ErrorCodeDevicePluginRequired + "]",
+			wantGPUMessage: "[" + gpu.ErrorCodeGPUsNotClaimable + "]",
 		},
 		{
 			// Non-GPU nodes keep the single aggregate condition existing automation acts on.
@@ -1560,7 +1569,7 @@ func TestUpdateNodeConditionWithOpenBreaker(t *testing.T) {
 		{
 			// The passing check would set the GPU conditions True, but the breaker blocks that.
 			name:     "gpu node drops a leftover NodeHealthy and leaves its gpu conditions untouched",
-			info:     gpuNodeInfo{isGPUNode: true, gpuCount: 8},
+			info:     gpuNodeInfo{isGPUNode: true, claimableGPUs: 8},
 			existing: []corev1.NodeConditionType{NodeConditionNodeHealthy, NodeConditionGPUCorrectnessHealthy},
 			results: []chmv1alpha1.CheckResult{
 				{Name: CheckerPodStartup, Status: chmv1alpha1.CheckStatusHealthy},
@@ -1791,7 +1800,7 @@ func TestRecordMissingResults(t *testing.T) {
 				t.Fatalf("seeding results: %v", err)
 			}
 
-			if err := reconciler.recordMissingResults(context.Background(), cnh, reconciler.checkerSpecFor(tt.info)); err != nil {
+			if err := reconciler.recordMissingResults(context.Background(), cnh, reconciler.checkerSpecFor(tt.info, 0)); err != nil {
 				t.Fatalf("recordMissingResults returned error: %v", err)
 			}
 

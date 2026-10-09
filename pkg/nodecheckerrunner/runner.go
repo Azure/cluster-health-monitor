@@ -34,8 +34,8 @@ type NodeChecker interface {
 // GPUOptions carries information the GPU checkers need from the controller.
 type GPUOptions struct {
 	SKU string
-	// DevicePluginPresent is set when an NVIDIA device plugin advertises the node's GPUs.
-	DevicePluginPresent bool
+	// SkipReason, when set, is the error code every GPU checker reports instead of running.
+	SkipReason string
 }
 
 // Options configures which checkers run and what they are told about the node.
@@ -83,9 +83,8 @@ func (r *Runner) initializeCheckers(clientset kubernetes.Interface, opts Options
 	r.checkers = []NodeChecker{podnetwork.NewPodNetworkChecker(clientset, opts.NodeName)}
 
 	// The GPU checkers only work in the GPU image, which is what the controller uses when it populates these options.
-	// The exception is a node without the device plugin, where they only report that they cannot run.
 	if opts.GPU != nil {
-		for _, c := range gpu.NewCheckers(gpu.Config{SKU: opts.GPU.SKU, DevicePluginPresent: opts.GPU.DevicePluginPresent}) {
+		for _, c := range gpu.NewCheckers(gpu.Config{SKU: opts.GPU.SKU, SkipReason: opts.GPU.SkipReason}) {
 			r.checkers = append(r.checkers, c)
 		}
 	}

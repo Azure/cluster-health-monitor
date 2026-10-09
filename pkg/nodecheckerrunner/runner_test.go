@@ -304,9 +304,8 @@ func TestNewRunnerCheckers(t *testing.T) {
 		name string
 		opts Options
 		want []string
-		// wantDevicePluginRequired means the gpu checkers must report that the device plugin is
-		// required rather than run.
-		wantDevicePluginRequired bool
+		// wantSkipped means the gpu checkers must report the skip reason rather than run.
+		wantSkipped bool
 	}{
 		{
 			name: "non-gpu node runs only the core checkers",
@@ -318,7 +317,7 @@ func TestNewRunnerCheckers(t *testing.T) {
 			opts: Options{
 				NodeName: "node-1",
 				CRName:   "cnh-1",
-				GPU:      &GPUOptions{SKU: "Standard_ND96isr_H100_v5", DevicePluginPresent: true},
+				GPU:      &GPUOptions{SKU: "Standard_ND96isr_H100_v5"},
 			},
 			want: []string{"PodNetwork", "NcclAllReduce", "GpuHostBandwidth", "GpuPeerBandwidth"},
 		},
@@ -327,19 +326,19 @@ func TestNewRunnerCheckers(t *testing.T) {
 			opts: Options{
 				NodeName: "node-1",
 				CRName:   "cnh-1",
-				GPU:      &GPUOptions{SKU: "unknown_sku", DevicePluginPresent: true},
+				GPU:      &GPUOptions{SKU: "unknown_sku"},
 			},
 			want: []string{"PodNetwork", "NcclAllReduce", "GpuHostBandwidth", "GpuPeerBandwidth"},
 		},
 		{
-			name: "gpu node without the device plugin still wires the gpu checkers",
+			name: "gpu node with a skip reason still wires the gpu checkers",
 			opts: Options{
 				NodeName: "node-1",
 				CRName:   "cnh-1",
-				GPU:      &GPUOptions{SKU: "Standard_ND96isr_H100_v5", DevicePluginPresent: false},
+				GPU:      &GPUOptions{SKU: "Standard_ND96isr_H100_v5", SkipReason: gpu.ErrorCodeGPUsNotClaimable},
 			},
-			want:                     []string{"PodNetwork", "NcclAllReduce", "GpuHostBandwidth", "GpuPeerBandwidth"},
-			wantDevicePluginRequired: true,
+			want:        []string{"PodNetwork", "NcclAllReduce", "GpuHostBandwidth", "GpuPeerBandwidth"},
+			wantSkipped: true,
 		},
 	}
 
@@ -363,14 +362,14 @@ func TestNewRunnerCheckers(t *testing.T) {
 				}
 			}
 
-			if tt.wantDevicePluginRequired {
+			if tt.wantSkipped {
 				for _, c := range r.checkers[1:] {
 					result, err := c.Run(context.Background())
 					if err != nil {
 						t.Fatalf("%s Run() returned error %v", c.Name(), err)
 					}
-					if result.Detail.Code != gpu.ErrorCodeDevicePluginRequired {
-						t.Errorf("%s code = %q, want %q", c.Name(), result.Detail.Code, gpu.ErrorCodeDevicePluginRequired)
+					if result.Detail.Code != gpu.ErrorCodeGPUsNotClaimable {
+						t.Errorf("%s code = %q, want %q", c.Name(), result.Detail.Code, gpu.ErrorCodeGPUsNotClaimable)
 					}
 				}
 			}
