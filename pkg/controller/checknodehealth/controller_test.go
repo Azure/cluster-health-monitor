@@ -156,6 +156,7 @@ func TestReconcile(t *testing.T) {
 					Labels: map[string]string{
 						CheckNodeHealthLabel: "test-check", // Required label for pod identification
 					},
+					Annotations: runAnnotations(false, ""),
 				},
 				Status: corev1.PodStatus{Phase: corev1.PodSucceeded},
 			},
@@ -189,6 +190,7 @@ func TestReconcile(t *testing.T) {
 					Labels: map[string]string{
 						CheckNodeHealthLabel: "test-check",
 					},
+					Annotations: runAnnotations(false, ""),
 				},
 				// Admission rejection to simulate an invalid request where the controller tried to create a pod requesting all the gpu on
 				// a node when they were already in use.
@@ -266,6 +268,7 @@ func TestReconcile(t *testing.T) {
 					Labels: map[string]string{
 						CheckNodeHealthLabel: "test-check", // Required label for pod identification
 					},
+					Annotations: runAnnotations(false, ""),
 				},
 				Status: corev1.PodStatus{Phase: corev1.PodRunning},
 			},
@@ -292,6 +295,7 @@ func TestReconcile(t *testing.T) {
 					Labels: map[string]string{
 						CheckNodeHealthLabel: "test-deletion",
 					},
+					Annotations: runAnnotations(false, ""),
 				},
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{
@@ -333,6 +337,7 @@ func TestReconcile(t *testing.T) {
 					Labels: map[string]string{
 						CheckNodeHealthLabel: "test-pending",
 					},
+					Annotations: runAnnotations(false, ""),
 				},
 				Status: corev1.PodStatus{Phase: corev1.PodPending},
 			},
@@ -440,6 +445,7 @@ func TestReconcile(t *testing.T) {
 					Labels: map[string]string{
 						CheckNodeHealthLabel: "test-unhealthy",
 					},
+					Annotations: runAnnotations(false, ""),
 				},
 				Status: corev1.PodStatus{Phase: corev1.PodSucceeded},
 			},
@@ -515,6 +521,7 @@ func TestReconcile(t *testing.T) {
 					Labels: map[string]string{
 						CheckNodeHealthLabel: "test-all-healthy",
 					},
+					Annotations: runAnnotations(false, ""),
 				},
 				Status: corev1.PodStatus{Phase: corev1.PodSucceeded},
 			},
@@ -590,6 +597,7 @@ func TestReconcile(t *testing.T) {
 					Labels: map[string]string{
 						CheckNodeHealthLabel: "test-unknown",
 					},
+					Annotations: runAnnotations(false, ""),
 				},
 				Status: corev1.PodStatus{Phase: corev1.PodSucceeded},
 			},
@@ -643,6 +651,7 @@ func TestReconcile(t *testing.T) {
 					Labels: map[string]string{
 						CheckNodeHealthLabel: "test-missing-result",
 					},
+					Annotations: runAnnotations(false, ""),
 				},
 				Status: corev1.PodStatus{Phase: corev1.PodSucceeded},
 			},
@@ -692,6 +701,7 @@ func TestReconcile(t *testing.T) {
 					Labels: map[string]string{
 						CheckNodeHealthLabel: "test-circuit-breaker",
 					},
+					Annotations: runAnnotations(false, ""),
 				},
 				Status: corev1.PodStatus{Phase: corev1.PodPending},
 			},
@@ -769,6 +779,7 @@ func TestReconcile(t *testing.T) {
 					Labels: map[string]string{
 						CheckNodeHealthLabel: "test-extra-result",
 					},
+					Annotations: runAnnotations(false, ""),
 				},
 				Status: corev1.PodStatus{Phase: corev1.PodSucceeded},
 			},
