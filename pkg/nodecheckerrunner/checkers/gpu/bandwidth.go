@@ -93,8 +93,12 @@ func (c *BandwidthChecker) Run(ctx context.Context) (*checker.Result, error) {
 	}
 	args := append([]string{"-t"}, c.path.testcases...)
 	args = append(args, "-i", "10", "--format", "json")
-	output, execErr := runTool(ctx, toolsDir+"/nvbandwidth", c.cfg.ToolTimeout, args...)
-	return parseBandwidthResult(output, c.path.testcases, c.path.threshold(profile), execErr), nil
+	stdout, stderr, execErr := runToolStdout(ctx, toolsDir+"/nvbandwidth", c.cfg.ToolTimeout, args...)
+	result := parseBandwidthResult(stdout, c.path.testcases, c.path.threshold(profile), execErr)
+	if result.Status == checker.StatusUnknown && stderr != "" {
+		result.Detail.Message = truncateMessage(result.Detail.Message + "\nnvbandwidth stderr:\n" + stderr)
+	}
+	return result, nil
 }
 
 // parseBandwidthResult maps nvbandwidth output to a check result for the given testcases. It reports
