@@ -101,19 +101,33 @@ func detectGPUCount(ctx context.Context, timeout time.Duration) (int, error) {
 	return count, nil
 }
 
-// runTool executes a benchmark binary and returns its stdout and stderr. The output is bounded and the tail is kept when it's too large.
-// Output is returned even on error; the parsers extract what the tool managed to report.
+// runTool returns combined stdout and stderr for tools whose diagnostics and measurements
+// share a stream. The output is bounded and retained even if the command fails.
 func runTool(ctx context.Context, path string, timeout time.Duration, args ...string) (string, error) {
+	out := &tailWriter{max: maxCapturedOutput}
+	err := runToolWithWriters(ctx, path, timeout, out, out, args...)
+	return out.String(), err
+}
+
+// runToolStdout keeps stderr separate so warnings from hwloc cannot corrupt nvbandwidth's
+// --format json stdout. Both streams remain bounded and stderr is available for failures.
+func runToolStdout(ctx context.Context, path string, timeout time.Duration, args ...string) (string, string, error) {
+	stdout := &tailWriter{max: maxCapturedOutput}
+	stderr := &tailWriter{max: maxCapturedOutput}
+	err := runToolWithWriters(ctx, path, timeout, stdout, stderr, args...)
+	return stdout.String(), stderr.String(), err
+}
+
+func runToolWithWriters(ctx context.Context, path string, timeout time.Duration, stdout, stderr *tailWriter, args ...string) error {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	klog.InfoS("Running GPU benchmark", "tool", path, "args", args, "timeout", timeout)
 
-	out := &tailWriter{max: maxCapturedOutput}
 	cmd := exec.CommandContext(ctx, path, args...)
 	cmd.Env = os.Environ()
-	cmd.Stdout = out
-	cmd.Stderr = out
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 
 	err := cmd.Run()
 	if ctx.Err() == context.DeadlineExceeded {
@@ -121,7 +135,7 @@ func runTool(ctx context.Context, path string, timeout time.Duration, args ...st
 	}
 
 	klog.InfoS("GPU benchmark finished", "tool", path, "error", err)
-	return out.String(), err
+	return err
 }
 
 // healthy builds a passing result that still carries its measurements.
