@@ -1,9 +1,12 @@
 package gpu
 
 import (
+	"context"
 	"slices"
 	"testing"
 	"time"
+
+	"github.com/Azure/cluster-health-monitor/pkg/checker"
 )
 
 const (
@@ -63,6 +66,50 @@ func TestNewCheckers(t *testing.T) {
 			}
 			if names := CheckerNames(tt.sku); !slices.Equal(names, tt.want) {
 				t.Errorf("CheckerNames() = %v, want %v", names, tt.want)
+			}
+		})
+	}
+}
+
+// When the controller sets a skip reason, every checker the SKU would run still reports it under the
+// same name. None of them may touch the GPUs; nvidia-smi is absent here, so a checker that tried
+// would report ToolFailed instead.
+func TestNewCheckersWithSkipReason(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		cfg  Config
+		// wantCode is what every checker reports.
+		wantCode string
+	}{
+		{name: "h100", cfg: Config{SKU: h100SKU, SkipReason: ErrorCodeGPUsNotClaimable}, wantCode: ErrorCodeGPUsNotClaimable},
+		{name: "a10", cfg: Config{SKU: a10SKU, SkipReason: ErrorCodeGPUsNotClaimable}, wantCode: ErrorCodeGPUsNotClaimable},
+		{name: "unknown sku", cfg: Config{SKU: "unrecognized_sku", SkipReason: ErrorCodeGPUsNotClaimable}, wantCode: ErrorCodeUnknownSKU},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			checkers := NewCheckers(tt.cfg)
+			names := make([]string, 0, len(checkers))
+			for _, c := range checkers {
+				names = append(names, c.Name())
+
+				got, err := c.Run(context.Background())
+				if err != nil {
+					t.Fatalf("%s Run() returned error %v, want nil", c.Name(), err)
+				}
+				if got.Status != checker.StatusUnknown {
+					t.Errorf("%s Status = %q, want %q", c.Name(), got.Status, checker.StatusUnknown)
+				}
+				if got.Detail.Code != tt.wantCode {
+					t.Errorf("%s Code = %q, want %q", c.Name(), got.Detail.Code, tt.wantCode)
+				}
+			}
+			if want := CheckerNames(tt.cfg.SKU); !slices.Equal(names, want) {
+				t.Errorf("checkers = %v, want the names the SKU runs %v", names, want)
 			}
 		})
 	}
