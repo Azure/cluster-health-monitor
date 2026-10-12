@@ -16,6 +16,10 @@ const (
 	// produce a verdict.
 	ErrorCodeUnknownSKU = "UnknownSKU"
 
+	// ErrorCodeGPUsNotClaimable indicates the checks could not get exclusive use of any of the node's
+	// GPUs, so there were none to benchmark.
+	ErrorCodeGPUsNotClaimable = "GPUsNotClaimable"
+
 	// ErrorCodeCorrectness indicates a benchmark returned incorrect data.
 	ErrorCodeCorrectness = "CorrectnessError"
 

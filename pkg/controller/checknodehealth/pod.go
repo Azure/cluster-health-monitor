@@ -51,8 +51,8 @@ func (r *CheckNodeHealthReconciler) cleanupPod(ctx context.Context, cnh *chmv1al
 	return nil
 }
 
-func (r *CheckNodeHealthReconciler) ensureHealthCheckPod(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, spec checkerSpec) (*corev1.Pod, error) {
-	// Check if pods already exist using label selector
+// findHealthCheckPod returns the CheckNodeHealth's checker pod, or nil when none exists yet.
+func (r *CheckNodeHealthReconciler) findHealthCheckPod(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth) (*corev1.Pod, error) {
 	podList := &corev1.PodList{}
 	listOpts := []client.ListOption{
 		client.InNamespace(r.CheckerPodNamespace),
@@ -62,18 +62,19 @@ func (r *CheckNodeHealthReconciler) ensureHealthCheckPod(ctx context.Context, cn
 	if err := r.List(ctx, podList, listOpts...); err != nil {
 		return nil, fmt.Errorf("failed to list existing pods: %w", err)
 	}
-
-	if len(podList.Items) > 0 {
-		// Pod already exists, return the first one
-		pod := &podList.Items[0]
-		if len(podList.Items) > 1 {
-			klog.InfoS("Multiple health check pods found, using first one", "count", len(podList.Items))
-		}
-		klog.InfoS("Health check pod already exists", "pod", pod.Name)
-		return pod, nil
+	if len(podList.Items) == 0 {
+		return nil, nil
 	}
 
-	// Create the pod
+	pod := &podList.Items[0]
+	if len(podList.Items) > 1 {
+		klog.InfoS("Multiple health check pods found, using first one", "count", len(podList.Items))
+	}
+	klog.InfoS("Health check pod already exists", "pod", pod.Name)
+	return pod, nil
+}
+
+func (r *CheckNodeHealthReconciler) createHealthCheckPod(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, spec checkerSpec) (*corev1.Pod, error) {
 	pod, err := r.buildHealthCheckPod(cnh, spec)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build health check pod: %w", err)
@@ -93,10 +94,38 @@ func (r *CheckNodeHealthReconciler) ensureHealthCheckPod(ctx context.Context, cn
 	return createdPod, nil
 }
 
+// recordedRun reads the node kind and GPU checks SKU annotations off a checker pod, and derives the
+// expected checks and timeout from them. Anything the pod did not record falls back to the live node.
+func recordedRun(pod *corev1.Pod, live gpuNodeInfo) (gpuNodeInfo, checkerSpec) {
+	info := live
+	switch pod.Annotations[annotationNodeKind] {
+	case NodeKindGPU:
+		info.isGPUNode = true
+	case NodeKindStandard:
+		info.isGPUNode = false
+	}
+	sku, gpuChecks := pod.Annotations[annotationGPUChecksSKU]
+	if gpuChecks {
+		info.sku = sku
+	}
+
+	spec := checkerSpec{gpuNode: info.isGPUNode}
+	spec.checkerNames, spec.timeout = expectedRun(gpuChecks, info.sku)
+	return info, spec
+}
+
 func (r *CheckNodeHealthReconciler) buildHealthCheckPod(cnh *chmv1alpha1.CheckNodeHealth, spec checkerSpec) (*corev1.Pod, error) {
 	podName := generateHealthCheckPodName(cnh)
 	labels := map[string]string{
 		CheckNodeHealthLabel: cnh.Name,
+	}
+	// Record how this pod's results must be handled, since the node can change while it runs. See recordedRun.
+	annotations := map[string]string{annotationNodeKind: NodeKindStandard}
+	if spec.gpuNode {
+		annotations[annotationNodeKind] = NodeKindGPU
+	}
+	if spec.gpu != nil {
+		annotations[annotationGPUChecksSKU] = spec.gpu.sku
 	}
 
 	// Determine service account name from annotation or use default
@@ -107,9 +136,10 @@ func (r *CheckNodeHealthReconciler) buildHealthCheckPod(cnh *chmv1alpha1.CheckNo
 
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      podName,
-			Namespace: r.CheckerPodNamespace,
-			Labels:    labels,
+			Name:        podName,
+			Namespace:   r.CheckerPodNamespace,
+			Labels:      labels,
+			Annotations: annotations,
 		},
 		Spec: corev1.PodSpec{
 			ServiceAccountName: serviceAccountName,
@@ -157,30 +187,23 @@ func (r *CheckNodeHealthReconciler) buildHealthCheckPod(cnh *chmv1alpha1.CheckNo
 	return pod, nil
 }
 
-// configureGPUChecker turns the GPU checks on in the checker container and gets the node's GPU
-// devices into it.
-func configureGPUChecker(c *corev1.Container, info gpuNodeInfo) {
+// configureGPUChecker turns the GPU checks on in the checker container. It either claims the GPUs to
+// benchmark, or, when there are none, gives the checker the reason to report instead.
+func configureGPUChecker(c *corev1.Container, g gpuChecks) {
 	c.Args = append(c.Args,
 		"--enable-gpu-checks",
-		fmt.Sprintf("--sku=%s", info.sku),
+		fmt.Sprintf("--sku=%s", g.sku),
 	)
-
-	// TODO: we should figure something out so that we can reliably schedule the checks with exclusive GPU access. Current limitations in
-	// comments below.
-	if info.gpuCount > 0 {
-		// Fully managed pools use the device plugin's extended resource, so kubelet will not give the same device to another pod that
-		// requests it. Because the controller bypasses the scheduler by setting the node name directly, if we cannot claim all the GPUs,
-		// the pod goes straight to a Failed state.
-		gpus := *resource.NewQuantity(info.gpuCount, resource.DecimalSI)
-		c.Resources = corev1.ResourceRequirements{
-			Limits:   corev1.ResourceList{nvidiaGPUResourceName: gpus},
-			Requests: corev1.ResourceList{nvidiaGPUResourceName: gpus},
-		}
-	} else {
-		// Driver-only pools run no device plugin, so there is no resource to request. The NVIDIA runtime hook reads this env var and
-		// injects every GPU device into the container. Nothing tracks ownership, so other pods can be given the same GPUs. In this case,
-		// it is possible that both the checks and other workloads on the node will experience some contention/degradation.
-		c.Env = append(c.Env, corev1.EnvVar{Name: "NVIDIA_VISIBLE_DEVICES", Value: "all"})
+	if g.skipReason != "" {
+		c.Args = append(c.Args, fmt.Sprintf("--gpu-skip-reason=%s", g.skipReason))
+		return
+	}
+	// Because the controller bypasses the scheduler by setting the node name directly, if we cannot claim all the GPUs, the pod goes straight to a Failed state.
+	// TODO: we should figure something out so that we can reliably schedule the checks with exclusive GPU access.
+	gpus := *resource.NewQuantity(g.gpus, resource.DecimalSI)
+	c.Resources = corev1.ResourceRequirements{
+		Limits:   corev1.ResourceList{nvidiaGPUResourceName: gpus},
+		Requests: corev1.ResourceList{nvidiaGPUResourceName: gpus},
 	}
 }
 

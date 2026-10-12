@@ -25,11 +25,14 @@ func main() {
 		name            string
 		enableGPUChecks bool
 		sku             string
+		gpuSkipReason   string
 	)
 
 	flag.StringVar(&name, "name", "", "Name of the CheckNodeHealth resource (required)")
 	flag.BoolVar(&enableGPUChecks, "enable-gpu-checks", false, "Run the GPU checks. Requires the GPU image.")
 	flag.StringVar(&sku, "sku", "", "VM size of the node, used to select the expected GPU count and thresholds")
+	flag.StringVar(&gpuSkipReason, "gpu-skip-reason", "",
+		"Set by the controller when the node's GPUs cannot be benchmarked, e.g. GPUsNotClaimable. Every GPU check reports it instead of running.")
 	flag.Parse()
 	defer klog.Flush()
 
@@ -60,7 +63,7 @@ func main() {
 
 	opts := nodecheckerrunner.Options{NodeName: nodeName, CRName: name}
 	if enableGPUChecks {
-		opts.GPU = &nodecheckerrunner.GPUOptions{SKU: sku}
+		opts.GPU = &nodecheckerrunner.GPUOptions{SKU: sku, SkipReason: gpuSkipReason}
 	}
 
 	// Create runner and execute all checkers

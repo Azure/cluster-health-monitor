@@ -124,6 +124,8 @@ func TestBuildHealthCheckPodShape(t *testing.T) {
 	// podShape is the part of a built checker pod that buildHealthCheckPod is responsible for.
 	type podShape struct {
 		Image           string
+		Timeout         time.Duration
+		NodeKind        string
 		Args            []string
 		GPULimit        string
 		GPURequest      string
@@ -148,16 +150,20 @@ func TestBuildHealthCheckPodShape(t *testing.T) {
 			info: gpuNodeInfo{},
 			want: podShape{
 				Image:           "default-image",
+				Timeout:         PodTimeout,
+				NodeKind:        NodeKindStandard,
 				Args:            []string{"--name=cnh-1"},
 				SecurityContext: wantSecurityContext,
 			},
 		},
 		{
 			name:            "gpu node with the gpu checks disabled uses standard pod shape",
-			info:            gpuNodeInfo{isGPUNode: true, gpuCount: 8, sku: "Standard_ND96isr_H100_v5"},
+			info:            gpuNodeInfo{isGPUNode: true, claimableGPUs: 8, sku: "Standard_ND96isr_H100_v5"},
 			enableGPUChecks: false,
 			want: podShape{
 				Image:           "default-image",
+				Timeout:         PodTimeout,
+				NodeKind:        NodeKindGPU,
 				Args:            []string{"--name=cnh-1"},
 				SecurityContext: wantSecurityContext,
 			},
@@ -166,10 +172,12 @@ func TestBuildHealthCheckPodShape(t *testing.T) {
 			// Fully managed pools advertise the extended resource, so the device plugin assigns
 			// the devices and no env var is needed.
 			name:            "device plugin node requests its gpus",
-			info:            gpuNodeInfo{isGPUNode: true, gpuCount: 8, sku: "Standard_ND96isr_H100_v5"},
+			info:            gpuNodeInfo{isGPUNode: true, claimableGPUs: 8, sku: "Standard_ND96isr_H100_v5"},
 			enableGPUChecks: true,
 			want: podShape{
 				Image:           "gpu-image",
+				Timeout:         GPUPodTimeout,
+				NodeKind:        NodeKindGPU,
 				Args:            []string{"--name=cnh-1", "--enable-gpu-checks", "--sku=Standard_ND96isr_H100_v5"},
 				GPULimit:        "8",
 				GPURequest:      "8",
@@ -177,15 +185,16 @@ func TestBuildHealthCheckPodShape(t *testing.T) {
 			},
 		},
 		{
-			// Driver-only pools run no device plugin, so there is no resource to request and the
-			// runtime has to be told to expose the devices.
-			name:            "driver only node asks the runtime for the devices",
-			info:            gpuNodeInfo{isGPUNode: true, gpuCount: 0, sku: "Standard_ND96isr_H100_v5"},
+			// Without claimable GPUs, e.g. a driver-only pool, the checker is told so it can report that,
+			// and it never gets the GPU devices.
+			name:            "gpu node without claimable gpus reports the gpu checks without claiming any",
+			info:            gpuNodeInfo{isGPUNode: true, sku: "Standard_ND96isr_H100_v5"},
 			enableGPUChecks: true,
 			want: podShape{
 				Image:           "gpu-image",
-				Args:            []string{"--name=cnh-1", "--enable-gpu-checks", "--sku=Standard_ND96isr_H100_v5"},
-				Env:             map[string]string{"NVIDIA_VISIBLE_DEVICES": "all"},
+				Timeout:         GPUPodTimeout,
+				NodeKind:        NodeKindGPU,
+				Args:            []string{"--name=cnh-1", "--enable-gpu-checks", "--sku=Standard_ND96isr_H100_v5", "--gpu-skip-reason=GPUsNotClaimable"},
 				SecurityContext: wantSecurityContext,
 			},
 		},
@@ -200,16 +209,19 @@ func TestBuildHealthCheckPodShape(t *testing.T) {
 			reconciler.GPUCheckerPodImage = "gpu-image"
 			reconciler.EnableGPUChecks = tt.enableGPUChecks
 
-			pod, err := reconciler.buildHealthCheckPod(testCNH("cnh-1"), reconciler.checkerSpecFor(tt.info))
+			pod, err := reconciler.buildHealthCheckPod(testCNH("cnh-1"), reconciler.checkerSpecFor(tt.info, 0))
 			if err != nil {
 				t.Fatalf("buildHealthCheckPod returned error: %v", err)
 			}
 
 			c := pod.Spec.Containers[0]
+			_, recorded := recordedRun(pod, gpuNodeInfo{})
 
 			// set up the struct to compare fields we care about
 			got := podShape{
 				Image:           c.Image,
+				Timeout:         recorded.timeout,
+				NodeKind:        pod.Annotations[annotationNodeKind],
 				Args:            c.Args,
 				SecurityContext: c.SecurityContext,
 			}

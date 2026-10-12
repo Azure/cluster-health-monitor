@@ -9,6 +9,7 @@ import (
 
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
 	"github.com/Azure/cluster-health-monitor/pkg/controller/checknodehealth"
+	"github.com/Azure/cluster-health-monitor/pkg/nodecheckerrunner/checkers/gpu"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
@@ -40,7 +41,8 @@ const (
 // deterministic test doubles for nvidia-smi, mpirun/NCCL, and nvbandwidth while these tests
 // exercise the real controller, nodechecker, parsers, Kubernetes clients, status aggregation, and
 // cleanup. A minimal device plugin additionally exercises the fully managed resource-allocation
-// path without requiring physical GPUs.
+// path without requiring physical GPUs. Driver-only nodes (no device plugin) are not supported by
+// the GPU checks yet and must report so.
 var _ = Describe("GPU CheckNodeHealth flow on Kind", Serial, Ordered, func() {
 	var (
 		ctx                    context.Context
@@ -61,9 +63,15 @@ var _ = Describe("GPU CheckNodeHealth flow on Kind", Serial, Ordered, func() {
 			ctx, "checknodehealth-controller", metav1.GetOptions{})
 		Expect(err).NotTo(HaveOccurred())
 		originalControllerArgs = slices.Clone(deployment.Spec.Template.Spec.Containers[0].Args)
-		if !slices.Contains(deployment.Spec.Template.Spec.Containers[0].Args, "-enable-gpu-checks") {
-			deployment.Spec.Template.Spec.Containers[0].Args = append(
-				deployment.Spec.Template.Spec.Containers[0].Args, "-enable-gpu-checks")
+		// The driver-only specs would otherwise sit out the full GPU wait before the controller
+		// decides the node has no claimable GPUs.
+		for _, arg := range []string{"-enable-gpu-checks", "-gpu-wait=10s"} {
+			if !slices.Contains(deployment.Spec.Template.Spec.Containers[0].Args, arg) {
+				deployment.Spec.Template.Spec.Containers[0].Args = append(
+					deployment.Spec.Template.Spec.Containers[0].Args, arg)
+			}
+		}
+		if !slices.Equal(deployment.Spec.Template.Spec.Containers[0].Args, originalControllerArgs) {
 			deployment, err = clientset.AppsV1().Deployments(checkerNamespace).Update(
 				ctx, deployment, metav1.UpdateOptions{})
 			Expect(err).NotTo(HaveOccurred())
@@ -83,7 +91,7 @@ var _ = Describe("GPU CheckNodeHealth flow on Kind", Serial, Ordered, func() {
 		waitForControllerRollout(ctx, deployment.Generation)
 	})
 
-	It("runs healthy GPU checks on a simulated driver-only NVIDIA node", func() {
+	It("reports the GPU checks as unsupported on a simulated driver-only NVIDIA node", func() {
 		By("Selecting a node with both CoreDNS replicas on remote nodes")
 		nodeName, err := nodeWithRemoteCoreDNS(ctx)
 		Expect(err).NotTo(HaveOccurred())
@@ -97,7 +105,7 @@ var _ = Describe("GPU CheckNodeHealth flow on Kind", Serial, Ordered, func() {
 		Expect(err).NotTo(HaveOccurred())
 		Expect(node.Status.Allocatable).NotTo(HaveKey(nvidiaGPUResource))
 
-		runHealthyGPUControllerFlow(ctx, k8sClient, nodeName)
+		runDriverOnlyGPUControllerFlow(ctx, k8sClient, nodeName)
 	})
 
 	It("runs healthy GPU checks on a simulated fully managed NVIDIA node", func() {
@@ -105,23 +113,7 @@ var _ = Describe("GPU CheckNodeHealth flow on Kind", Serial, Ordered, func() {
 		nodeName, err := nodeWithRemoteCoreDNS(ctx)
 		Expect(err).NotTo(HaveOccurred())
 
-		By("Simulating an NVIDIA H100 node with driver labels")
-		restoreNode, err := simulateNVIDIAGPUNode(ctx, nodeName, gpuTestSKU)
-		Expect(err).NotTo(HaveOccurred())
-		DeferCleanup(func() { Expect(restoreNode()).To(Succeed()) })
-
-		By("Starting a fake NVIDIA device plugin that advertises eight healthy GPUs")
-		removePlugin, err := deployFakeNVIDIADevicePlugin(ctx, nodeName)
-		Expect(err).NotTo(HaveOccurred())
-		DeferCleanup(func() { Expect(removePlugin()).To(Succeed()) })
-
-		Eventually(func(g Gomega) {
-			node, getErr := clientset.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
-			g.Expect(getErr).NotTo(HaveOccurred())
-			quantity, found := node.Status.Allocatable[nvidiaGPUResource]
-			g.Expect(found).To(BeTrue())
-			g.Expect(quantity.Value()).To(Equal(int64(8)))
-		}, "90s", "1s").Should(Succeed())
+		simulateManagedNVIDIAGPUNode(ctx, nodeName)
 
 		runHealthyGPUControllerFlow(ctx, k8sClient, nodeName)
 	})
@@ -131,10 +123,7 @@ var _ = Describe("GPU CheckNodeHealth flow on Kind", Serial, Ordered, func() {
 		nodeName, err := nodeWithRemoteCoreDNS(ctx)
 		Expect(err).NotTo(HaveOccurred())
 
-		By("Simulating a driver-only NVIDIA H100 node")
-		restoreNode, err := simulateNVIDIAGPUNode(ctx, nodeName, gpuTestSKU)
-		Expect(err).NotTo(HaveOccurred())
-		DeferCleanup(func() { Expect(restoreNode()).To(Succeed()) })
+		simulateManagedNVIDIAGPUNode(ctx, nodeName)
 
 		By("Running the GPU checks to completion")
 		runCheckToCompletion(ctx, k8sClient, nodeName, "gpu-node-conditions")
@@ -157,7 +146,9 @@ var _ = Describe("GPU CheckNodeHealth flow on Kind", Serial, Ordered, func() {
 		nodeName, err := nodeWithRemoteCoreDNS(ctx)
 		Expect(err).NotTo(HaveOccurred())
 
-		By("Simulating a GPU node and running the checks so it carries GPU node conditions")
+		By("Simulating a driver-only GPU node and running the checks so it carries GPU node conditions")
+		// Driver-only nodes report every GPU condition as Unknown, which is all this needs: the
+		// conditions exist and must be retired.
 		restoreNode, err := simulateNVIDIAGPUNode(ctx, nodeName, gpuTestSKU)
 		Expect(err).NotTo(HaveOccurred())
 		DeferCleanup(func() { Expect(restoreNode()).To(Succeed()) })
@@ -316,6 +307,83 @@ func runHealthyGPUControllerFlow(ctx context.Context, k8sClient client.Client, n
 		g.Expect(listErr).NotTo(HaveOccurred())
 		g.Expect(pods.Items).To(BeEmpty())
 	}, "30s", "1s").Should(Succeed())
+}
+
+func runDriverOnlyGPUControllerFlow(ctx context.Context, k8sClient client.Client, nodeName string) {
+	cnhName := fmt.Sprintf("gpu-driver-only-%d", time.Now().UnixNano())
+	DeferCleanup(func() { _ = deleteCheckNodeHealthCR(ctx, k8sClient, cnhName) })
+
+	By("Creating a CheckNodeHealth resource for the driver-only node")
+	Expect(createCheckNodeHealthCR(ctx, k8sClient, cnhName, nodeName)).To(Succeed())
+
+	By("Waiting for the controller to complete the CheckNodeHealth resource")
+	var completed *chmv1alpha1.CheckNodeHealth
+	Eventually(func(g Gomega) {
+		var err error
+		completed, err = getCheckNodeHealthCR(ctx, k8sClient, cnhName)
+		g.Expect(err).NotTo(HaveOccurred())
+		g.Expect(completed.Status.FinishedAt).NotTo(BeNil())
+	}, "90s", "1s").Should(Succeed())
+
+	results := make(map[string]chmv1alpha1.CheckResult, len(completed.Status.Results))
+	for _, result := range completed.Status.Results {
+		results[result.Name] = result
+	}
+	Expect(results).To(HaveLen(5))
+
+	By("Verifying the base checks still ran")
+	for _, name := range []string{"PodStartup", "PodNetwork"} {
+		Expect(results[name].Status).To(Equal(chmv1alpha1.CheckStatusHealthy),
+			"%s result: code=%s message=%s", name, results[name].ErrorCode, results[name].Message)
+	}
+
+	By("Verifying every GPU check reports that no GPUs could be claimed")
+	// Had the GPU checker run, its test doubles would have reported these as Healthy.
+	for _, name := range []string{"NcclAllReduce", "GpuHostBandwidth", "GpuPeerBandwidth"} {
+		result, found := results[name]
+		Expect(found).To(BeTrue(), "%s result was not reported", name)
+		Expect(result.Status).To(Equal(chmv1alpha1.CheckStatusUnknown))
+		Expect(result.ErrorCode).To(Equal(gpu.ErrorCodeGPUsNotClaimable))
+		Expect(result.Message).To(ContainSubstring("advertised as healthy by the NVIDIA device plugin"))
+	}
+
+	By("Verifying the aggregate CheckNodeHealth condition is unknown")
+	Expect(completed.Status.Conditions).To(HaveLen(1))
+	condition := completed.Status.Conditions[0]
+	Expect(condition.Type).To(Equal(checknodehealth.ConditionTypeHealthy))
+	Expect(condition.Status).To(Equal(metav1.ConditionUnknown))
+	Expect(condition.Reason).To(Equal(checknodehealth.ReasonCheckUnknown))
+
+	By("Verifying the GPU node conditions are unknown and say why")
+	for _, conditionType := range gpuConditionTypes {
+		expectNodeConditionStatus(ctx, k8sClient, nodeName, conditionType, corev1.ConditionUnknown)
+		Expect(getNodeCondition(ctx, k8sClient, nodeName, conditionType).Message).
+			To(ContainSubstring(gpu.ErrorCodeGPUsNotClaimable))
+	}
+	Expect(getNodeCondition(ctx, k8sClient, nodeName, checknodehealth.NodeConditionNodeHealthy)).To(BeNil(),
+		"NodeHealthy must never be set on a GPU node")
+}
+
+// simulateManagedNVIDIAGPUNode makes the node look like a fully managed NVIDIA H100 node: GPU labels
+// plus a fake device plugin advertising eight GPUs. Both are undone when the spec ends.
+func simulateManagedNVIDIAGPUNode(ctx context.Context, nodeName string) {
+	By("Simulating an NVIDIA H100 node with driver labels")
+	restoreNode, err := simulateNVIDIAGPUNode(ctx, nodeName, gpuTestSKU)
+	Expect(err).NotTo(HaveOccurred())
+	DeferCleanup(func() { Expect(restoreNode()).To(Succeed()) })
+
+	By("Starting a fake NVIDIA device plugin that advertises eight healthy GPUs")
+	removePlugin, err := deployFakeNVIDIADevicePlugin(ctx, nodeName)
+	Expect(err).NotTo(HaveOccurred())
+	DeferCleanup(func() { Expect(removePlugin()).To(Succeed()) })
+
+	Eventually(func(g Gomega) {
+		node, getErr := clientset.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
+		g.Expect(getErr).NotTo(HaveOccurred())
+		quantity, found := node.Status.Allocatable[nvidiaGPUResource]
+		g.Expect(found).To(BeTrue())
+		g.Expect(quantity.Value()).To(Equal(int64(8)))
+	}, "90s", "1s").Should(Succeed())
 }
 
 func waitForControllerRollout(ctx context.Context, generation int64) {
@@ -513,10 +581,18 @@ func deployFakeNVIDIADevicePlugin(ctx context.Context, nodeName string) (func() 
 	}, "60s", "1s").Should(Succeed())
 
 	return func() error {
-		err := clientset.AppsV1().DaemonSets(checkerNamespace).Delete(ctx, fakeDevicePluginName, metav1.DeleteOptions{})
-		if apierrors.IsNotFound(err) {
-			return nil
+		// Several specs deploy the plugin in turn, so wait until it and its pod are fully gone
+		// before the next one recreates it under the same name.
+		err := clientset.AppsV1().DaemonSets(checkerNamespace).Delete(ctx, fakeDevicePluginName, metav1.DeleteOptions{
+			PropagationPolicy: ptr.To(metav1.DeletePropagationForeground),
+		})
+		if err != nil && !apierrors.IsNotFound(err) {
+			return err
 		}
-		return err
+		Eventually(func() bool {
+			_, getErr := clientset.AppsV1().DaemonSets(checkerNamespace).Get(ctx, fakeDevicePluginName, metav1.GetOptions{})
+			return apierrors.IsNotFound(getErr)
+		}, "90s", "1s").Should(BeTrue(), "fake device plugin %s was not deleted", fakeDevicePluginName)
+		return nil
 	}, nil
 }
