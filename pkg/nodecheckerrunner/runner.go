@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/avast/retry-go/v4"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	k8sretry "k8s.io/client-go/util/retry"
 	"k8s.io/klog/v2"
@@ -95,8 +96,10 @@ func (r *Runner) initializeCheckers(clientset kubernetes.Interface, opts Options
 func (r *Runner) runCheckers(ctx context.Context) error {
 	var unrecorded []string
 	for _, chk := range r.checkers {
+		start := time.Now()
 		result := r.runChecker(ctx, chk)
-		if err := r.recordResult(ctx, chk.Name(), result); err != nil {
+		duration := time.Since(start)
+		if err := r.recordResult(ctx, chk.Name(), result, duration); err != nil {
 			// The controller reports anything we never record as Unknown, so losing one result is
 			// not a reason to abandon the checks that have not run yet.
 			klog.ErrorS(err, "Failed to record checker result", "checker", chk.Name(), "cr", r.crName)
@@ -142,8 +145,8 @@ func (r *Runner) runChecker(ctx context.Context, chk NodeChecker) *checker.Resul
 	return result
 }
 
-// recordResult writes one checker's result to the CR. Retrys on conflict.
-func (r *Runner) recordResult(ctx context.Context, checkerName string, result *checker.Result) error {
+// recordResult writes one checker's result and how long it took to the CR. Retrys on conflict.
+func (r *Runner) recordResult(ctx context.Context, checkerName string, result *checker.Result, duration time.Duration) error {
 	return k8sretry.RetryOnConflict(k8sretry.DefaultRetry, func() error {
 		cnh := &chmv1alpha1.CheckNodeHealth{}
 		if err := r.chmClient.Get(ctx, chmclient.ObjectKey{Name: r.crName}, cnh); err != nil {
@@ -155,6 +158,7 @@ func (r *Runner) recordResult(ctx context.Context, checkerName string, result *c
 			Status:    convertStatus(result.Status),
 			Message:   result.Detail.Message,
 			ErrorCode: result.Detail.Code,
+			Duration:  &metav1.Duration{Duration: duration},
 		})
 
 		if err := r.chmClient.Status().Update(ctx, cnh); err != nil {

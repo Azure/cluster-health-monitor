@@ -3,10 +3,12 @@ package checknodehealth
 import (
 	"context"
 	"errors"
+	"math"
 	"reflect"
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
@@ -63,6 +65,48 @@ func counterSnapshot(t *testing.T, vec *prometheus.CounterVec) map[string]float6
 		snapshot[labelKey(labels)] = pb.GetCounter().GetValue()
 	}
 	return snapshot
+}
+
+// histogramSnapshot collects the sample count and sum of every child of a histogram vector, keyed
+// by label set.
+func histogramSnapshot(t *testing.T, vec prometheus.Collector) (counts, sums map[string]float64) {
+	t.Helper()
+
+	ch := make(chan prometheus.Metric, 256)
+	go func() {
+		vec.Collect(ch)
+		close(ch)
+	}()
+
+	counts, sums = map[string]float64{}, map[string]float64{}
+	for metric := range ch {
+		var pb dto.Metric
+		if err := metric.Write(&pb); err != nil {
+			t.Fatalf("writing metric: %v", err)
+		}
+		labels := map[string]string{}
+		for _, pair := range pb.GetLabel() {
+			labels[pair.GetName()] = pair.GetValue()
+		}
+		key := labelKey(labels)
+		counts[key] = float64(pb.GetHistogram().GetSampleCount())
+		sums[key] = pb.GetHistogram().GetSampleSum()
+	}
+	return counts, sums
+}
+
+// sumsMatch reports whether two histogram sum deltas have the same series, with values equal to
+// within a small tolerance to account for floating point errors.
+func sumsMatch(got, want map[string]float64) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for key, w := range want {
+		if g, ok := got[key]; !ok || math.Abs(g-w) > 1e-6 {
+			return false
+		}
+	}
+	return true
 }
 
 // counterDelta returns the series that changed between two snapshots, keyed by label set and
@@ -264,17 +308,32 @@ type nodeCheckMetricsCase struct {
 	enableGPUChecks bool
 	// wantNodeKind is the node_kind label every emitted series must carry.
 	wantNodeKind string
-	// wantCHMNodeCheckTotal is the one cluster_health_monitor_node_check_total series that must gain 1, or
-	// nil when the path must emit nothing. The node_kind label is added from wantNodeKind.
-	wantCHMNodeCheckTotal map[string]string
-	// wantCHMNodeCheckResultTotal are the cluster_health_monitor_node_check_result_total series that must gain 1.
-	// The node_kind label is added from wantNodeKind.
-	wantCHMNodeCheckResultTotal []map[string]string
+	// wantSKU is the sku label every emitted series must carry: empty for non-GPU nodes.
+	wantSKU string
+	// wantCHMNodeHealthCheckTotal is the one cluster_health_monitor_node_health_check_total series
+	// that must gain 1, or nil when the path must emit nothing. The node_kind and sku labels are added
+	// from wantNodeKind and wantSKU.
+	wantCHMNodeHealthCheckTotal map[string]string
+	// wantCHMNodeCheckerResultTotal are the cluster_health_monitor_node_checker_result_total series
+	// that must gain 1. The node_kind and sku labels are added from wantNodeKind and wantSKU.
+	wantCHMNodeCheckerResultTotal []map[string]string
+	// wantCHMNodeHealthCheckDurationStatus is the status label of the one
+	// cluster_health_monitor_node_health_check_duration_seconds series that must gain a sample, or
+	// empty when the path must observe no duration. The node_kind and sku labels are added from
+	// wantNodeKind and wantSKU.
+	wantCHMNodeHealthCheckDurationStatus string
+	// wantGPUWait is set when the run includes the GPU checks, so
+	// cluster_health_monitor_node_health_check_gpu_wait_duration_seconds must gain a sample with the
+	// sku label from wantSKU.
+	wantGPUWait bool
+	// wantCHMNodeCheckerDuration are the cluster_health_monitor_node_checker_duration_seconds series
+	// that must gain a sample. The node_kind and sku labels are added from wantNodeKind and wantSKU.
+	wantCHMNodeCheckerDuration []map[string]string
 }
 
-// withNodeKind returns the label set with the node_kind label added.
-func withNodeKind(labels map[string]string, nodeKind string) map[string]string {
-	withKind := map[string]string{"node_kind": nodeKind}
+// withNodeLabels returns the label set with the node_kind and sku labels added.
+func withNodeLabels(labels map[string]string, nodeKind, sku string) map[string]string {
+	withKind := map[string]string{"node_kind": nodeKind, "sku": sku}
 	for name, value := range labels {
 		withKind[name] = value
 	}
@@ -291,11 +350,12 @@ func TestNodeCheckMetricsEmitted(t *testing.T) {
 			name:         "checker pod ends without reporting",
 			wantNodeKind: NodeKindStandard,
 			pod:          succeededCheckerPod,
-			wantCHMNodeCheckTotal: map[string]string{
-				"result": metrics.UnknownStatus,
+			wantCHMNodeHealthCheckTotal: map[string]string{
+				"status": metrics.UnknownStatus,
 				"reason": ReasonCheckUnknown,
 			},
-			wantCHMNodeCheckResultTotal: []map[string]string{
+			wantCHMNodeHealthCheckDurationStatus: metrics.UnknownStatus,
+			wantCHMNodeCheckerResultTotal: []map[string]string{
 				{"checker_name": "PodStartup", "status": metrics.UnknownStatus, "error_code": ErrorCodeCheckNotReported},
 				{"checker_name": "PodNetwork", "status": metrics.UnknownStatus, "error_code": ErrorCodeCheckNotReported},
 			},
@@ -305,15 +365,44 @@ func TestNodeCheckMetricsEmitted(t *testing.T) {
 			wantNodeKind: NodeKindStandard,
 			pod:          startedCheckerPod,
 			seededResults: []chmv1alpha1.CheckResult{
-				{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusHealthy, Message: "reported by the checker pod"},
+				{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusHealthy, Message: "reported by the checker pod", Duration: &metav1.Duration{Duration: 3 * time.Second}},
 			},
-			wantCHMNodeCheckTotal: map[string]string{
-				"result": metrics.HealthyStatus,
+			wantCHMNodeHealthCheckTotal: map[string]string{
+				"status": metrics.HealthyStatus,
 				"reason": ReasonCheckPassed,
 			},
-			wantCHMNodeCheckResultTotal: []map[string]string{
+			wantCHMNodeHealthCheckDurationStatus: metrics.HealthyStatus,
+			// PodStartup is timed by the controller from the checker pod's container start.
+			wantCHMNodeCheckerDuration: []map[string]string{
+				{"checker_name": "PodStartup", "status": metrics.HealthyStatus},
+				{"checker_name": "PodNetwork", "status": metrics.HealthyStatus},
+			},
+			wantCHMNodeCheckerResultTotal: []map[string]string{
 				{"checker_name": "PodStartup", "status": metrics.HealthyStatus, "error_code": metrics.HealthyCode},
 				{"checker_name": "PodNetwork", "status": metrics.HealthyStatus, "error_code": metrics.HealthyCode},
+			},
+		},
+		{
+			// A checker image that predates CheckResult.Duration reports results without one. Those
+			// results still count, but must not be observed as a zero duration.
+			name:         "result from an older checker image is counted but not timed",
+			wantNodeKind: NodeKindStandard,
+			pod:          startedCheckerPod,
+			seededResults: []chmv1alpha1.CheckResult{
+				{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusHealthy, Message: "reported by the checker pod"},
+			},
+			wantCHMNodeHealthCheckTotal: map[string]string{
+				"status": metrics.HealthyStatus,
+				"reason": ReasonCheckPassed,
+			},
+			wantCHMNodeHealthCheckDurationStatus: metrics.HealthyStatus,
+			wantCHMNodeCheckerResultTotal: []map[string]string{
+				{"checker_name": "PodStartup", "status": metrics.HealthyStatus, "error_code": metrics.HealthyCode},
+				{"checker_name": "PodNetwork", "status": metrics.HealthyStatus, "error_code": metrics.HealthyCode},
+			},
+			// PodStartup is timed by the controller, so only PodNetwork goes untimed.
+			wantCHMNodeCheckerDuration: []map[string]string{
+				{"checker_name": "PodStartup", "status": metrics.HealthyStatus},
 			},
 		},
 		{
@@ -326,15 +415,21 @@ func TestNodeCheckMetricsEmitted(t *testing.T) {
 					Status:    chmv1alpha1.CheckStatusUnhealthy,
 					ErrorCode: podnetwork.ErrorCodeNetworkConnectivityFailed,
 					Message:   "reported by the checker pod",
+					Duration:  &metav1.Duration{Duration: 20 * time.Second},
 				},
 			},
-			wantCHMNodeCheckTotal: map[string]string{
-				"result": metrics.UnhealthyStatus,
+			wantCHMNodeHealthCheckTotal: map[string]string{
+				"status": metrics.UnhealthyStatus,
 				"reason": ReasonCheckFailed,
 			},
-			wantCHMNodeCheckResultTotal: []map[string]string{
+			wantCHMNodeHealthCheckDurationStatus: metrics.UnhealthyStatus,
+			wantCHMNodeCheckerResultTotal: []map[string]string{
 				{"checker_name": "PodStartup", "status": metrics.HealthyStatus, "error_code": metrics.HealthyCode},
 				{"checker_name": "PodNetwork", "status": metrics.UnhealthyStatus, "error_code": podnetwork.ErrorCodeNetworkConnectivityFailed},
+			},
+			wantCHMNodeCheckerDuration: []map[string]string{
+				{"checker_name": "PodStartup", "status": metrics.HealthyStatus},
+				{"checker_name": "PodNetwork", "status": metrics.UnhealthyStatus},
 			},
 		},
 		{
@@ -346,18 +441,20 @@ func TestNodeCheckMetricsEmitted(t *testing.T) {
 					Labels: map[string]string{"kubernetes.io/os": "windows"},
 				},
 			},
-			wantCHMNodeCheckTotal: map[string]string{
-				"result": metrics.UnknownStatus,
+			wantCHMNodeHealthCheckTotal: map[string]string{
+				"status": metrics.UnknownStatus,
 				"reason": ReasonCheckUnsupported,
 			},
 			// Unsupported nodes short circuit and do not run any checks.
-			wantCHMNodeCheckResultTotal: nil,
+			wantCHMNodeCheckerResultTotal: nil,
 		},
 		{
 			// An unsupported node is still labelled by what it actually is, so a Windows GPU node
 			// does not land in the standard population.
 			name:         "unsupported gpu node is counted as a gpu node",
 			wantNodeKind: NodeKindGPU,
+			// The node has no SKU, so none the GPU checks have a profile for.
+			wantSKU: SKUOther,
 			node: &corev1.Node{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: "node-1",
@@ -367,23 +464,26 @@ func TestNodeCheckMetricsEmitted(t *testing.T) {
 					},
 				},
 			},
-			wantCHMNodeCheckTotal: map[string]string{
-				"result": metrics.UnknownStatus,
+			wantCHMNodeHealthCheckTotal: map[string]string{
+				"status": metrics.UnknownStatus,
 				"reason": ReasonCheckUnsupported,
 			},
-			wantCHMNodeCheckResultTotal: nil,
+			wantCHMNodeCheckerResultTotal: nil,
 		},
 		{
 			name:            "gpu node counts the gpu checks too",
 			wantNodeKind:    NodeKindGPU,
+			wantSKU:         "nd96isr_h100_v5",
 			node:            gpuNode("node-1"),
 			pod:             gpuCheckerPod(succeededCheckerPod),
 			enableGPUChecks: true,
-			wantCHMNodeCheckTotal: map[string]string{
-				"result": metrics.UnknownStatus,
+			wantGPUWait:     true,
+			wantCHMNodeHealthCheckTotal: map[string]string{
+				"status": metrics.UnknownStatus,
 				"reason": ReasonCheckUnknown,
 			},
-			wantCHMNodeCheckResultTotal: []map[string]string{
+			wantCHMNodeHealthCheckDurationStatus: metrics.UnknownStatus,
+			wantCHMNodeCheckerResultTotal: []map[string]string{
 				{"checker_name": "PodStartup", "status": metrics.UnknownStatus, "error_code": ErrorCodeCheckNotReported},
 				{"checker_name": "PodNetwork", "status": metrics.UnknownStatus, "error_code": ErrorCodeCheckNotReported},
 				{"checker_name": "NcclAllReduce", "status": metrics.UnknownStatus, "error_code": ErrorCodeCheckNotReported},
@@ -394,40 +494,50 @@ func TestNodeCheckMetricsEmitted(t *testing.T) {
 		{
 			// A GPU node reporting a mix of statuses.
 			name:            "gpu check reports unhealthy alongside healthy and unreported checks",
+			wantGPUWait:     true,
 			wantNodeKind:    NodeKindGPU,
+			wantSKU:         "nd96isr_h100_v5",
 			node:            gpuNode("node-1"),
 			pod:             gpuCheckerPod(startedCheckerPod),
 			enableGPUChecks: true,
 			seededResults: []chmv1alpha1.CheckResult{
-				{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusHealthy, Message: "reported by the checker pod"},
+				{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusHealthy, Message: "reported by the checker pod", Duration: &metav1.Duration{Duration: 3 * time.Second}},
 				{
 					Name:      "NcclAllReduce",
 					Status:    chmv1alpha1.CheckStatusUnhealthy,
 					ErrorCode: gpu.ErrorCodeCorrectness,
 					Message:   "reported by the checker pod",
+					Duration:  &metav1.Duration{Duration: 4 * time.Minute},
 				},
 			},
-			wantCHMNodeCheckTotal: map[string]string{
+			wantCHMNodeHealthCheckTotal: map[string]string{
 				// Unhealthy because every result counts, GPU checks included.
-				"result": metrics.UnhealthyStatus,
+				"status": metrics.UnhealthyStatus,
 				"reason": ReasonCheckFailed,
 			},
-			wantCHMNodeCheckResultTotal: []map[string]string{
+			wantCHMNodeHealthCheckDurationStatus: metrics.UnhealthyStatus,
+			wantCHMNodeCheckerResultTotal: []map[string]string{
 				{"checker_name": "PodStartup", "status": metrics.HealthyStatus, "error_code": metrics.HealthyCode},
 				{"checker_name": "PodNetwork", "status": metrics.HealthyStatus, "error_code": metrics.HealthyCode},
 				{"checker_name": "NcclAllReduce", "status": metrics.UnhealthyStatus, "error_code": gpu.ErrorCodeCorrectness},
 				{"checker_name": "GpuHostBandwidth", "status": metrics.UnknownStatus, "error_code": ErrorCodeCheckNotReported},
 				{"checker_name": "GpuPeerBandwidth", "status": metrics.UnknownStatus, "error_code": ErrorCodeCheckNotReported},
 			},
+			// The checks that never reported have no duration, so they are not observed.
+			wantCHMNodeCheckerDuration: []map[string]string{
+				{"checker_name": "PodStartup", "status": metrics.HealthyStatus},
+				{"checker_name": "PodNetwork", "status": metrics.HealthyStatus},
+				{"checker_name": "NcclAllReduce", "status": metrics.UnhealthyStatus},
+			},
 		},
 		{
 			// Only count completed checks. Emitting the metric before the status update succeeds
 			// would count one that never completed and lead to double counting.
-			name:                        "terminal status update fails",
-			pod:                         succeededCheckerPod,
-			failTerminalUpdate:          true,
-			wantCHMNodeCheckTotal:       nil,
-			wantCHMNodeCheckResultTotal: nil,
+			name:                          "terminal status update fails",
+			pod:                           succeededCheckerPod,
+			failTerminalUpdate:            true,
+			wantCHMNodeHealthCheckTotal:   nil,
+			wantCHMNodeCheckerResultTotal: nil,
 		},
 	}
 
@@ -460,16 +570,35 @@ func TestNodeCheckMetricsEmitted(t *testing.T) {
 			}
 
 			wantOutcomeDelta := map[string]float64{}
-			if tt.wantCHMNodeCheckTotal != nil {
-				wantOutcomeDelta[labelKey(withNodeKind(tt.wantCHMNodeCheckTotal, tt.wantNodeKind))] = 1
+			if tt.wantCHMNodeHealthCheckTotal != nil {
+				wantOutcomeDelta[labelKey(withNodeLabels(tt.wantCHMNodeHealthCheckTotal, tt.wantNodeKind, tt.wantSKU))] = 1
 			}
 			wantResultsDelta := map[string]float64{}
-			for _, labels := range tt.wantCHMNodeCheckResultTotal {
-				wantResultsDelta[labelKey(withNodeKind(labels, tt.wantNodeKind))]++
+			for _, labels := range tt.wantCHMNodeCheckerResultTotal {
+				wantResultsDelta[labelKey(withNodeLabels(labels, tt.wantNodeKind, tt.wantSKU))]++
+			}
+			wantDurationDelta := map[string]float64{}
+			if tt.wantCHMNodeHealthCheckDurationStatus != "" {
+				wantDurationDelta[labelKey(withNodeLabels(map[string]string{
+					"status": tt.wantCHMNodeHealthCheckDurationStatus,
+				}, tt.wantNodeKind, tt.wantSKU))] = 1
+			}
+			wantGPUWaitDelta := map[string]float64{}
+			if tt.wantGPUWait {
+				// The GPU wait histogram has no node_kind label.
+				wantGPUWaitDelta[labelKey(map[string]string{"sku": tt.wantSKU})] = 1
 			}
 
-			outcomeBefore := counterSnapshot(t, checkCounter)
-			resultsBefore := counterSnapshot(t, checkResultCounter)
+			wantResultDurationDelta := map[string]float64{}
+			for _, labels := range tt.wantCHMNodeCheckerDuration {
+				wantResultDurationDelta[labelKey(withNodeLabels(labels, tt.wantNodeKind, tt.wantSKU))]++
+			}
+
+			outcomeBefore := counterSnapshot(t, healthCheckCounter)
+			resultsBefore := counterSnapshot(t, checkerResultCounter)
+			resultDurationBefore, _ := histogramSnapshot(t, checkerDuration)
+			gpuWaitBefore, _ := histogramSnapshot(t, healthCheckGPUWaitDuration)
+			durationBefore, _ := histogramSnapshot(t, healthCheckDuration)
 
 			key := types.NamespacedName{Name: cnh.Name}
 			if tt.failTerminalUpdate {
@@ -478,8 +607,11 @@ func TestNodeCheckMetricsEmitted(t *testing.T) {
 				reconcileUntilTerminal(t, reconciler, fakeClient, key)
 			}
 
-			outcomeAfter := counterSnapshot(t, checkCounter)
-			resultsAfter := counterSnapshot(t, checkResultCounter)
+			outcomeAfter := counterSnapshot(t, healthCheckCounter)
+			resultsAfter := counterSnapshot(t, checkerResultCounter)
+			resultDurationAfter, _ := histogramSnapshot(t, checkerDuration)
+			gpuWaitAfter, _ := histogramSnapshot(t, healthCheckGPUWaitDuration)
+			durationAfter, _ := histogramSnapshot(t, healthCheckDuration)
 
 			// Verify the first emission of the counters.
 			if got := counterDelta(outcomeBefore, outcomeAfter); !reflect.DeepEqual(got, wantOutcomeDelta) {
@@ -487,6 +619,15 @@ func TestNodeCheckMetricsEmitted(t *testing.T) {
 			}
 			if got := counterDelta(resultsBefore, resultsAfter); !reflect.DeepEqual(got, wantResultsDelta) {
 				t.Errorf("per-check counter delta = %v, want %v", got, wantResultsDelta)
+			}
+			if got := counterDelta(resultDurationBefore, resultDurationAfter); !reflect.DeepEqual(got, wantResultDurationDelta) {
+				t.Errorf("per-check duration sample count delta = %v, want %v", got, wantResultDurationDelta)
+			}
+			if got := counterDelta(gpuWaitBefore, gpuWaitAfter); !reflect.DeepEqual(got, wantGPUWaitDelta) {
+				t.Errorf("GPU wait duration sample count delta = %v, want %v", got, wantGPUWaitDelta)
+			}
+			if got := counterDelta(durationBefore, durationAfter); !reflect.DeepEqual(got, wantDurationDelta) {
+				t.Errorf("duration sample count delta = %v, want %v", got, wantDurationDelta)
 			}
 
 			// Verify that subsequent reconciles do not change the counters. Ensures we do not double count the same CR.
@@ -497,17 +638,256 @@ func TestNodeCheckMetricsEmitted(t *testing.T) {
 				}
 			}
 
-			if got := counterDelta(outcomeAfter, counterSnapshot(t, checkCounter)); len(got) != 0 {
+			if got := counterDelta(outcomeAfter, counterSnapshot(t, healthCheckCounter)); len(got) != 0 {
 				t.Errorf("outcome counter moved on re-reconcile by %v, want no change", got)
 			}
-			if got := counterDelta(resultsAfter, counterSnapshot(t, checkResultCounter)); len(got) != 0 {
+			if got := counterDelta(resultsAfter, counterSnapshot(t, checkerResultCounter)); len(got) != 0 {
 				t.Errorf("per-check counter moved on re-reconcile by %v, want no change", got)
+			}
+			resultDurationReconciled, _ := histogramSnapshot(t, checkerDuration)
+			if got := counterDelta(resultDurationAfter, resultDurationReconciled); len(got) != 0 {
+				t.Errorf("per-check duration sample count moved on re-reconcile by %v, want no change", got)
+			}
+			gpuWaitReconciled, _ := histogramSnapshot(t, healthCheckGPUWaitDuration)
+			if got := counterDelta(gpuWaitAfter, gpuWaitReconciled); len(got) != 0 {
+				t.Errorf("GPU wait duration sample count moved on re-reconcile by %v, want no change", got)
+			}
+			durationReconciled, _ := histogramSnapshot(t, healthCheckDuration)
+			if got := counterDelta(durationAfter, durationReconciled); len(got) != 0 {
+				t.Errorf("duration sample count moved on re-reconcile by %v, want no change", got)
 			}
 		})
 	}
 }
 
-func TestResultLabel(t *testing.T) {
+func TestHealthCheckTimingsFor(t *testing.T) {
+	created := metav1.NewTime(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	podCreated := metav1.NewTime(created.Add(30 * time.Second))
+	resultWritten := metav1.NewTime(created.Add(125 * time.Second))
+	seconds := func(s int) *time.Duration {
+		d := time.Duration(s) * time.Second
+		return &d
+	}
+
+	tests := []struct {
+		name            string
+		created         metav1.Time
+		startedAt       *metav1.Time
+		gpuChecks       bool
+		resultWrittenAt metav1.Time
+		want            healthCheckTimings
+	}{
+		{
+			name:            "gpu checks run",
+			created:         created,
+			startedAt:       &podCreated,
+			gpuChecks:       true,
+			resultWrittenAt: resultWritten,
+			want:            healthCheckTimings{gpuWait: seconds(30), duration: seconds(125)},
+		},
+		{
+			// Without the GPU checks the wait for the pod is only controller delay.
+			name:            "no gpu checks has no gpu wait",
+			created:         created,
+			startedAt:       &podCreated,
+			resultWrittenAt: resultWritten,
+			want:            healthCheckTimings{duration: seconds(125)},
+		},
+		{
+			name:            "missing StartedAt has no gpu wait",
+			created:         created,
+			gpuChecks:       true,
+			resultWrittenAt: resultWritten,
+			want:            healthCheckTimings{duration: seconds(125)},
+		},
+		{
+			name:            "missing creation time has no timings",
+			startedAt:       &podCreated,
+			gpuChecks:       true,
+			resultWrittenAt: resultWritten,
+		},
+		{
+			// The controller's clock can differ slightly from the API server's.
+			name:            "result written before creation from clock skew is clamped to zero",
+			created:         created,
+			startedAt:       &podCreated,
+			resultWrittenAt: metav1.NewTime(created.Add(-time.Second)),
+			want:            healthCheckTimings{duration: seconds(0)},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cnh := testCNH("cnh-timings")
+			cnh.CreationTimestamp = tt.created
+			cnh.Status.StartedAt = tt.startedAt
+
+			got := healthCheckTimingsFor(cnh, tt.gpuChecks, tt.resultWrittenAt)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("healthCheckTimingsFor() = {gpuWait: %v, duration: %v}, want {gpuWait: %v, duration: %v}",
+					ptrString(got.gpuWait), ptrString(got.duration), ptrString(tt.want.gpuWait), ptrString(tt.want.duration))
+			}
+		})
+	}
+}
+
+// ptrString renders an optional duration for test failure messages.
+func ptrString(d *time.Duration) string {
+	if d == nil {
+		return "nil"
+	}
+	return d.String()
+}
+
+// TestNodeCheckTimingsObserved checks recordNodeCheckMetrics observes the timings it is given, and
+// skips the ones that are unknown.
+func TestNodeCheckTimingsObserved(t *testing.T) {
+	seconds := func(s int) *time.Duration {
+		d := time.Duration(s) * time.Second
+		return &d
+	}
+	h100 := gpuNodeInfo{isGPUNode: true, sku: "Standard_ND96isr_H100_v5"}
+
+	tests := []struct {
+		name    string
+		info    gpuNodeInfo
+		status  metav1.ConditionStatus
+		reason  string
+		timings healthCheckTimings
+		// The wanted sample sums by label set. Each listed series must gain exactly one sample.
+		wantGPUWait  map[string]float64
+		wantDuration map[string]float64
+	}{
+		{
+			name:         "gpu node with the gpu checks",
+			info:         h100,
+			status:       metav1.ConditionFalse,
+			reason:       ReasonCheckFailed,
+			timings:      healthCheckTimings{gpuWait: seconds(30), duration: seconds(125)},
+			wantGPUWait:  map[string]float64{labelKey(map[string]string{"sku": "nd96isr_h100_v5"}): 30},
+			wantDuration: map[string]float64{labelKey(map[string]string{"node_kind": NodeKindGPU, "sku": "nd96isr_h100_v5", "status": metrics.UnhealthyStatus}): 125},
+		},
+		{
+			name:         "standard node",
+			status:       metav1.ConditionTrue,
+			reason:       ReasonCheckPassed,
+			timings:      healthCheckTimings{duration: seconds(95)},
+			wantDuration: map[string]float64{labelKey(map[string]string{"node_kind": NodeKindStandard, "sku": "", "status": metrics.HealthyStatus}): 95},
+		},
+		{
+			// As for an unsupported node, which never ran a check.
+			name:   "no timings are not observed",
+			status: metav1.ConditionUnknown,
+			reason: ReasonCheckUnsupported,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			histograms := []struct {
+				name string
+				vec  prometheus.Collector
+				want map[string]float64
+			}{
+				{"gpu wait", healthCheckGPUWaitDuration, tt.wantGPUWait},
+				{"duration", healthCheckDuration, tt.wantDuration},
+			}
+
+			countsBefore := make([]map[string]float64, len(histograms))
+			sumsBefore := make([]map[string]float64, len(histograms))
+			for i, h := range histograms {
+				countsBefore[i], sumsBefore[i] = histogramSnapshot(t, h.vec)
+			}
+
+			recordNodeCheckMetrics(testCNH("cnh-timings"), tt.info, tt.status, tt.reason, tt.timings)
+
+			for i, h := range histograms {
+				countsAfter, sumsAfter := histogramSnapshot(t, h.vec)
+				wantCounts, wantSums := map[string]float64{}, map[string]float64{}
+				for key, sum := range h.want {
+					wantCounts[key] = 1
+					wantSums[key] = sum
+				}
+				if got := counterDelta(countsBefore[i], countsAfter); !reflect.DeepEqual(got, wantCounts) {
+					t.Errorf("%s duration sample count delta = %v, want %v", h.name, got, wantCounts)
+				}
+				if got := counterDelta(sumsBefore[i], sumsAfter); !sumsMatch(got, wantSums) {
+					t.Errorf("%s duration sample sum delta = %v, want %v", h.name, got, wantSums)
+				}
+			}
+		})
+	}
+}
+
+// TestNodeCheckResultDurationObserved checks each result's own duration is observed, and results
+// without one are skipped.
+func TestNodeCheckResultDurationObserved(t *testing.T) {
+	started := metav1.NewTime(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	finished := metav1.NewTime(started.Add(10 * time.Minute))
+
+	cnh := testCNH("cnh-result-duration")
+	cnh.Status.StartedAt = &started
+	cnh.Status.FinishedAt = &finished
+	cnh.Status.Results = []chmv1alpha1.CheckResult{
+		{Name: "PodStartup", Status: chmv1alpha1.CheckStatusHealthy, Duration: &metav1.Duration{Duration: 12 * time.Second}},
+		{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusHealthy, Duration: &metav1.Duration{Duration: 2500 * time.Millisecond}},
+		{Name: "NcclAllReduce", Status: chmv1alpha1.CheckStatusUnhealthy, ErrorCode: gpu.ErrorCodeCorrectness, Duration: &metav1.Duration{Duration: 25 * time.Minute}},
+		{Name: "GpuHostBandwidth", Status: chmv1alpha1.CheckStatusUnknown, ErrorCode: ErrorCodeCheckNotReported},
+	}
+
+	countsBefore, sumsBefore := histogramSnapshot(t, checkerDuration)
+	recordNodeCheckMetrics(cnh, gpuNodeInfo{isGPUNode: true, sku: "Standard_NV72ads_A10_v5"}, metav1.ConditionFalse, ReasonCheckFailed, healthCheckTimings{})
+	countsAfter, sumsAfter := histogramSnapshot(t, checkerDuration)
+
+	key := func(name string, status chmv1alpha1.CheckStatus) string {
+		return labelKey(map[string]string{"node_kind": NodeKindGPU, "sku": "nv72ads_a10_v5", "checker_name": name, "status": string(status)})
+	}
+	wantCounts := map[string]float64{
+		key("PodStartup", chmv1alpha1.CheckStatusHealthy):      1,
+		key("PodNetwork", chmv1alpha1.CheckStatusHealthy):      1,
+		key("NcclAllReduce", chmv1alpha1.CheckStatusUnhealthy): 1,
+	}
+	wantSums := map[string]float64{
+		key("PodStartup", chmv1alpha1.CheckStatusHealthy):      12,
+		key("PodNetwork", chmv1alpha1.CheckStatusHealthy):      2.5,
+		key("NcclAllReduce", chmv1alpha1.CheckStatusUnhealthy): 1500,
+	}
+	if got := counterDelta(countsBefore, countsAfter); !reflect.DeepEqual(got, wantCounts) {
+		t.Errorf("per-check duration sample count delta = %v, want %v", got, wantCounts)
+	}
+	if got := counterDelta(sumsBefore, sumsAfter); !sumsMatch(got, wantSums) {
+		t.Errorf("per-check duration sample sum delta = %v, want %v", got, wantSums)
+	}
+}
+
+func TestSKULabel(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		info gpuNodeInfo
+		want string
+	}{
+		{name: "profiled gpu sku is normalized", info: gpuNodeInfo{isGPUNode: true, sku: "Standard_ND96isr_H100_v5"}, want: "nd96isr_h100_v5"},
+		{name: "unprofiled gpu sku is other", info: gpuNodeInfo{isGPUNode: true, sku: "Standard_Unprofiled_GPU_v1"}, want: SKUOther},
+		{name: "gpu node without a sku is other", info: gpuNodeInfo{isGPUNode: true}, want: SKUOther},
+		// A profiled SKU is left out on a node that is not detected as a GPU node.
+		{name: "non-gpu node is unlabeled", info: gpuNodeInfo{sku: "Standard_ND96isr_H100_v5"}, want: ""},
+		{name: "non-gpu node with a regular sku is unlabeled", info: gpuNodeInfo{sku: "Standard_D8d_v5"}, want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := skuLabel(tt.info); got != tt.want {
+				t.Errorf("skuLabel(%+v) = %q, want %q", tt.info, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestStatusLabel(t *testing.T) {
 	t.Parallel()
 
 	tests := map[metav1.ConditionStatus]string{
@@ -517,8 +897,8 @@ func TestResultLabel(t *testing.T) {
 	}
 
 	for status, want := range tests {
-		if got := resultLabel(status); got != want {
-			t.Errorf("resultLabel(%q) = %q, want %q", status, got, want)
+		if got := statusLabel(status); got != want {
+			t.Errorf("statusLabel(%q) = %q, want %q", status, got, want)
 		}
 	}
 }

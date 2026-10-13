@@ -3,6 +3,7 @@ package nodecheckerrunner
 import (
 	"context"
 	"testing"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -46,7 +47,7 @@ func TestRecordResultRetriesOnConflict(t *testing.T) {
 
 	r := &Runner{chmClient: fakeClient, nodeName: "test-node", crName: "test-cr"}
 
-	err := r.recordResult(context.Background(), "PodNetwork", checker.Healthy())
+	err := r.recordResult(context.Background(), "PodNetwork", checker.Healthy(), time.Second)
 	if err != nil {
 		t.Fatalf("recordResult() = %v, want nil", err)
 	}
@@ -91,7 +92,7 @@ func TestRecordResultUpserts(t *testing.T) {
 
 	r := &Runner{chmClient: fakeClient, nodeName: "test-node", crName: "test-cr"}
 
-	err := r.recordResult(context.Background(), "PodNetwork", checker.Unhealthy("NetworkConnectivityFailed", "fresh"))
+	err := r.recordResult(context.Background(), "PodNetwork", checker.Unhealthy("NetworkConnectivityFailed", "fresh"), 1500*time.Millisecond)
 	if err != nil {
 		t.Fatalf("recordResult() = %v, want nil", err)
 	}
@@ -113,6 +114,9 @@ func TestRecordResultUpserts(t *testing.T) {
 	}
 	if byName["PodNetwork"].Message != "fresh" {
 		t.Errorf("PodNetwork.Message = %q, want %q", byName["PodNetwork"].Message, "fresh")
+	}
+	if d := byName["PodNetwork"].Duration; d == nil || d.Duration != 1500*time.Millisecond {
+		t.Errorf("PodNetwork.Duration = %v, want %v", d, 1500*time.Millisecond)
 	}
 }
 

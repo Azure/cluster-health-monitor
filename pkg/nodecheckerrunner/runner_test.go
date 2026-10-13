@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -152,9 +153,13 @@ func TestRunCheckers(t *testing.T) {
 				if mock.calls != maxRetryAttempts {
 					t.Errorf("Expected %d retry attempts, got %d", maxRetryAttempts, mock.calls)
 				}
+				// The recorded duration covers every attempt, including the delays between them.
+				minDuration := time.Duration(maxRetryAttempts-1) * retryDelay
+				if d := cnh.Status.Results[0].Duration; d == nil || d.Duration < minDuration {
+					t.Errorf("Expected Duration of at least %v, got %v", minDuration, d)
+				}
 			},
 		},
-
 		{
 			name: "mixed results - some succeed, some fail",
 			checkers: []NodeChecker{

@@ -355,7 +355,7 @@ func (r *CheckNodeHealthReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	info, spec = recordedRun(pod, info)
 
 	// Mark the CheckNodeHealth as started
-	if err := r.markStarted(ctx, cnh); err != nil {
+	if err := r.markStarted(ctx, cnh, pod); err != nil {
 		klog.ErrorS(err, "Failed to mark as started", "name", cnh.Name)
 		return ctrl.Result{}, err
 	}
@@ -382,7 +382,8 @@ func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cn
 		}
 
 		// Step 1: Mark as completed (determines health based on Results)
-		healthyStatus, err := r.markCompleted(ctx, cnh, info, spec)
+		finishedAt := checkFinishedAt(pod, isPodCompleted, timeout, cnh.Status.StartedAt, metav1.Now())
+		healthyStatus, err := r.markCompleted(ctx, cnh, info, spec, finishedAt)
 		if err != nil {
 			klog.ErrorS(err, "Failed to mark as completed")
 			return ctrl.Result{}, err
@@ -459,7 +460,8 @@ func (r *CheckNodeHealthReconciler) markUnsupported(ctx context.Context, cnh *ch
 
 	// Unsupported nodes are a terminal outcome that never reaches markCompleted, so count them
 	// here to keep the outcome counter a complete record of every CheckNodeHealth.
-	recordNodeCheckMetrics(cnh, info, metav1.ConditionUnknown, ReasonCheckUnsupported)
+	// No check ran, so there are no timings to observe.
+	recordNodeCheckMetrics(cnh, info, metav1.ConditionUnknown, ReasonCheckUnsupported, healthCheckTimings{})
 
 	// No pod is created for unsupported nodes, but clean up defensively in case one exists.
 	if err := r.cleanupPod(ctx, cnh); err != nil {
@@ -469,14 +471,21 @@ func (r *CheckNodeHealthReconciler) markUnsupported(ctx context.Context, cnh *ch
 	return ctrl.Result{}, nil
 }
 
-func (r *CheckNodeHealthReconciler) markStarted(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth) error {
+func (r *CheckNodeHealthReconciler) markStarted(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, pod *corev1.Pod) error {
 	// Only update status if StartedAt is not already set
 	if cnh.Status.StartedAt != nil {
 		return nil
 	}
 
+	// Record the checker pod's creation as the start of the check. The API server stamps
+	// and persists that time, so it is unaffected by a controller restart, or a failed status update,
+	// between creating the pod and getting here.
 	now := metav1.Now()
-	cnh.Status.StartedAt = &now
+	startedAt := pod.CreationTimestamp
+	if startedAt.IsZero() {
+		startedAt = now
+	}
+	cnh.Status.StartedAt = &startedAt
 	cnh.Status.Conditions = []metav1.Condition{
 		{
 			Type:               ConditionTypeHealthy,
@@ -493,7 +502,7 @@ func (r *CheckNodeHealthReconciler) markStarted(ctx context.Context, cnh *chmv1a
 	return nil
 }
 
-func (r *CheckNodeHealthReconciler) markCompleted(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, info gpuNodeInfo, spec checkerSpec) (metav1.ConditionStatus, error) {
+func (r *CheckNodeHealthReconciler) markCompleted(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, info gpuNodeInfo, spec checkerSpec, finishedAt metav1.Time) (metav1.ConditionStatus, error) {
 	// A check that reported nothing becomes an Unknown result here so that we only have to take into account existing checks when
 	// determining the healthy condition.
 	if err := r.recordMissingResults(ctx, cnh, spec); err != nil {
@@ -501,7 +510,7 @@ func (r *CheckNodeHealthReconciler) markCompleted(ctx context.Context, cnh *chmv
 	}
 
 	now := metav1.Now()
-	cnh.Status.FinishedAt = &now
+	cnh.Status.FinishedAt = &finishedAt
 	healthyStatus, reason, message := r.determineHealthyCondition(cnh)
 	cnh.Status.Conditions = []metav1.Condition{
 		{
@@ -519,7 +528,9 @@ func (r *CheckNodeHealthReconciler) markCompleted(ctx context.Context, cnh *chmv
 		return healthyStatus, fmt.Errorf("failed to update status: %w", err)
 	}
 
-	recordNodeCheckMetrics(cnh, info, healthyStatus, reason)
+	timings := healthCheckTimingsFor(cnh, spec.gpu != nil, now)
+	recordNodeCheckMetrics(cnh, info, healthyStatus, reason, timings)
+	logNodeCheckTimings(cnh, info, healthyStatus, reason, timings)
 
 	return healthyStatus, nil
 }

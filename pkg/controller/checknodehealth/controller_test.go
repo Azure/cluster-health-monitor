@@ -1092,6 +1092,60 @@ func withoutRunAnnotations(pod *corev1.Pod) *corev1.Pod {
 	return pod
 }
 
+// TestCheckTimestampsComeFromThePodAfterRestart covers a controller that restarted mid-check. A
+// restart only loses in-memory state, so it is simulated by having a fresh reconciler reconcile the
+// state a restarted controller would find: the controller had created the checker pod but went down
+// before recording StartedAt, and the pod finished before it came back.
+func TestCheckTimestampsComeFromThePodAfterRestart(t *testing.T) {
+	reconciler, fakeClient, _ := setupTest()
+	ctx := context.Background()
+
+	// The pod was created and finished well before now.
+	podCreated := metav1.NewTime(time.Now().Add(-10 * time.Minute).Truncate(time.Second))
+	containerFinished := metav1.NewTime(podCreated.Add(40 * time.Second))
+
+	cnh := testCNH("restarted-mid-check")
+	// The GPU checks waited 20s for claimable GPUs before the controller created the pod.
+	cnh.CreationTimestamp = metav1.NewTime(podCreated.Add(-20 * time.Second))
+	if err := fakeClient.Create(ctx, cnh); err != nil {
+		t.Fatalf("creating the CR: %v", err)
+	}
+
+	pod := finishedCheckerPod(cnh.Name, true, "Standard_ND96isr_H100_v5")
+	pod.CreationTimestamp = podCreated
+	pod.Status.ContainerStatuses[0].State.Terminated = &corev1.ContainerStateTerminated{
+		StartedAt:  metav1.NewTime(podCreated.Add(5 * time.Second)),
+		FinishedAt: containerFinished,
+	}
+	if err := fakeClient.Create(ctx, pod); err != nil {
+		t.Fatalf("creating the checker pod: %v", err)
+	}
+
+	gpuWaitCountsBefore, gpuWaitSumsBefore := histogramSnapshot(t, healthCheckGPUWaitDuration)
+	got := reconcileUntilTerminal(t, reconciler, fakeClient, types.NamespacedName{Name: cnh.Name})
+	gpuWaitCountsAfter, gpuWaitSumsAfter := histogramSnapshot(t, healthCheckGPUWaitDuration)
+
+	// The timestamps come from the pod, so the CR records when the check actually ran rather than
+	// when the restarted controller got to it.
+	if got.Status.StartedAt == nil || !got.Status.StartedAt.Equal(&podCreated) {
+		t.Errorf("StartedAt = %v, want the pod's creation time %v", got.Status.StartedAt, podCreated)
+	}
+	if got.Status.FinishedAt == nil || !got.Status.FinishedAt.Equal(&containerFinished) {
+		t.Errorf("FinishedAt = %v, want the container's termination time %v", got.Status.FinishedAt, containerFinished)
+	}
+
+	// The GPU wait runs from the CR being created to StartedAt, so it is the 20s spent waiting for
+	// GPUs. A StartedAt taken when the controller came back would add its downtime to the wait.
+	gpuWaitKey := labelKey(map[string]string{"sku": "nd96isr_h100_v5"})
+	if diff := cmp.Diff(map[string]float64{gpuWaitKey: 1}, counterDelta(gpuWaitCountsBefore, gpuWaitCountsAfter)); diff != "" {
+		t.Errorf("GPU wait sample count delta mismatch (-want +got):\n%s", diff)
+	}
+	wantSums := map[string]float64{gpuWaitKey: 20}
+	if got := counterDelta(gpuWaitSumsBefore, gpuWaitSumsAfter); !sumsMatch(got, wantSums) {
+		t.Errorf("GPU wait sample sum delta = %v, want %v", got, wantSums)
+	}
+}
+
 func TestCheckerSpecFor(t *testing.T) {
 	t.Parallel()
 
