@@ -286,10 +286,6 @@ func TestUpdatePodstartCheckerResult_TimeoutWithCheckerResult(t *testing.T) {
 	if result.Status != chmv1alpha1.CheckStatusHealthy {
 		t.Errorf("expected PodStartup Healthy (checker ran despite stale pod status), got %v", result.Status)
 	}
-	// The stale pod status carries no container start time to measure from.
-	if result.Duration != nil {
-		t.Errorf("expected no PodStartup Duration from a stale pod status, got %v", result.Duration)
-	}
 }
 
 // TestUpdatePodstartCheckerResult_TimeoutWithoutCheckerResult verifies the genuine startup-failure
@@ -325,10 +321,6 @@ func TestUpdatePodstartCheckerResult_TimeoutWithoutCheckerResult(t *testing.T) {
 	if result.Status != chmv1alpha1.CheckStatusUnhealthy {
 		t.Errorf("expected PodStartup Unhealthy (genuine startup failure), got %v", result.Status)
 	}
-	// The duration is how long the controller waited for the pod before giving up.
-	if result.Duration == nil || result.Duration.Duration < 3*time.Minute {
-		t.Errorf("expected PodStartup Duration of at least 3m, got %v", result.Duration)
-	}
 }
 
 func TestContainerStartupDuration(t *testing.T) {
@@ -338,14 +330,14 @@ func TestContainerStartupDuration(t *testing.T) {
 	tests := []struct {
 		name     string
 		statuses []corev1.ContainerStatus
-		want     *metav1.Duration
+		want     *time.Duration
 	}{
 		{
 			name: "container started and still running",
 			statuses: []corev1.ContainerStatus{
 				{State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{StartedAt: at(7 * time.Second)}}},
 			},
-			want: &metav1.Duration{Duration: 7 * time.Second},
+			want: ptr.To(7 * time.Second),
 		},
 		{
 			name: "container started and since terminated",
@@ -355,7 +347,7 @@ func TestContainerStartupDuration(t *testing.T) {
 					FinishedAt: at(30 * time.Second),
 				}}},
 			},
-			want: &metav1.Duration{Duration: 9 * time.Second},
+			want: ptr.To(9 * time.Second),
 		},
 		{
 			name: "last container to start sets the duration",
@@ -366,14 +358,14 @@ func TestContainerStartupDuration(t *testing.T) {
 					FinishedAt: at(30 * time.Second),
 				}}},
 			},
-			want: &metav1.Duration{Duration: 11 * time.Second},
+			want: ptr.To(11 * time.Second),
 		},
 		{
 			name: "start before creation from clock skew is clamped to zero",
 			statuses: []corev1.ContainerStatus{
 				{State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{StartedAt: at(-2 * time.Second)}}},
 			},
-			want: &metav1.Duration{},
+			want: ptr.To(time.Duration(0)),
 		},
 		{
 			name: "a container without a start time leaves the duration unknown",

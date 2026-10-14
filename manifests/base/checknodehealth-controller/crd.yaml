@@ -139,11 +139,6 @@ spec:
                   description: CheckResult represents the result of a single health
                     check
                   properties:
-                    duration:
-                      description: |-
-                        Duration is how long the check took to produce this result, including any retries.
-                        Unset when the check never ran or its duration could not be determined.
-                      type: string
                     errorCode:
                       description: ErrorCode is the specific error code if the status
                         is not Healthy

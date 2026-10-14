@@ -383,7 +383,7 @@ func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cn
 
 		// Step 1: Mark as completed (determines health based on Results)
 		finishedAt := checkFinishedAt(pod, isPodCompleted, timeout, cnh.Status.StartedAt, metav1.Now())
-		healthyStatus, err := r.markCompleted(ctx, cnh, info, spec, finishedAt)
+		healthyStatus, err := r.markCompleted(ctx, cnh, info, spec, finishedAt, containerStartupDuration(pod))
 		if err != nil {
 			klog.ErrorS(err, "Failed to mark as completed")
 			return ctrl.Result{}, err
@@ -502,7 +502,9 @@ func (r *CheckNodeHealthReconciler) markStarted(ctx context.Context, cnh *chmv1a
 	return nil
 }
 
-func (r *CheckNodeHealthReconciler) markCompleted(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, info gpuNodeInfo, spec checkerSpec, finishedAt metav1.Time) (metav1.ConditionStatus, error) {
+// markCompleted records the check's outcome. podStartup is how long the checker pod took to start, read from the pod while it still exists,
+// and only feeds the metrics.
+func (r *CheckNodeHealthReconciler) markCompleted(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, info gpuNodeInfo, spec checkerSpec, finishedAt metav1.Time, podStartup *time.Duration) (metav1.ConditionStatus, error) {
 	// A check that reported nothing becomes an Unknown result here so that we only have to take into account existing checks when
 	// determining the healthy condition.
 	if err := r.recordMissingResults(ctx, cnh, spec); err != nil {
@@ -528,7 +530,7 @@ func (r *CheckNodeHealthReconciler) markCompleted(ctx context.Context, cnh *chmv
 		return healthyStatus, fmt.Errorf("failed to update status: %w", err)
 	}
 
-	timings := healthCheckTimingsFor(cnh, spec.gpu != nil, now)
+	timings := healthCheckTimingsFor(cnh, spec.gpu != nil, now, podStartup)
 	recordNodeCheckMetrics(cnh, info, healthyStatus, reason, timings)
 	logNodeCheckTimings(cnh, info, healthyStatus, reason, timings)
 

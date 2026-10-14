@@ -53,6 +53,8 @@ type Runner struct {
 	nodeName  string
 	crName    string
 	checkers  []NodeChecker
+	// checkerDurations are the durations recorded so far in CheckerDurationsAnnotation.
+	checkerDurations map[string]metav1.Duration
 }
 
 // NewRunner creates a new Runner instance
@@ -91,15 +93,15 @@ func (r *Runner) initializeCheckers(clientset kubernetes.Interface, opts Options
 	}
 }
 
-// runCheckers runs each checker sequentially and records its result as soon as it finishes. This way a pod
-// that is killed part way through still reports everything it managed to measure.
+// runCheckers runs each checker sequentially and records its result, and how long it took, as soon as it
+// finishes. This way a pod that is killed part way through still reports everything it managed to measure.
 func (r *Runner) runCheckers(ctx context.Context) error {
 	var unrecorded []string
 	for _, chk := range r.checkers {
 		start := time.Now()
 		result := r.runChecker(ctx, chk)
 		duration := time.Since(start)
-		if err := r.recordResult(ctx, chk.Name(), result, duration); err != nil {
+		if err := r.recordResult(ctx, chk.Name(), result); err != nil {
 			// The controller reports anything we never record as Unknown, so losing one result is
 			// not a reason to abandon the checks that have not run yet.
 			klog.ErrorS(err, "Failed to record checker result", "checker", chk.Name(), "cr", r.crName)
@@ -107,6 +109,12 @@ func (r *Runner) runCheckers(ctx context.Context) error {
 			continue
 		}
 		klog.InfoS("Recorded checker result", "checker", chk.Name(), "cr", r.crName)
+
+		// The duration is only recorded for a recorded result, and losing it only leaves the check
+		// untimed, so it does not fail the run.
+		if err := r.recordDuration(ctx, chk.Name(), duration); err != nil {
+			klog.ErrorS(err, "Failed to record checker duration", "checker", chk.Name(), "cr", r.crName)
+		}
 	}
 
 	if len(unrecorded) > 0 {
@@ -145,8 +153,8 @@ func (r *Runner) runChecker(ctx context.Context, chk NodeChecker) *checker.Resul
 	return result
 }
 
-// recordResult writes one checker's result and how long it took to the CR. Retrys on conflict.
-func (r *Runner) recordResult(ctx context.Context, checkerName string, result *checker.Result, duration time.Duration) error {
+// recordResult writes one checker's result to the CR. Retrys on conflict.
+func (r *Runner) recordResult(ctx context.Context, checkerName string, result *checker.Result) error {
 	return k8sretry.RetryOnConflict(k8sretry.DefaultRetry, func() error {
 		cnh := &chmv1alpha1.CheckNodeHealth{}
 		if err := r.chmClient.Get(ctx, chmclient.ObjectKey{Name: r.crName}, cnh); err != nil {
@@ -158,7 +166,6 @@ func (r *Runner) recordResult(ctx context.Context, checkerName string, result *c
 			Status:    convertStatus(result.Status),
 			Message:   result.Detail.Message,
 			ErrorCode: result.Detail.Code,
-			Duration:  &metav1.Duration{Duration: duration},
 		})
 
 		if err := r.chmClient.Status().Update(ctx, cnh); err != nil {

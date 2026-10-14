@@ -7,7 +7,8 @@ rules:
   # Allow updating CheckNodeHealth status
   - apiGroups: ["clusterhealthmonitor.azure.com"]
     resources: ["checknodehealths"]
-    verbs: ["get", "list", "watch"]
+    # patch records how long each check took in the checker-durations annotation.
+    verbs: ["get", "list", "watch", "patch"]
   - apiGroups: ["clusterhealthmonitor.azure.com"]
     resources: ["checknodehealths/status"]
     verbs: ["get", "update", "patch"]
