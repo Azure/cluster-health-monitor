@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 	corev1 "k8s.io/api/core/v1"
@@ -322,10 +323,6 @@ type nodeCheckMetricsCase struct {
 	// empty when the path must observe no duration. The node_kind and sku labels are added from
 	// wantNodeKind and wantSKU.
 	wantCHMNodeHealthCheckDurationStatus string
-	// wantGPUWait is set when the run includes the GPU checks, so
-	// cluster_health_monitor_node_health_check_gpu_wait_duration_seconds must gain a sample with the
-	// sku label from wantSKU.
-	wantGPUWait bool
 }
 
 // withNodeLabels returns the label set with the node_kind and sku labels added.
@@ -441,7 +438,6 @@ func TestNodeCheckMetricsEmitted(t *testing.T) {
 			node:            gpuNode("node-1"),
 			pod:             gpuCheckerPod(succeededCheckerPod),
 			enableGPUChecks: true,
-			wantGPUWait:     true,
 			wantCHMNodeHealthCheckTotal: map[string]string{
 				"status": metrics.UnknownStatus,
 				"reason": ReasonCheckUnknown,
@@ -458,7 +454,6 @@ func TestNodeCheckMetricsEmitted(t *testing.T) {
 		{
 			// A GPU node reporting a mix of statuses.
 			name:            "gpu check reports unhealthy alongside healthy and unreported checks",
-			wantGPUWait:     true,
 			wantNodeKind:    NodeKindGPU,
 			wantSKU:         "nd96isr_h100_v5",
 			node:            gpuNode("node-1"),
@@ -540,15 +535,9 @@ func TestNodeCheckMetricsEmitted(t *testing.T) {
 					"status": tt.wantCHMNodeHealthCheckDurationStatus,
 				}, tt.wantNodeKind, tt.wantSKU))] = 1
 			}
-			wantGPUWaitDelta := map[string]float64{}
-			if tt.wantGPUWait {
-				// The GPU wait histogram has no node_kind label.
-				wantGPUWaitDelta[labelKey(map[string]string{"sku": tt.wantSKU})] = 1
-			}
 
 			outcomeBefore := counterSnapshot(t, healthCheckCounter)
 			resultsBefore := counterSnapshot(t, checkerResultCounter)
-			gpuWaitBefore, _ := histogramSnapshot(t, healthCheckGPUWaitDuration)
 			durationBefore, _ := histogramSnapshot(t, healthCheckDuration)
 
 			key := types.NamespacedName{Name: cnh.Name}
@@ -560,7 +549,6 @@ func TestNodeCheckMetricsEmitted(t *testing.T) {
 
 			outcomeAfter := counterSnapshot(t, healthCheckCounter)
 			resultsAfter := counterSnapshot(t, checkerResultCounter)
-			gpuWaitAfter, _ := histogramSnapshot(t, healthCheckGPUWaitDuration)
 			durationAfter, _ := histogramSnapshot(t, healthCheckDuration)
 
 			// Verify the first emission of the counters.
@@ -569,9 +557,6 @@ func TestNodeCheckMetricsEmitted(t *testing.T) {
 			}
 			if got := counterDelta(resultsBefore, resultsAfter); !reflect.DeepEqual(got, wantResultsDelta) {
 				t.Errorf("per-check counter delta = %v, want %v", got, wantResultsDelta)
-			}
-			if got := counterDelta(gpuWaitBefore, gpuWaitAfter); !reflect.DeepEqual(got, wantGPUWaitDelta) {
-				t.Errorf("GPU wait duration sample count delta = %v, want %v", got, wantGPUWaitDelta)
 			}
 			if got := counterDelta(durationBefore, durationAfter); !reflect.DeepEqual(got, wantDurationDelta) {
 				t.Errorf("duration sample count delta = %v, want %v", got, wantDurationDelta)
@@ -591,10 +576,6 @@ func TestNodeCheckMetricsEmitted(t *testing.T) {
 			if got := counterDelta(resultsAfter, counterSnapshot(t, checkerResultCounter)); len(got) != 0 {
 				t.Errorf("per-check counter moved on re-reconcile by %v, want no change", got)
 			}
-			gpuWaitReconciled, _ := histogramSnapshot(t, healthCheckGPUWaitDuration)
-			if got := counterDelta(gpuWaitAfter, gpuWaitReconciled); len(got) != 0 {
-				t.Errorf("GPU wait duration sample count moved on re-reconcile by %v, want no change", got)
-			}
 			durationReconciled, _ := histogramSnapshot(t, healthCheckDuration)
 			if got := counterDelta(durationAfter, durationReconciled); len(got) != 0 {
 				t.Errorf("duration sample count moved on re-reconcile by %v, want no change", got)
@@ -603,10 +584,8 @@ func TestNodeCheckMetricsEmitted(t *testing.T) {
 	}
 }
 
-func TestHealthCheckTimingsFor(t *testing.T) {
+func TestDurationSinceCreated(t *testing.T) {
 	created := metav1.NewTime(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
-	podCreated := metav1.NewTime(created.Add(30 * time.Second))
-	resultWritten := metav1.NewTime(created.Add(125 * time.Second))
 	seconds := func(s int) *time.Duration {
 		d := time.Duration(s) * time.Second
 		return &d
@@ -615,111 +594,75 @@ func TestHealthCheckTimingsFor(t *testing.T) {
 	tests := []struct {
 		name            string
 		created         metav1.Time
-		startedAt       *metav1.Time
-		gpuChecks       bool
 		resultWrittenAt metav1.Time
-		want            healthCheckTimings
+		want            *time.Duration
 	}{
 		{
-			name:            "gpu checks run",
+			name:            "from creation to the result being written",
 			created:         created,
-			startedAt:       &podCreated,
-			gpuChecks:       true,
-			resultWrittenAt: resultWritten,
-			want:            healthCheckTimings{gpuWait: seconds(30), duration: seconds(125)},
+			resultWrittenAt: metav1.NewTime(created.Add(125 * time.Second)),
+			want:            seconds(125),
 		},
 		{
-			// Without the GPU checks the wait for the pod is only controller delay.
-			name:            "no gpu checks has no gpu wait",
-			created:         created,
-			startedAt:       &podCreated,
-			resultWrittenAt: resultWritten,
-			want:            healthCheckTimings{duration: seconds(125)},
-		},
-		{
-			name:            "missing StartedAt has no gpu wait",
-			created:         created,
-			gpuChecks:       true,
-			resultWrittenAt: resultWritten,
-			want:            healthCheckTimings{duration: seconds(125)},
-		},
-		{
-			name:            "missing creation time has no timings",
-			startedAt:       &podCreated,
-			gpuChecks:       true,
-			resultWrittenAt: resultWritten,
+			name:            "missing creation time has no duration",
+			resultWrittenAt: metav1.NewTime(created.Add(125 * time.Second)),
 		},
 		{
 			// The controller's clock can differ slightly from the API server's.
 			name:            "result written before creation from clock skew is clamped to zero",
 			created:         created,
-			startedAt:       &podCreated,
 			resultWrittenAt: metav1.NewTime(created.Add(-time.Second)),
-			want:            healthCheckTimings{duration: seconds(0)},
+			want:            seconds(0),
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cnh := testCNH("cnh-timings")
+			cnh := testCNH("cnh-duration")
 			cnh.CreationTimestamp = tt.created
-			cnh.Status.StartedAt = tt.startedAt
 
-			got := healthCheckTimingsFor(cnh, tt.gpuChecks, tt.resultWrittenAt)
-			if !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("healthCheckTimingsFor() = {gpuWait: %v, duration: %v}, want {gpuWait: %v, duration: %v}",
-					ptrString(got.gpuWait), ptrString(got.duration), ptrString(tt.want.gpuWait), ptrString(tt.want.duration))
+			if diff := cmp.Diff(tt.want, durationSinceCreated(cnh, tt.resultWrittenAt)); diff != "" {
+				t.Errorf("durationSinceCreated() mismatch (-want +got):\n%s", diff)
 			}
 		})
 	}
 }
 
-// ptrString renders an optional duration for test failure messages.
-func ptrString(d *time.Duration) string {
-	if d == nil {
-		return "nil"
-	}
-	return d.String()
-}
-
-// TestNodeCheckTimingsObserved checks recordNodeCheckMetrics observes the timings it is given, and
-// skips the ones that are unknown.
-func TestNodeCheckTimingsObserved(t *testing.T) {
+// TestNodeCheckDurationObserved checks recordNodeCheckMetrics observes the duration it is given, and
+// skips it when unknown.
+func TestNodeCheckDurationObserved(t *testing.T) {
 	seconds := func(s int) *time.Duration {
 		d := time.Duration(s) * time.Second
 		return &d
 	}
-	h100 := gpuNodeInfo{isGPUNode: true, sku: "Standard_ND96isr_H100_v5"}
 
 	tests := []struct {
-		name    string
-		info    gpuNodeInfo
-		status  metav1.ConditionStatus
-		reason  string
-		timings healthCheckTimings
-		// The wanted sample sums by label set. Each listed series must gain exactly one sample.
-		wantGPUWait  map[string]float64
-		wantDuration map[string]float64
+		name     string
+		info     gpuNodeInfo
+		status   metav1.ConditionStatus
+		reason   string
+		duration *time.Duration
+		// The wanted sample sum by label set. Each listed series must gain exactly one sample.
+		want map[string]float64
 	}{
 		{
-			name:         "gpu node with the gpu checks",
-			info:         h100,
-			status:       metav1.ConditionFalse,
-			reason:       ReasonCheckFailed,
-			timings:      healthCheckTimings{gpuWait: seconds(30), duration: seconds(125)},
-			wantGPUWait:  map[string]float64{labelKey(map[string]string{"sku": "nd96isr_h100_v5"}): 30},
-			wantDuration: map[string]float64{labelKey(map[string]string{"node_kind": NodeKindGPU, "sku": "nd96isr_h100_v5", "status": metrics.UnhealthyStatus}): 125},
+			name:     "gpu node",
+			info:     gpuNodeInfo{isGPUNode: true, sku: "Standard_ND96isr_H100_v5"},
+			status:   metav1.ConditionFalse,
+			reason:   ReasonCheckFailed,
+			duration: seconds(125),
+			want:     map[string]float64{labelKey(map[string]string{"node_kind": NodeKindGPU, "sku": "nd96isr_h100_v5", "status": metrics.UnhealthyStatus}): 125},
 		},
 		{
-			name:         "standard node",
-			status:       metav1.ConditionTrue,
-			reason:       ReasonCheckPassed,
-			timings:      healthCheckTimings{duration: seconds(95)},
-			wantDuration: map[string]float64{labelKey(map[string]string{"node_kind": NodeKindStandard, "sku": "", "status": metrics.HealthyStatus}): 95},
+			name:     "standard node",
+			status:   metav1.ConditionTrue,
+			reason:   ReasonCheckPassed,
+			duration: seconds(95),
+			want:     map[string]float64{labelKey(map[string]string{"node_kind": NodeKindStandard, "sku": "", "status": metrics.HealthyStatus}): 95},
 		},
 		{
 			// As for an unsupported node, which never ran a check.
-			name:   "no timings are not observed",
+			name:   "unknown duration is not observed",
 			status: metav1.ConditionUnknown,
 			reason: ReasonCheckUnsupported,
 		},
@@ -727,36 +670,23 @@ func TestNodeCheckTimingsObserved(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			histograms := []struct {
-				name string
-				vec  prometheus.Collector
-				want map[string]float64
-			}{
-				{"gpu wait", healthCheckGPUWaitDuration, tt.wantGPUWait},
-				{"duration", healthCheckDuration, tt.wantDuration},
+			countsBefore, sumsBefore := histogramSnapshot(t, healthCheckDuration)
+			recordNodeCheckMetrics(testCNH("cnh-duration"), tt.info, tt.status, tt.reason, tt.duration)
+			countsAfter, sumsAfter := histogramSnapshot(t, healthCheckDuration)
+
+			wantCounts := map[string]float64{}
+			for key := range tt.want {
+				wantCounts[key] = 1
 			}
-
-			countsBefore := make([]map[string]float64, len(histograms))
-			sumsBefore := make([]map[string]float64, len(histograms))
-			for i, h := range histograms {
-				countsBefore[i], sumsBefore[i] = histogramSnapshot(t, h.vec)
+			wantSums := tt.want
+			if wantSums == nil {
+				wantSums = map[string]float64{}
 			}
-
-			recordNodeCheckMetrics(testCNH("cnh-timings"), tt.info, tt.status, tt.reason, tt.timings)
-
-			for i, h := range histograms {
-				countsAfter, sumsAfter := histogramSnapshot(t, h.vec)
-				wantCounts, wantSums := map[string]float64{}, map[string]float64{}
-				for key, sum := range h.want {
-					wantCounts[key] = 1
-					wantSums[key] = sum
-				}
-				if got := counterDelta(countsBefore[i], countsAfter); !reflect.DeepEqual(got, wantCounts) {
-					t.Errorf("%s duration sample count delta = %v, want %v", h.name, got, wantCounts)
-				}
-				if got := counterDelta(sumsBefore[i], sumsAfter); !sumsMatch(got, wantSums) {
-					t.Errorf("%s duration sample sum delta = %v, want %v", h.name, got, wantSums)
-				}
+			if got := counterDelta(countsBefore, countsAfter); !reflect.DeepEqual(got, wantCounts) {
+				t.Errorf("duration sample count delta = %v, want %v", got, wantCounts)
+			}
+			if got := counterDelta(sumsBefore, sumsAfter); !sumsMatch(got, wantSums) {
+				t.Errorf("duration sample sum delta = %v, want %v", got, wantSums)
 			}
 		})
 	}

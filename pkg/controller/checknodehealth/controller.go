@@ -460,8 +460,8 @@ func (r *CheckNodeHealthReconciler) markUnsupported(ctx context.Context, cnh *ch
 
 	// Unsupported nodes are a terminal outcome that never reaches markCompleted, so count them
 	// here to keep the outcome counter a complete record of every CheckNodeHealth.
-	// No check ran, so there are no timings to observe.
-	recordNodeCheckMetrics(cnh, info, metav1.ConditionUnknown, ReasonCheckUnsupported, healthCheckTimings{})
+	// No check ran, so there is no duration to observe.
+	recordNodeCheckMetrics(cnh, info, metav1.ConditionUnknown, ReasonCheckUnsupported, nil)
 
 	// No pod is created for unsupported nodes, but clean up defensively in case one exists.
 	if err := r.cleanupPod(ctx, cnh); err != nil {
@@ -528,9 +528,9 @@ func (r *CheckNodeHealthReconciler) markCompleted(ctx context.Context, cnh *chmv
 		return healthyStatus, fmt.Errorf("failed to update status: %w", err)
 	}
 
-	timings := healthCheckTimingsFor(cnh, spec.gpu != nil, now)
-	recordNodeCheckMetrics(cnh, info, healthyStatus, reason, timings)
-	logNodeCheckTimings(cnh, info, healthyStatus, reason, timings)
+	duration := durationSinceCreated(cnh, now)
+	recordNodeCheckMetrics(cnh, info, healthyStatus, reason, duration)
+	logNodeCheckDuration(cnh, info, healthyStatus, reason, duration)
 
 	return healthyStatus, nil
 }

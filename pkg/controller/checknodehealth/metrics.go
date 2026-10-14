@@ -33,21 +33,9 @@ var (
 		[]string{"node_kind", "sku", "checker_name", "status", "error_code"},
 	)
 
-	// healthCheckGPUWaitDuration tracks how long completed CheckNodeHealth checks with the GPU checks
-	// waited for their checker pod to be created. It only covers GPU check runs, so it has no node_kind label.
-	// See healthCheckTimings.gpuWait.
-	healthCheckGPUWaitDuration = prometheus.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Name:    "cluster_health_monitor_node_health_check_gpu_wait_duration_seconds",
-			Help:    "Duration in seconds from a node health check with GPU checks being requested to its checker pod being created, labeled by GPU SKU",
-			Buckets: durationBuckets,
-		},
-		[]string{"sku"},
-	)
-
 	// healthCheckDuration tracks how long completed CheckNodeHealth checks took, from the CR being
 	// created to its result being written. That is the time to a verdict that the CR's consumers see.
-	// See healthCheckTimings.duration.
+	// It does not include updating node conditions or deleting the checker pod, which come after.
 	healthCheckDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    "cluster_health_monitor_node_health_check_duration_seconds",
@@ -107,7 +95,6 @@ func init() {
 	ctrlmetrics.Registry.MustRegister(
 		healthCheckCounter,
 		checkerResultCounter,
-		healthCheckGPUWaitDuration,
 		healthCheckDuration,
 	)
 }
@@ -139,62 +126,31 @@ func errorCodeLabel(result chmv1alpha1.CheckResult) string {
 	return metrics.UnknownCode
 }
 
-// healthCheckTimings are how long a completed CheckNodeHealth took. A timing is nil when it is
-// unknown or does not apply.
-type healthCheckTimings struct {
-	// gpuWait is from the CR being created to the checker pod being created (StartedAt), for runs with
-	// the GPU checks. That is mostly waiting for the node to have claimable GPUs, which is capped at
-	// GPUWait. Runs that hit the cap skip the GPU checks, which then report GPUsNotClaimable. It is
-	// nil for runs without the GPU checks, where this span is only controller delay, which
-	// controller-runtime's own reconcile and workqueue metrics already cover.
-	gpuWait *time.Duration
-	// duration is from the CR being created to its result being written, which is when consumers waiting
-	// on the CR get their verdict. It does not include updating node conditions or deleting the checker
-	// pod, which come after the result is written.
-	duration *time.Duration
-}
-
-// healthCheckTimingsFor returns the timings of a completed CheckNodeHealth whose result was written at
-// resultWrittenAt. gpuChecks is whether the run included the GPU checks.
-func healthCheckTimingsFor(cnh *chmv1alpha1.CheckNodeHealth, gpuChecks bool, resultWrittenAt metav1.Time) healthCheckTimings {
+// durationSinceCreated returns how long after the CR was created resultWrittenAt is, which is when
+// consumers waiting on the CR get their verdict. It is nil when the creation time is unknown, and
+// clamped at zero as the controller's clock can differ slightly from the API server's.
+func durationSinceCreated(cnh *chmv1alpha1.CheckNodeHealth, resultWrittenAt metav1.Time) *time.Duration {
 	if cnh.CreationTimestamp.IsZero() {
-		return healthCheckTimings{}
-	}
-	created := cnh.CreationTimestamp
-	timings := healthCheckTimings{duration: elapsed(&created, &resultWrittenAt)}
-	if gpuChecks {
-		timings.gpuWait = elapsed(&created, cnh.Status.StartedAt)
-	}
-	return timings
-}
-
-// elapsed returns the time from one timestamp to another, or nil when either is missing. It is
-// clamped at zero defensively, as the controller's clock can differ slightly from the API server's.
-func elapsed(from, to *metav1.Time) *time.Duration {
-	if from == nil || to == nil {
 		return nil
 	}
-	d := max(to.Sub(from.Time), 0)
+	d := max(resultWrittenAt.Sub(cnh.CreationTimestamp.Time), 0)
 	return &d
 }
 
-// recordNodeCheckMetrics emits the outcome counter and the timings once, and the per-check counter
-// once per reported result.
+// recordNodeCheckMetrics emits the outcome counter and duration once, and the per-check counter
+// once per reported result. A nil duration is not observed.
 //
 // Call only after the status update that sets FinishedAt on the CR has succeeded. That is what makes
 // subsequent reconciles short circuit through isCompleted, so emitting before it would cause double
 // counting when the reconcile is retried.
-func recordNodeCheckMetrics(cnh *chmv1alpha1.CheckNodeHealth, info gpuNodeInfo, status metav1.ConditionStatus, reason string, timings healthCheckTimings) {
+func recordNodeCheckMetrics(cnh *chmv1alpha1.CheckNodeHealth, info gpuNodeInfo, status metav1.ConditionStatus, reason string, duration *time.Duration) {
 	nodeKind := nodeKindLabel(info)
 	sku := skuLabel(info)
 	overall := statusLabel(status)
 	healthCheckCounter.WithLabelValues(nodeKind, sku, overall, reason).Inc()
 
-	if timings.gpuWait != nil {
-		healthCheckGPUWaitDuration.WithLabelValues(sku).Observe(timings.gpuWait.Seconds())
-	}
-	if timings.duration != nil {
-		healthCheckDuration.WithLabelValues(nodeKind, sku, overall).Observe(timings.duration.Seconds())
+	if duration != nil {
+		healthCheckDuration.WithLabelValues(nodeKind, sku, overall).Observe(duration.Seconds())
 	}
 
 	for _, result := range cnh.Status.Results {
@@ -208,10 +164,10 @@ func recordNodeCheckMetrics(cnh *chmv1alpha1.CheckNodeHealth, info gpuNodeInfo, 
 	}
 }
 
-// logNodeCheckTimings logs the timings of a completed CheckNodeHealth alongside the node it ran on. The histograms cannot single out a run, so this is what finds the
-// slow ones. Durations are in seconds, and are omitted when unknown, so they can be queried as
-// numbers.
-func logNodeCheckTimings(cnh *chmv1alpha1.CheckNodeHealth, info gpuNodeInfo, status metav1.ConditionStatus, reason string, timings healthCheckTimings) {
+// logNodeCheckDuration logs how long a completed CheckNodeHealth took alongside the node it ran on.
+// The histogram cannot single out a run, so this is what finds the slow ones. The duration is in
+// seconds, and is omitted when unknown, so it can be queried as a number.
+func logNodeCheckDuration(cnh *chmv1alpha1.CheckNodeHealth, info gpuNodeInfo, status metav1.ConditionStatus, reason string, duration *time.Duration) {
 	keysAndValues := []any{
 		"name", cnh.Name,
 		"node", cnh.Spec.NodeRef.Name,
@@ -221,18 +177,9 @@ func logNodeCheckTimings(cnh *chmv1alpha1.CheckNodeHealth, info gpuNodeInfo, sta
 		"status", statusLabel(status),
 		"reason", reason,
 	}
-
-	for _, timing := range []struct {
-		key      string
-		duration *time.Duration
-	}{
-		{"gpuWaitSeconds", timings.gpuWait},
-		{"durationSeconds", timings.duration},
-	} {
-		if timing.duration != nil {
-			keysAndValues = append(keysAndValues, timing.key, timing.duration.Seconds())
-		}
+	if duration != nil {
+		keysAndValues = append(keysAndValues, "durationSeconds", duration.Seconds())
 	}
 
-	klog.InfoS("CheckNodeHealth timings", keysAndValues...)
+	klog.InfoS("CheckNodeHealth completed", keysAndValues...)
 }

@@ -104,18 +104,13 @@ func recordedRun(pod *corev1.Pod, live gpuNodeInfo) (gpuNodeInfo, checkerSpec) {
 	case NodeKindStandard:
 		info.isGPUNode = false
 	}
-	sku, ranGPUChecks := pod.Annotations[annotationGPUChecksSKU]
-	if ranGPUChecks {
+	sku, gpuChecks := pod.Annotations[annotationGPUChecksSKU]
+	if gpuChecks {
 		info.sku = sku
 	}
 
 	spec := checkerSpec{gpuNode: info.isGPUNode}
-	spec.checkerNames, spec.timeout = expectedRun(ranGPUChecks, info.sku)
-	if ranGPUChecks {
-		// Only the SKU is recorded on the pod, so this marks that the run includes the GPU checks
-		// rather than how they were configured.
-		spec.gpu = &gpuChecks{sku: info.sku}
-	}
+	spec.checkerNames, spec.timeout = expectedRun(gpuChecks, info.sku)
 	return info, spec
 }
 
