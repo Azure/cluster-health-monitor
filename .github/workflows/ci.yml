@@ -52,7 +52,7 @@ jobs:
           docker rm msgo
           echo "$HOME/microsoft-go/bin" >> "$GITHUB_PATH"
           echo "$HOME/go/bin" >> "$GITHUB_PATH"
-      - uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5.1.0
+      - uses: azure/setup-kubectl@bda439f5f36b99b262ebdcd3613869bddb064c8e # v5.2.0
       - name: Install kind
         run: go install sigs.k8s.io/kind@v0.29.0
       - name: Install ginkgo
