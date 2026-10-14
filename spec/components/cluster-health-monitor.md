@@ -110,7 +110,6 @@ Per-pod variant, used by the per-pod CoreDNS checks. Same labels as above, plus:
 - A run that **fails a check** → `status="Unhealthy"`, with `error_code` naming the failure.
 - A run that **errors out** (e.g. timeout, unexpected error) → `status="Unknown"`.
 
-So a dashboard/alert typically watches the rate of `status="Unhealthy"` or `status="Unknown"` per `checker_name` to detect degraded DNS, slow pod startup, API-server problems, etc.
 
 Example scrape output:
 
@@ -120,14 +119,3 @@ cluster_health_monitor_checker_result_total{checker_type="DNS",checker_name="Ext
 cluster_health_monitor_checker_result_total{checker_type="PodStartup",checker_name="PodStartup",status="Healthy",error_code="Healthy"} 10
 cluster_health_monitor_pod_health_result_total{checker_type="DNS",checker_name="InternalCoreDNSPerPod",pod_namespace="kube-system",pod_name="coredns-abc",status="Healthy",error_code="Healthy"} 42
 ```
-
-## Source map
-
-| Concern           | Location                                 |
-|-------------------|------------------------------------------|
-| Entry point / CLI | `cmd/clusterhealthmonitor/main.go`       |
-| Config types      | `pkg/config`                             |
-| Scheduler         | `pkg/scheduler/scheduler.go`             |
-| Checker interface | `pkg/checker/checker.go`                 |
-| Metrics           | `pkg/metrics`                            |
-| Deployment/config | `manifests/base/cluster-health-monitor/` |
