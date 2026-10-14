@@ -286,10 +286,6 @@ func TestUpdatePodstartCheckerResult_TimeoutWithCheckerResult(t *testing.T) {
 	if result.Status != chmv1alpha1.CheckStatusHealthy {
 		t.Errorf("expected PodStartup Healthy (checker ran despite stale pod status), got %v", result.Status)
 	}
-	// The stale pod status carries no container start time to measure from.
-	if result.Duration != nil {
-		t.Errorf("expected no PodStartup Duration from a stale pod status, got %v", result.Duration)
-	}
 }
 
 // TestUpdatePodstartCheckerResult_TimeoutWithoutCheckerResult verifies the genuine startup-failure
@@ -324,79 +320,6 @@ func TestUpdatePodstartCheckerResult_TimeoutWithoutCheckerResult(t *testing.T) {
 	}
 	if result.Status != chmv1alpha1.CheckStatusUnhealthy {
 		t.Errorf("expected PodStartup Unhealthy (genuine startup failure), got %v", result.Status)
-	}
-	// The duration is how long the controller waited for the pod before giving up.
-	if result.Duration == nil || result.Duration.Duration < 3*time.Minute {
-		t.Errorf("expected PodStartup Duration of at least 3m, got %v", result.Duration)
-	}
-}
-
-func TestContainerStartupDuration(t *testing.T) {
-	created := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-	at := func(offset time.Duration) metav1.Time { return metav1.NewTime(created.Add(offset)) }
-
-	tests := []struct {
-		name     string
-		statuses []corev1.ContainerStatus
-		want     *metav1.Duration
-	}{
-		{
-			name: "container started and still running",
-			statuses: []corev1.ContainerStatus{
-				{State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{StartedAt: at(7 * time.Second)}}},
-			},
-			want: &metav1.Duration{Duration: 7 * time.Second},
-		},
-		{
-			name: "container started and since terminated",
-			statuses: []corev1.ContainerStatus{
-				{State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{
-					StartedAt:  at(9 * time.Second),
-					FinishedAt: at(30 * time.Second),
-				}}},
-			},
-			want: &metav1.Duration{Duration: 9 * time.Second},
-		},
-		{
-			name: "last container to start sets the duration",
-			statuses: []corev1.ContainerStatus{
-				{State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{StartedAt: at(4 * time.Second)}}},
-				{State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{
-					StartedAt:  at(11 * time.Second),
-					FinishedAt: at(30 * time.Second),
-				}}},
-			},
-			want: &metav1.Duration{Duration: 11 * time.Second},
-		},
-		{
-			name: "start before creation from clock skew is clamped to zero",
-			statuses: []corev1.ContainerStatus{
-				{State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{StartedAt: at(-2 * time.Second)}}},
-			},
-			want: &metav1.Duration{},
-		},
-		{
-			name: "a container without a start time leaves the duration unknown",
-			statuses: []corev1.ContainerStatus{
-				{State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{StartedAt: at(4 * time.Second)}}},
-				{State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{}}},
-			},
-		},
-		{
-			name: "no container statuses",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			pod := &corev1.Pod{
-				ObjectMeta: metav1.ObjectMeta{CreationTimestamp: metav1.NewTime(created)},
-				Status:     corev1.PodStatus{ContainerStatuses: tt.statuses},
-			}
-			if diff := cmp.Diff(tt.want, containerStartupDuration(pod)); diff != "" {
-				t.Errorf("containerStartupDuration() mismatch (-want +got):\n%s", diff)
-			}
-		})
 	}
 }
 

@@ -33,16 +33,6 @@ var (
 		[]string{"node_kind", "sku", "checker_name", "status", "error_code"},
 	)
 
-	// checkerDuration tracks how long the individual checks within a CheckNodeHealth took.
-	checkerDuration = prometheus.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Name:    "cluster_health_monitor_node_checker_duration_seconds",
-			Help:    "Duration in seconds of individual node checks, labeled by node kind, GPU SKU, check name and status",
-			Buckets: durationBuckets,
-		},
-		[]string{"node_kind", "sku", "checker_name", "status"},
-	)
-
 	// healthCheckGPUWaitDuration tracks how long completed CheckNodeHealth checks with the GPU checks
 	// waited for their checker pod to be created. It only covers GPU check runs, so it has no node_kind label.
 	// See healthCheckTimings.gpuWait.
@@ -68,7 +58,7 @@ var (
 	)
 )
 
-// durationBuckets spans from the quickest individual checks up to 30 minutes, which leaves headroom
+// durationBuckets spans from the quickest health checks up to 30 minutes, which leaves headroom
 // above GPUPodTimeout for slower checks to be added.
 // TODO adjust buckets based on observed durations.
 var durationBuckets = []float64{1, 2.5, 5, 10, 15, 30, 45, 60, 90, 120, 180, 300, 450, 600, 900, 1200, 1800}
@@ -117,7 +107,6 @@ func init() {
 	ctrlmetrics.Registry.MustRegister(
 		healthCheckCounter,
 		checkerResultCounter,
-		checkerDuration,
 		healthCheckGPUWaitDuration,
 		healthCheckDuration,
 	)
@@ -190,7 +179,7 @@ func elapsed(from, to *metav1.Time) *time.Duration {
 }
 
 // recordNodeCheckMetrics emits the outcome counter and the timings once, and the per-check counter
-// and duration once per reported result.
+// once per reported result.
 //
 // Call only after the status update that sets FinishedAt on the CR has succeeded. That is what makes
 // subsequent reconciles short circuit through isCompleted, so emitting before it would cause double
@@ -216,20 +205,10 @@ func recordNodeCheckMetrics(cnh *chmv1alpha1.CheckNodeHealth, info gpuNodeInfo, 
 			string(result.Status),
 			errorCodeLabel(result),
 		).Inc()
-
-		if result.Duration != nil {
-			checkerDuration.WithLabelValues(
-				nodeKind,
-				sku,
-				result.Name,
-				string(result.Status),
-			).Observe(result.Duration.Seconds())
-		}
 	}
 }
 
-// logNodeCheckTimings logs the timings of a completed CheckNodeHealth and each of its checks,
-// alongside the node it ran on. The histograms cannot single out a run, so this is what finds the
+// logNodeCheckTimings logs the timings of a completed CheckNodeHealth alongside the node it ran on. The histograms cannot single out a run, so this is what finds the
 // slow ones. Durations are in seconds, and are omitted when unknown, so they can be queried as
 // numbers.
 func logNodeCheckTimings(cnh *chmv1alpha1.CheckNodeHealth, info gpuNodeInfo, status metav1.ConditionStatus, reason string, timings healthCheckTimings) {
@@ -254,14 +233,6 @@ func logNodeCheckTimings(cnh *chmv1alpha1.CheckNodeHealth, info gpuNodeInfo, sta
 			keysAndValues = append(keysAndValues, timing.key, timing.duration.Seconds())
 		}
 	}
-
-	checkSeconds := map[string]float64{}
-	for _, result := range cnh.Status.Results {
-		if result.Duration != nil {
-			checkSeconds[result.Name] = result.Duration.Seconds()
-		}
-	}
-	keysAndValues = append(keysAndValues, "checkSeconds", checkSeconds)
 
 	klog.InfoS("CheckNodeHealth timings", keysAndValues...)
 }
