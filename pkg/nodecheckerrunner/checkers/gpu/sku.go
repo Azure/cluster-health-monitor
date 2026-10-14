@@ -46,3 +46,12 @@ func profileFor(sku string) (skuProfile, bool) {
 	v, ok := skuProfiles[normalizeSKU(sku)]
 	return v, ok
 }
+
+// ProfiledSKU returns the normalized form of sku, and whether the GPU checks have a profile for it.
+// Only profiled SKUs are returned as true, so callers can rely on the set of values being the
+// profiles defined here.
+func ProfiledSKU(sku string) (string, bool) {
+	normalized := normalizeSKU(sku)
+	_, ok := skuProfiles[normalized]
+	return normalized, ok
+}

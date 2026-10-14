@@ -1092,6 +1092,45 @@ func withoutRunAnnotations(pod *corev1.Pod) *corev1.Pod {
 	return pod
 }
 
+// TestCheckTimestampsComeFromThePodAfterRestart covers a controller that restarted mid-check. A
+// restart only loses in-memory state, so it is simulated by having a fresh reconciler reconcile the
+// state a restarted controller would find: the controller had created the checker pod but went down
+// before recording StartedAt, and the pod finished before it came back.
+func TestCheckTimestampsComeFromThePodAfterRestart(t *testing.T) {
+	reconciler, fakeClient, _ := setupTest()
+	ctx := context.Background()
+
+	// The pod was created and finished well before now.
+	podCreated := metav1.NewTime(time.Now().Add(-10 * time.Minute).Truncate(time.Second))
+	containerFinished := metav1.NewTime(podCreated.Add(40 * time.Second))
+
+	cnh := testCNH("restarted-mid-check")
+	if err := fakeClient.Create(ctx, cnh); err != nil {
+		t.Fatalf("creating the CR: %v", err)
+	}
+
+	pod := finishedCheckerPod(cnh.Name, false, "")
+	pod.CreationTimestamp = podCreated
+	pod.Status.ContainerStatuses[0].State.Terminated = &corev1.ContainerStateTerminated{
+		StartedAt:  metav1.NewTime(podCreated.Add(5 * time.Second)),
+		FinishedAt: containerFinished,
+	}
+	if err := fakeClient.Create(ctx, pod); err != nil {
+		t.Fatalf("creating the checker pod: %v", err)
+	}
+
+	got := reconcileUntilTerminal(t, reconciler, fakeClient, types.NamespacedName{Name: cnh.Name})
+
+	// The timestamps come from the pod, so the CR records when the check actually ran rather than
+	// when the restarted controller got to it.
+	if got.Status.StartedAt == nil || !got.Status.StartedAt.Equal(&podCreated) {
+		t.Errorf("StartedAt = %v, want the pod's creation time %v", got.Status.StartedAt, podCreated)
+	}
+	if got.Status.FinishedAt == nil || !got.Status.FinishedAt.Equal(&containerFinished) {
+		t.Errorf("FinishedAt = %v, want the container's termination time %v", got.Status.FinishedAt, containerFinished)
+	}
+}
+
 func TestCheckerSpecFor(t *testing.T) {
 	t.Parallel()
 
