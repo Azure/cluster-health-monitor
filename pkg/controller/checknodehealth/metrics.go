@@ -10,7 +10,6 @@ import (
 
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
 	"github.com/Azure/cluster-health-monitor/pkg/metrics"
-	"github.com/Azure/cluster-health-monitor/pkg/nodecheckerrunner"
 	"github.com/Azure/cluster-health-monitor/pkg/nodecheckerrunner/checkers/gpu"
 )
 
@@ -151,8 +150,8 @@ func errorCodeLabel(result chmv1alpha1.CheckResult) string {
 	return metrics.UnknownCode
 }
 
-// healthCheckTimings are how long a completed CheckNodeHealth and each of its checks took. A timing
-// is nil, or missing from checkers, when it is unknown or does not apply.
+// healthCheckTimings are how long a completed CheckNodeHealth took. A timing is nil when it is
+// unknown or does not apply.
 type healthCheckTimings struct {
 	// gpuWait is from the CR being created to the checker pod being created (StartedAt), for runs with
 	// the GPU checks. That is mostly waiting for the node to have claimable GPUs, which is capped at
@@ -164,43 +163,20 @@ type healthCheckTimings struct {
 	// on the CR get their verdict. It does not include updating node conditions or deleting the checker
 	// pod, which come after the result is written.
 	duration *time.Duration
-	// checkers is how long each check took, by check name. The checker pod times its checks, in
-	// nodecheckerrunner.CheckerDurationsAnnotation, and the controller times PodStartup from the pod.
-	checkers map[string]time.Duration
 }
 
 // healthCheckTimingsFor returns the timings of a completed CheckNodeHealth whose result was written at
-// resultWrittenAt. gpuChecks is whether the run included the GPU checks, and podStartup is how long
-// the checker pod took to start, or nil when it never did.
-func healthCheckTimingsFor(cnh *chmv1alpha1.CheckNodeHealth, gpuChecks bool, resultWrittenAt metav1.Time, podStartup *time.Duration) healthCheckTimings {
-	timings := healthCheckTimings{checkers: checkerDurationsFor(cnh, podStartup)}
+// resultWrittenAt. gpuChecks is whether the run included the GPU checks.
+func healthCheckTimingsFor(cnh *chmv1alpha1.CheckNodeHealth, gpuChecks bool, resultWrittenAt metav1.Time) healthCheckTimings {
 	if cnh.CreationTimestamp.IsZero() {
-		return timings
+		return healthCheckTimings{}
 	}
 	created := cnh.CreationTimestamp
-	timings.duration = elapsed(&created, &resultWrittenAt)
+	timings := healthCheckTimings{duration: elapsed(&created, &resultWrittenAt)}
 	if gpuChecks {
 		timings.gpuWait = elapsed(&created, cnh.Status.StartedAt)
 	}
 	return timings
-}
-
-// checkerDurationsFor returns how long each of a CheckNodeHealth's checks took: the ones the checker
-// pod recorded in its annotation, and PodStartup when podStartup is set. A malformed annotation only
-// leaves the checker pod's checks untimed.
-func checkerDurationsFor(cnh *chmv1alpha1.CheckNodeHealth, podStartup *time.Duration) map[string]time.Duration {
-	durations, err := nodecheckerrunner.ParseCheckerDurations(cnh.Annotations)
-	if err != nil {
-		klog.ErrorS(err, "Ignoring the checker durations", "name", cnh.Name)
-		durations = nil
-	}
-	if podStartup != nil {
-		if durations == nil {
-			durations = map[string]time.Duration{}
-		}
-		durations[CheckerPodStartup] = *podStartup
-	}
-	return durations
 }
 
 // elapsed returns the time from one timestamp to another, or nil when either is missing. It is
@@ -241,13 +217,13 @@ func recordNodeCheckMetrics(cnh *chmv1alpha1.CheckNodeHealth, info gpuNodeInfo, 
 			errorCodeLabel(result),
 		).Inc()
 
-		if duration, ok := timings.checkers[result.Name]; ok {
+		if result.Duration != nil {
 			checkerDuration.WithLabelValues(
 				nodeKind,
 				sku,
 				result.Name,
 				string(result.Status),
-			).Observe(duration.Seconds())
+			).Observe(result.Duration.Seconds())
 		}
 	}
 }
@@ -280,8 +256,10 @@ func logNodeCheckTimings(cnh *chmv1alpha1.CheckNodeHealth, info gpuNodeInfo, sta
 	}
 
 	checkSeconds := map[string]float64{}
-	for name, duration := range timings.checkers {
-		checkSeconds[name] = duration.Seconds()
+	for _, result := range cnh.Status.Results {
+		if result.Duration != nil {
+			checkSeconds[result.Name] = result.Duration.Seconds()
+		}
 	}
 	keysAndValues = append(keysAndValues, "checkSeconds", checkSeconds)
 

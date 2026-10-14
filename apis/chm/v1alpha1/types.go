@@ -104,6 +104,11 @@ type CheckResult struct {
 	// +kubebuilder:validation:Pattern=`^[A-Z][a-zA-Z0-9]*$`
 	// +kubebuilder:validation:MaxLength=253
 	ErrorCode string `json:"errorCode,omitempty"`
+
+	// Duration is how long the check took to produce this result, including any retries.
+	// Unset when the check never ran or its duration could not be determined.
+	// +optional
+	Duration *metav1.Duration `json:"duration,omitempty"`
 }
 
 // +kubebuilder:object:root=true

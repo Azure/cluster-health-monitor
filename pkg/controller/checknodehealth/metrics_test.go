@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/google/go-cmp/cmp"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 	corev1 "k8s.io/api/core/v1"
@@ -25,7 +24,6 @@ import (
 
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
 	"github.com/Azure/cluster-health-monitor/pkg/metrics"
-	"github.com/Azure/cluster-health-monitor/pkg/nodecheckerrunner"
 	"github.com/Azure/cluster-health-monitor/pkg/nodecheckerrunner/checkers/gpu"
 	"github.com/Azure/cluster-health-monitor/pkg/nodecheckerrunner/checkers/podnetwork"
 )
@@ -302,8 +300,6 @@ type nodeCheckMetricsCase struct {
 	pod func(cnhName string) *corev1.Pod
 	// seededResults stand in for the results the checker pod would have written to the CR.
 	seededResults []chmv1alpha1.CheckResult
-	// seededDurations stands in for the checker pod's CheckerDurationsAnnotation, as raw JSON.
-	seededDurations string
 	// failTerminalUpdate rejects the status update that sets FinishedAt, so the reconcile reaches
 	// markCompleted but the CR never completes.
 	failTerminalUpdate bool
@@ -369,9 +365,8 @@ func TestNodeCheckMetricsEmitted(t *testing.T) {
 			wantNodeKind: NodeKindStandard,
 			pod:          startedCheckerPod,
 			seededResults: []chmv1alpha1.CheckResult{
-				{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusHealthy, Message: "reported by the checker pod"},
+				{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusHealthy, Message: "reported by the checker pod", Duration: &metav1.Duration{Duration: 3 * time.Second}},
 			},
-			seededDurations: `{"PodNetwork":"3s"}`,
 			wantCHMNodeHealthCheckTotal: map[string]string{
 				"status": metrics.HealthyStatus,
 				"reason": ReasonCheckPassed,
@@ -388,8 +383,8 @@ func TestNodeCheckMetricsEmitted(t *testing.T) {
 			},
 		},
 		{
-			// A checker image that predates CheckerDurationsAnnotation reports results without timing
-			// them. Those results still count, but must not be observed as a zero duration.
+			// A checker image that predates CheckResult.Duration reports results without one. Those
+			// results still count, but must not be observed as a zero duration.
 			name:         "result from an older checker image is counted but not timed",
 			wantNodeKind: NodeKindStandard,
 			pod:          startedCheckerPod,
@@ -420,9 +415,9 @@ func TestNodeCheckMetricsEmitted(t *testing.T) {
 					Status:    chmv1alpha1.CheckStatusUnhealthy,
 					ErrorCode: podnetwork.ErrorCodeNetworkConnectivityFailed,
 					Message:   "reported by the checker pod",
+					Duration:  &metav1.Duration{Duration: 20 * time.Second},
 				},
 			},
-			seededDurations: `{"PodNetwork":"20s"}`,
 			wantCHMNodeHealthCheckTotal: map[string]string{
 				"status": metrics.UnhealthyStatus,
 				"reason": ReasonCheckFailed,
@@ -506,15 +501,15 @@ func TestNodeCheckMetricsEmitted(t *testing.T) {
 			pod:             gpuCheckerPod(startedCheckerPod),
 			enableGPUChecks: true,
 			seededResults: []chmv1alpha1.CheckResult{
-				{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusHealthy, Message: "reported by the checker pod"},
+				{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusHealthy, Message: "reported by the checker pod", Duration: &metav1.Duration{Duration: 3 * time.Second}},
 				{
 					Name:      "NcclAllReduce",
 					Status:    chmv1alpha1.CheckStatusUnhealthy,
 					ErrorCode: gpu.ErrorCodeCorrectness,
 					Message:   "reported by the checker pod",
+					Duration:  &metav1.Duration{Duration: 4 * time.Minute},
 				},
 			},
-			seededDurations: `{"PodNetwork":"3s","NcclAllReduce":"4m0s"}`,
 			wantCHMNodeHealthCheckTotal: map[string]string{
 				// Unhealthy because every result counts, GPU checks included.
 				"status": metrics.UnhealthyStatus,
@@ -559,9 +554,6 @@ func TestNodeCheckMetricsEmitted(t *testing.T) {
 			}
 
 			cnh := testCNH("cnh-" + strings.ReplaceAll(tt.name, " ", "-"))
-			if tt.seededDurations != "" {
-				cnh.Annotations = map[string]string{nodecheckerrunner.CheckerDurationsAnnotation: tt.seededDurations}
-			}
 			if err := fakeClient.Create(ctx, cnh); err != nil {
 				t.Fatalf("creating the CR: %v", err)
 			}
@@ -683,10 +675,7 @@ func TestHealthCheckTimingsFor(t *testing.T) {
 		startedAt       *metav1.Time
 		gpuChecks       bool
 		resultWrittenAt metav1.Time
-		// durations is the CR's CheckerDurationsAnnotation, unset when empty.
-		durations  string
-		podStartup *time.Duration
-		want       healthCheckTimings
+		want            healthCheckTimings
 	}{
 		{
 			name:            "gpu checks run",
@@ -725,34 +714,6 @@ func TestHealthCheckTimingsFor(t *testing.T) {
 			resultWrittenAt: metav1.NewTime(created.Add(-time.Second)),
 			want:            healthCheckTimings{duration: seconds(0)},
 		},
-		{
-			name:            "checks are timed from the checker's annotation and PodStartup from the pod",
-			created:         created,
-			startedAt:       &podCreated,
-			resultWrittenAt: resultWritten,
-			durations:       `{"PodNetwork":"3s","NcclAllReduce":"4m0s"}`,
-			podStartup:      seconds(12),
-			want: healthCheckTimings{
-				duration: seconds(125),
-				checkers: map[string]time.Duration{
-					"PodStartup":    12 * time.Second,
-					"PodNetwork":    3 * time.Second,
-					"NcclAllReduce": 4 * time.Minute,
-				},
-			},
-		},
-		{
-			name:            "a malformed annotation leaves the checker's checks untimed",
-			created:         created,
-			startedAt:       &podCreated,
-			resultWrittenAt: resultWritten,
-			durations:       `not json`,
-			podStartup:      seconds(12),
-			want: healthCheckTimings{
-				duration: seconds(125),
-				checkers: map[string]time.Duration{"PodStartup": 12 * time.Second},
-			},
-		},
 	}
 
 	for _, tt := range tests {
@@ -760,16 +721,22 @@ func TestHealthCheckTimingsFor(t *testing.T) {
 			cnh := testCNH("cnh-timings")
 			cnh.CreationTimestamp = tt.created
 			cnh.Status.StartedAt = tt.startedAt
-			if tt.durations != "" {
-				cnh.Annotations = map[string]string{nodecheckerrunner.CheckerDurationsAnnotation: tt.durations}
-			}
 
-			got := healthCheckTimingsFor(cnh, tt.gpuChecks, tt.resultWrittenAt, tt.podStartup)
-			if diff := cmp.Diff(tt.want, got, cmp.AllowUnexported(healthCheckTimings{})); diff != "" {
-				t.Errorf("healthCheckTimingsFor() mismatch (-want +got):\n%s", diff)
+			got := healthCheckTimingsFor(cnh, tt.gpuChecks, tt.resultWrittenAt)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("healthCheckTimingsFor() = {gpuWait: %v, duration: %v}, want {gpuWait: %v, duration: %v}",
+					ptrString(got.gpuWait), ptrString(got.duration), ptrString(tt.want.gpuWait), ptrString(tt.want.duration))
 			}
 		})
 	}
+}
+
+// ptrString renders an optional duration for test failure messages.
+func ptrString(d *time.Duration) string {
+	if d == nil {
+		return "nil"
+	}
+	return d.String()
 }
 
 // TestNodeCheckTimingsObserved checks recordNodeCheckMetrics observes the timings it is given, and
@@ -852,8 +819,8 @@ func TestNodeCheckTimingsObserved(t *testing.T) {
 	}
 }
 
-// TestNodeCheckResultDurationObserved checks each result's duration is observed, and results without
-// one are skipped.
+// TestNodeCheckResultDurationObserved checks each result's own duration is observed, and results
+// without one are skipped.
 func TestNodeCheckResultDurationObserved(t *testing.T) {
 	started := metav1.NewTime(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
 	finished := metav1.NewTime(started.Add(10 * time.Minute))
@@ -862,19 +829,14 @@ func TestNodeCheckResultDurationObserved(t *testing.T) {
 	cnh.Status.StartedAt = &started
 	cnh.Status.FinishedAt = &finished
 	cnh.Status.Results = []chmv1alpha1.CheckResult{
-		{Name: "PodStartup", Status: chmv1alpha1.CheckStatusHealthy},
-		{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusHealthy},
-		{Name: "NcclAllReduce", Status: chmv1alpha1.CheckStatusUnhealthy, ErrorCode: gpu.ErrorCodeCorrectness},
+		{Name: "PodStartup", Status: chmv1alpha1.CheckStatusHealthy, Duration: &metav1.Duration{Duration: 12 * time.Second}},
+		{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusHealthy, Duration: &metav1.Duration{Duration: 2500 * time.Millisecond}},
+		{Name: "NcclAllReduce", Status: chmv1alpha1.CheckStatusUnhealthy, ErrorCode: gpu.ErrorCodeCorrectness, Duration: &metav1.Duration{Duration: 25 * time.Minute}},
 		{Name: "GpuHostBandwidth", Status: chmv1alpha1.CheckStatusUnknown, ErrorCode: ErrorCodeCheckNotReported},
 	}
-	timings := healthCheckTimings{checkers: map[string]time.Duration{
-		"PodStartup":    12 * time.Second,
-		"PodNetwork":    2500 * time.Millisecond,
-		"NcclAllReduce": 25 * time.Minute,
-	}}
 
 	countsBefore, sumsBefore := histogramSnapshot(t, checkerDuration)
-	recordNodeCheckMetrics(cnh, gpuNodeInfo{isGPUNode: true, sku: "Standard_NV72ads_A10_v5"}, metav1.ConditionFalse, ReasonCheckFailed, timings)
+	recordNodeCheckMetrics(cnh, gpuNodeInfo{isGPUNode: true, sku: "Standard_NV72ads_A10_v5"}, metav1.ConditionFalse, ReasonCheckFailed, healthCheckTimings{})
 	countsAfter, sumsAfter := histogramSnapshot(t, checkerDuration)
 
 	key := func(name string, status chmv1alpha1.CheckStatus) string {

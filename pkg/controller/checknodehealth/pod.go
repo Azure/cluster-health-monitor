@@ -220,7 +220,7 @@ func (r *CheckNodeHealthReconciler) updatePodstartCheckerResult(ctx context.Cont
 	// - Even if containers crash after starting, PodStartup is Healthy because the container
 	//   runtime successfully started them. The crash is an application(Checker) issue, not a node issue.
 	if r.areAllContainersStarted(pod) {
-		return r.markPodStartupResult(ctx, cnh, chmv1alpha1.CheckStatusHealthy, "All containers started successfully")
+		return r.markPodStartupResult(ctx, cnh, chmv1alpha1.CheckStatusHealthy, "All containers started successfully", containerStartupDuration(pod))
 	}
 
 	// Case 2: Pod timeout
@@ -238,9 +238,10 @@ func (r *CheckNodeHealthReconciler) updatePodstartCheckerResult(ctx context.Cont
 		// treating this as a startup failure would be a false positive. Report PodStartup as Healthy.
 		// The pod status is stale here, so there is no start time to measure the duration from.
 		if r.hasCheckerReportedResult(cnh) {
-			return r.markPodStartupResult(ctx, cnh, chmv1alpha1.CheckStatusHealthy, "All containers started successfully")
+			return r.markPodStartupResult(ctx, cnh, chmv1alpha1.CheckStatusHealthy, "All containers started successfully", nil)
 		}
-		return r.markPodStartupResult(ctx, cnh, chmv1alpha1.CheckStatusUnhealthy, "Pod stuck in Pending state - timeout exceeded")
+		waited := &metav1.Duration{Duration: time.Since(pod.CreationTimestamp.Time)}
+		return r.markPodStartupResult(ctx, cnh, chmv1alpha1.CheckStatusUnhealthy, "Pod stuck in Pending state - timeout exceeded", waited)
 	}
 
 	// Case 3: Still initializing or container runtime is retrying
@@ -309,15 +310,14 @@ func containersStartedAt(pod *corev1.Pod) *metav1.Time {
 }
 
 // containerStartupDuration returns how long after the pod was created its last container started,
-// which is the PodStartup check's duration, or nil when a container start time is missing.
-func containerStartupDuration(pod *corev1.Pod) *time.Duration {
+// or nil when a container start time is missing.
+func containerStartupDuration(pod *corev1.Pod) *metav1.Duration {
 	startedAt := containersStartedAt(pod)
 	if startedAt == nil || pod.CreationTimestamp.IsZero() {
 		return nil
 	}
 	// Clamp clock skew between the API server and the kubelet rather than report a negative duration.
-	d := max(startedAt.Sub(pod.CreationTimestamp.Time), 0)
-	return &d
+	return &metav1.Duration{Duration: max(startedAt.Sub(pod.CreationTimestamp.Time), 0)}
 }
 
 // checkFinishedAt returns when the check on the pod ended, taken from timestamps the API server
@@ -362,13 +362,15 @@ func containersTerminatedAt(pod *corev1.Pod) metav1.Time {
 	return last
 }
 
-// markPodStartupResult marks the CheckNodeHealth with a PodStartup check result
-func (r *CheckNodeHealthReconciler) markPodStartupResult(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, status chmv1alpha1.CheckStatus, message string) error {
+// markPodStartupResult marks the CheckNodeHealth with a PodStartup check result. A nil duration
+// leaves the result without one.
+func (r *CheckNodeHealthReconciler) markPodStartupResult(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, status chmv1alpha1.CheckStatus, message string, duration *metav1.Duration) error {
 	// Create or update the PodStartup result
 	result := chmv1alpha1.CheckResult{
-		Name:    "PodStartup",
-		Status:  status,
-		Message: message,
+		Name:     "PodStartup",
+		Status:   status,
+		Message:  message,
+		Duration: duration,
 	}
 
 	// Update or append the result

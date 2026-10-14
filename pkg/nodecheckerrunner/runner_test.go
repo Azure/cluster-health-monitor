@@ -125,14 +125,6 @@ func TestRunCheckers(t *testing.T) {
 						t.Errorf("Checker2 expected error code ERR001, got %s", result.ErrorCode)
 					}
 				}
-
-				// Each checker's duration accumulates in the one annotation.
-				durations := durationsOf(t, cnh)
-				for _, name := range []string{"Checker1", "Checker2"} {
-					if _, ok := durations[name]; !ok {
-						t.Errorf("%s has no recorded duration, durations: %v", name, durations)
-					}
-				}
 			},
 		},
 		{
@@ -163,12 +155,11 @@ func TestRunCheckers(t *testing.T) {
 				}
 				// The recorded duration covers every attempt, including the delays between them.
 				minDuration := time.Duration(maxRetryAttempts-1) * retryDelay
-				if got, ok := durationsOf(t, cnh)["FailingChecker"]; !ok || got < minDuration {
-					t.Errorf("FailingChecker duration = %v (recorded: %v), want at least %v", got, ok, minDuration)
+				if d := cnh.Status.Results[0].Duration; d == nil || d.Duration < minDuration {
+					t.Errorf("Expected Duration of at least %v, got %v", minDuration, d)
 				}
 			},
 		},
-
 		{
 			name: "mixed results - some succeed, some fail",
 			checkers: []NodeChecker{
@@ -243,44 +234,10 @@ func TestRunCheckers(t *testing.T) {
 						t.Errorf("%s never ran, want every checker to run regardless of earlier write failures", mock.name)
 					}
 				}
-				durations := durationsOf(t, cnh)
 				for name, want := range map[string]bool{"First": true, "Second": false, "Third": true} {
 					if got := hasResult(cnh.Status.Results, name); got != want {
 						t.Errorf("%s recorded = %v, want %v (results: %+v)", name, got, want, cnh.Status.Results)
 					}
-					// A duration is only recorded alongside a recorded result.
-					if _, got := durations[name]; got != want {
-						t.Errorf("%s duration recorded = %v, want %v (durations: %v)", name, got, want, durations)
-					}
-				}
-			},
-		},
-		{
-			// Losing a duration only leaves the check untimed, so it must not fail the run or lose
-			// the result.
-			name: "a failed duration write keeps the results",
-			checkers: []NodeChecker{
-				&mockChecker{name: "First", result: checker.Healthy()},
-				&mockChecker{name: "Second", result: checker.Healthy()},
-			},
-			existingCR: &chmv1alpha1.CheckNodeHealth{
-				Spec: chmv1alpha1.CheckNodeHealthSpec{
-					NodeRef: chmv1alpha1.NodeReference{Name: "test-node"},
-				},
-			},
-			interceptors: interceptor.Funcs{
-				Patch: func(ctx context.Context, c client.WithWatch, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
-					return apierrors.NewForbidden(chmv1alpha1.Resource("checknodehealths"), obj.GetName(), errors.New("patch rejected"))
-				},
-			},
-			validateFunc: func(t *testing.T, cnh *chmv1alpha1.CheckNodeHealth, checkers []NodeChecker) {
-				for _, name := range []string{"First", "Second"} {
-					if !hasResult(cnh.Status.Results, name) {
-						t.Errorf("%s result missing, want every result recorded (results: %+v)", name, cnh.Status.Results)
-					}
-				}
-				if durations := durationsOf(t, cnh); len(durations) != 0 {
-					t.Errorf("durations = %v, want none recorded", durations)
 				}
 			},
 		},
@@ -334,17 +291,6 @@ func TestRunCheckers(t *testing.T) {
 			}
 		})
 	}
-}
-
-// durationsOf returns the durations recorded in the CR's CheckerDurationsAnnotation.
-func durationsOf(t *testing.T, cnh *chmv1alpha1.CheckNodeHealth) map[string]time.Duration {
-	t.Helper()
-
-	durations, err := ParseCheckerDurations(cnh.Annotations)
-	if err != nil {
-		t.Fatalf("parsing the durations annotation: %v", err)
-	}
-	return durations
 }
 
 func hasResult(results []chmv1alpha1.CheckResult, name string) bool {
