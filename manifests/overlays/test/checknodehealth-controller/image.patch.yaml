@@ -16,7 +16,7 @@
 - op: replace
   path: /spec/template/spec/containers/0/env/1/value
   value: cluster-health-monitor-gpu-e2e:test-latest
-# GPU checks are enabled in base, but the GPU e2e suite toggles them on only for itself.
+# Disable GPU checks by default in e2e. The GPU e2e suite toggles them on for itself.
 - op: test
   path: /spec/template/spec/containers/0/args/2
   value: "-enable-gpu-checks"
