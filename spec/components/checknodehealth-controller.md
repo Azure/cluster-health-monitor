@@ -87,21 +87,23 @@ The controller serves Prometheus metrics on `-metrics-bind-address`, alongside t
 
 | Metric | Labels |
 |--------|--------|
-| `cluster_health_monitor_node_check_total`        | `node_kind` (`standard`/`gpu`), `result` (`Healthy`/`Unhealthy`/`Unknown`), `reason` |
+| `cluster_health_monitor_node_check_total`        | `node_kind` (`standard`/`gpu`), `result` (`Healthy`/`Unhealthy`/`Unknown`), `reason` (the condition's reason; no fixed values, see §4.1) |
 | `cluster_health_monitor_node_check_result_total` | `node_kind`, `checker_name`, `status`, `error_code` (one increment per result) |
+
+`error_code` is the result's `errorCode`; when it is empty, it is `Healthy` for healthy results and `Unknown` otherwise.
 
 ## 5. Behavior
 
 ### 5.1 Watching CNHs and deciding whether to run
 
-The controller watches `CheckNodeHealth` resources and the checker pods they own. Each time a CNH changes, it decides what to do, in this order:
+The controller watches `CheckNodeHealth` resources and the checker pods they own. A CNH is processed when it changes, when its checker pod changes, every 30s until its pod finishes or times out, and on the periodic resync (every 1h). Each time, the controller decides what to do, in this order:
 
 1. **Not handled:**
    - **Being deleted:** delete the checker pod, then remove the finalizer (§5.2).
    - **Older than 6h:** delete the CNH. The controller owns CNH cleanup; whoever creates a CNH does not need to delete it. Finished CNHs are not requeued; they are re-processed by the controller's periodic resync (every 1h) and deleted on the first resync after they are 6h old, so a CNH is removed 6–7h after creation.
    - **Already finished** (`status.finishedAt` is set): only clean up any remaining checker pod. A CNH is never run twice.
 2. **Finished right away:**
-   - **Node is not Linux:** no checker pod is created; the CNH finishes with `Healthy=Unknown`.
+   - **Node is not Linux:** no checker pod is created; the CNH finishes with `Healthy=Unknown` and no results. Metrics are recorded, but Node conditions are not touched and the circuit breaker does not count it. The OS comes from the `kubernetes.io/os` label, falling back to `status.nodeInfo.operatingSystem`; an empty OS also counts as not Linux.
 3. **Delayed:**
    - **GPU node with no claimable GPUs yet** (only with `-enable-gpu-checks`): start is delayed up to `-gpu-wait` after CNH creation (§5.4).
 4. **Otherwise, run the check (§5.2).**
@@ -121,9 +123,9 @@ A missing node is not rejected: the checker pod is created but stays `Pending`, 
    - **Owner reference:** the pod is owned by the CNH, so if the CNH is gone, Kubernetes garbage collection deletes the pod.
    - **Label:** the pod carries `clusterhealthmonitor.azure.com/checknodehealth=<cnh name>`. When a run finishes, and when a CNH is deleted, the controller lists pods by this label and deletes all of them. The controller's cache also only watches `kube-system` pods with this label.
 
-Pod timeout: **2m** for standard nodes, **15m** for GPU nodes running GPU checks.
+Pod timeout, counted from pod creation (not CNH creation): **2m** for standard nodes, **15m** for GPU nodes running GPU checks.
 
-Expected checks: `PodStartup` and `PodNetwork`, plus the SKU's GPU checks when GPU checks run.
+Expected checks: `PodStartup` and `PodNetwork`, plus the GPU checks for the node's SKU when GPU checks run. The GPU checks are `NcclAllReduce`, `GpuHostBandwidth` and `GpuPeerBandwidth`; a known SKU may run only some of them (for example, no peer bandwidth without NVLink), and an unknown SKU runs all three.
 
 ### 5.3 From results to the `Healthy` condition
 
@@ -153,7 +155,7 @@ GPU checks run only when `-enable-gpu-checks` is on. In that case the checker po
 - gets `--enable-gpu-checks --sku=<node.kubernetes.io/instance-type>`;
 - requests all claimable GPUs.
 
-If the node has no claimable GPUs yet, the controller waits up to `-gpu-wait` from CNH creation, polling every 30s. After that, it runs the pod with `--gpu-skip-reason=GPUsNotClaimable`.
+If the node has no claimable GPUs yet, the controller waits up to `-gpu-wait` from CNH creation, polling every 30s. After that, it runs the pod with `--gpu-skip-reason=GPUsNotClaimable`: every GPU check then reports `Unknown` with `errorCode: GPUsNotClaimable` without running, so the CNH ends `Healthy=Unknown` (unless a base check is `Unhealthy`).
 
 The decision is recorded on the pod as annotations (`clusterhealthmonitor.azure.com/node-kind`, `.../gpu-checks-sku`). Later reconciles read these annotations, so a node that changes mid-run doesn't change the expected checks.
 
@@ -164,11 +166,25 @@ All condition types use the prefix `kubernetes.azure.com/`.
 | Node kind | Conditions written |
 |-----------|--------------------|
 | Standard  | `NodeHealthy`, which mirrors the CNH `Healthy` condition. |
-| GPU       | Per-check conditions instead of `NodeHealthy`: `PodStartupHealthy`, `PodNetworkHealthy`, `GPUCountHealthy`, `GPUHostBandwidthHealthy`, `GPUPeerBandwidthHealthy`, `GPUAllReduceBandwidthHealthy`, `GPUCorrectnessHealthy`. |
+| GPU       | Never `NodeHealthy`. Always `PodStartupHealthy` and `PodNetworkHealthy`, one per base check result. The GPU conditions below only when GPU checks reported results, and only those that apply to the SKU. |
 
 Condition types managed by the controller that don't apply to the node's kind are removed.
 
-**Circuit breaker.** There is one breaker for standard nodes and one for GPU nodes. Each finished CNH is recorded: `Healthy=False` adds an unhealthy event, and any other result (`True` or `Unknown`) clears all events. Events older than **15m** are dropped; when **3** remain, the breaker opens for **10m**, after which it closes with a clean count. While open, the controller writes no new conditions; it only removes conditions that no longer apply. This keeps a cluster-wide problem from marking every node unhealthy.
+**GPU conditions.** Each one is computed from the GPU check results listed below:
+
+| Condition | From checks | `False` when | Notes |
+|-----------|-------------|--------------|-------|
+| `GPUCountHealthy` | all GPU checks | any reports `UnexpectedGPUCount` | Every check verifies the GPU count first, so a check that failed with any other code counts as `True` here. |
+| `GPUHostBandwidthHealthy` | `GpuHostBandwidth` | it reports `LowBandwidth` | |
+| `GPUPeerBandwidthHealthy` | `GpuPeerBandwidth` | it reports `LowBandwidth` | Absent on SKUs that don't run peer bandwidth. |
+| `GPUAllReduceBandwidthHealthy` | `NcclAllReduce` | it reports `LowBandwidth` | |
+| `GPUCorrectnessHealthy` | `NcclAllReduce` | it reports `CorrectnessError` | `LowBandwidth` counts as `True`: NCCL checks correctness before bandwidth. |
+
+For each condition, a `Healthy` result counts as `True`, a listed code as `False`, and anything else (including a missing result) as `Unknown`, except where noted. Across its checks: any `False` → `False`; otherwise any `Unknown` → `Unknown`; otherwise `True`. The condition's `reason` is the failing `errorCode` when `False`.
+
+The base conditions (`PodStartupHealthy`, `PodNetworkHealthy`) map the result status directly (`Healthy`→`True`, `Unhealthy`→`False`, else `Unknown`), with the result's `errorCode` as the reason when set.
+
+**Circuit breaker.** There is one breaker for standard nodes and one for GPU nodes. Each finished CNH is recorded: `Healthy=False` adds an unhealthy event, and any other result (`True` or `Unknown`) clears all events. Events older than **15m** are dropped; when **3** remain, the breaker opens for **10m**, after which it closes with a clean count. Counting happens even if the Node update itself failed. While open, the controller writes no new conditions; it only removes conditions that no longer apply. This keeps a cluster-wide problem from marking every node unhealthy.
 
 Why: an unhealthy Node condition can lead other components to act on the node, for example by rebooting or replacing it. If a cluster-level problem (for example in the control plane, DNS or networking) makes many checks fail at once, writing `False` on every node would trigger that action fleet-wide for a problem the nodes don't have. Several unhealthy results in a row are treated as a sign of such a problem, so the controller stops publishing conditions until the cooldown ends.
 
