@@ -168,7 +168,7 @@ All condition types use the prefix `kubernetes.azure.com/`.
 
 Condition types managed by the controller that don't apply to the node's kind are removed.
 
-**Circuit breaker.** There is one breaker for standard nodes and one for GPU nodes. If **3** consecutive CNHs finish unhealthy within **15m**, the breaker opens for **10m**. A healthy result resets the count. While open, the controller writes no new conditions; it only removes conditions that no longer apply. This keeps a cluster-wide problem from marking every node unhealthy.
+**Circuit breaker.** There is one breaker for standard nodes and one for GPU nodes. Each finished CNH is recorded: `Healthy=False` adds an unhealthy event, and any other result (`True` or `Unknown`) clears all events. Events older than **15m** are dropped; when **3** remain, the breaker opens for **10m**, after which it closes with a clean count. While open, the controller writes no new conditions; it only removes conditions that no longer apply. This keeps a cluster-wide problem from marking every node unhealthy.
 
 Why: an unhealthy Node condition can lead other components to act on the node, for example by rebooting or replacing it. If a cluster-level problem (for example in the control plane, DNS or networking) makes many checks fail at once, writing `False` on every node would trigger that action fleet-wide for a problem the nodes don't have. Several unhealthy results in a row are treated as a sign of such a problem, so the controller stops publishing conditions until the cooldown ends.
 
@@ -185,7 +185,7 @@ The suite targets a real node that does not run CoreDNS. Some cases use a fake N
 | # | Case | Setup | Expected |
 |---|------|-------|----------|
 | 1 | Healthy run | CNH on a real node | `finishedAt` set; `Healthy=True`; results `PodStartup` and `PodNetwork` both `Healthy`; checker pod deleted; Node has `NodeHealthy=True`. |
-| 2 | Pod timeout | CNH on a fake node | Pod stays `Pending`. After the 2m pod timeout: `Healthy=False`, `PodStartup=Unhealthy` (message mentions timeout), `startedAt` set, pod deleted. |
+| 2 | Pod timeout | CNH on a fake node | Pod stays `Pending`. After the 2m pod timeout: `Healthy=False`, `PodStartup=Unhealthy`, `startedAt` set, pod deleted. |
 | 3 | Unhealthy Node condition | CNH on a fake node, run to timeout | `Healthy=False`; Node has `NodeHealthy=False` with a non-empty reason. |
 | 4 | Unsupported OS | CNH on a fake Windows node | No checker pod is created; `NodeHealthy` is never set; CNH finishes with `Healthy=Unknown`. |
 | 5 | Deletion cleanup | CNH on a missing node; delete it while the pod is `Pending` | Checker pod is deleted. |
