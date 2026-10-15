@@ -34,6 +34,8 @@ type NodeChecker interface {
 // GPUOptions carries information the GPU checkers need from the controller.
 type GPUOptions struct {
 	SKU string
+	// SkipReason, when set, is the error code every GPU checker reports instead of running.
+	SkipReason string
 }
 
 // Options configures which checkers run and what they are told about the node.
@@ -82,7 +84,7 @@ func (r *Runner) initializeCheckers(clientset kubernetes.Interface, opts Options
 
 	// The GPU checkers only work in the GPU image, which is what the controller uses when it populates these options.
 	if opts.GPU != nil {
-		for _, c := range gpu.NewCheckers(gpu.Config{SKU: opts.GPU.SKU}) {
+		for _, c := range gpu.NewCheckers(gpu.Config{SKU: opts.GPU.SKU, SkipReason: opts.GPU.SkipReason}) {
 			r.checkers = append(r.checkers, c)
 		}
 	}

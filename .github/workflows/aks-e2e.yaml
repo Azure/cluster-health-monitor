@@ -201,7 +201,7 @@ jobs:
           ref: ${{ needs.get_ref.outputs.checkout_ref }}
 
       - name: Set up Kubectl
-        uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5.1.0
+        uses: azure/setup-kubectl@bda439f5f36b99b262ebdcd3613869bddb064c8e # v5.2.0
       
       - name: Set up kubelogin
         uses: azure/use-kubelogin@0ce7c36141aa27d4934872cf00b0120804c98a29 # v1.3
@@ -216,7 +216,7 @@ jobs:
           subscription-id: ${{ secrets.SUBSCRIPTION_ID }}
       
       - name: Set AKS Context
-        uses: azure/aks-set-context@60623acbdcbbdcf799ad50a1adf8703874339f8b # v5.0.0
+        uses: azure/aks-set-context@883bdc8d8d1d0fd87e66cc4ba6f0b618f9eb5281 # v5.0.1
         with:
           cluster-name: "chme2e${{ github.run_id }}"
           resource-group: "chme2e${{ github.run_id }}"
@@ -268,7 +268,7 @@ jobs:
           go-version: stable
 
       - name: Set up Kubectl
-        uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5.1.0
+        uses: azure/setup-kubectl@bda439f5f36b99b262ebdcd3613869bddb064c8e # v5.2.0
       
       - name: Set up kubelogin
         uses: azure/use-kubelogin@0ce7c36141aa27d4934872cf00b0120804c98a29 # v1.3
@@ -283,7 +283,7 @@ jobs:
           subscription-id: ${{ secrets.SUBSCRIPTION_ID }}
       
       - name: Set AKS Context
-        uses: azure/aks-set-context@60623acbdcbbdcf799ad50a1adf8703874339f8b # v5.0.0
+        uses: azure/aks-set-context@883bdc8d8d1d0fd87e66cc4ba6f0b618f9eb5281 # v5.0.1
         with:
           cluster-name: "chme2e${{ github.run_id }}"
           resource-group: "chme2e${{ github.run_id }}"

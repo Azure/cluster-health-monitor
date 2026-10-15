@@ -5,7 +5,7 @@ ARG CUDA_VERSION=12.6.3
 ARG UBUNTU_VERSION=22.04
 
 # Only nodechecker runs in this image, so the other components are not built.
-FROM --platform=$BUILDPLATFORM mcr.microsoft.com/oss/go/microsoft/golang:1.26.6 AS builder
+FROM --platform=$BUILDPLATFORM mcr.microsoft.com/oss/go/microsoft/golang:1.26.9 AS builder
 
 ARG TARGETOS
 ARG TARGETARCH
