@@ -103,7 +103,7 @@ The controller watches `CheckNodeHealth` resources and the checker pods they own
    - **Older than 6h:** delete the CNH. The controller owns CNH cleanup; whoever creates a CNH does not need to delete it. Finished CNHs are not requeued; they are re-processed by the controller's periodic resync (every 1h) and deleted on the first resync after they are 6h old, so a CNH is removed 6–7h after creation.
    - **Already finished** (`status.finishedAt` is set): only clean up any remaining checker pod. A CNH is never run twice.
 2. **Finished right away:**
-   - **Node is not Linux:** no checker pod is created; the CNH finishes with `Healthy=Unknown` and no results. Metrics are recorded, but Node conditions are not touched and the circuit breaker does not count it. The OS comes from the `kubernetes.io/os` label, falling back to `status.nodeInfo.operatingSystem`; an empty OS also counts as not Linux.
+   - **Node is not Linux:** no checker pod is created; the CNH finishes with `Healthy=Unknown`, reason `CheckUnsupported`, and no results. Metrics are recorded (with `reason=CheckUnsupported`), but Node conditions are not touched and the circuit breaker does not count it. The OS comes from the `kubernetes.io/os` label, falling back to `status.nodeInfo.operatingSystem`; an empty OS also counts as not Linux.
 3. **Delayed:**
    - **GPU node with no claimable GPUs yet** (only with `-enable-gpu-checks`): start is delayed up to `-gpu-wait` after CNH creation (§5.4).
 4. **Otherwise, run the check (§5.2).**
