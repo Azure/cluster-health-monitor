@@ -119,14 +119,23 @@ The base conditions (`PodStartupHealthy`, `PodNetworkHealthy`) map the result st
 
 ### 4.3 Metrics
 
-The controller serves Prometheus metrics on `-metrics-bind-address`, alongside the standard controller-runtime metrics. Each counter is incremented once per finished CNH.
+The controller serves Prometheus metrics on `-metrics-bind-address`, alongside the standard controller-runtime metrics. Each metric is recorded once per finished CNH.
 
-| Metric | Labels |
-|--------|--------|
-| `cluster_health_monitor_node_check_total`        | `node_kind` (`standard`/`gpu`), `result` (`Healthy`/`Unhealthy`/`Unknown`), `reason` (the condition's reason; no fixed values, see §4.1) |
-| `cluster_health_monitor_node_check_result_total` | `node_kind`, `checker_name`, `status`, `error_code` (one increment per result) |
+| Metric | Type | Labels |
+|--------|------|--------|
+| `cluster_health_monitor_node_health_check_total`            | Counter   | `node_kind`, `sku`, `status`, `reason` |
+| `cluster_health_monitor_node_checker_result_total`          | Counter   | `node_kind`, `sku`, `checker_name`, `status`, `error_code` (one increment per result) |
+| `cluster_health_monitor_node_health_check_duration_seconds` | Histogram | `node_kind`, `sku`, `status` |
 
-`error_code` is the result's `errorCode`; when it is empty, it is `Healthy` for healthy results and `Unknown` otherwise.
+Labels:
+
+- `node_kind`: `standard` or `gpu`.
+- `sku`: empty on standard nodes. On GPU nodes, the SKU if the GPU checks have a profile for it, otherwise `other`. This keeps the number of values bounded.
+- `status`: `Healthy`, `Unhealthy` or `Unknown`. On the overall metrics it maps the `Healthy` condition (`True`/`False`/`Unknown`); on the per-check counter it is the result's status.
+- `reason`: the condition's reason. It has no fixed values (§4.1), except `CheckUnsupported` for nodes that are not Linux.
+- `error_code`: the result's `errorCode`; when it is empty, `Healthy` for healthy results and `Unknown` otherwise.
+
+The duration runs from CNH creation to the moment the final result is written, which is when consumers of the CNH get their answer. It does not include updating Node conditions or deleting the pod. It is not recorded for nodes that are not Linux.
 
 ## 5. Behavior
 
@@ -148,9 +157,10 @@ A missing node is not rejected: the checker pod is created but stays `Pending`, 
 
 ### 5.2 Running the check
 
-1. **Create the checker pod** and set `status.startedAt` and `Healthy=Unknown`. The pod (`check-node-health-<cnh name>` in `kube-system`, owned by the CNH) is pinned to the node and runs the node-level checks, writing each result into `status.results` itself.
+1. **Create the checker pod** and set `status.startedAt` (the pod's creation time) and `Healthy=Unknown`. The pod (`check-node-health-<cnh name>` in `kube-system`, owned by the CNH) is pinned to the node and runs the node-level checks, writing each result into `status.results` itself.
 2. **When the pod has started** (every container is running or has run), record the `PodStartup` result as `Healthy`. If it is still `Pending` after the pod timeout, record `Unhealthy`, unless the pod has already reported other results (then `Healthy`).
 3. **When the pod has finished** (or the pod timeout passes), set `status.finishedAt` and the `Healthy` condition from the results (§5.3), update the Node conditions if enabled (§4.2), and delete the pod.
+   `status.finishedAt` is when the checks actually ended: the time the last container terminated if the pod finished, or pod creation plus the pod timeout if it timed out. It is never later than now or earlier than `startedAt`.
 
 **Keeping the CNH and its pod consistent:**
 
