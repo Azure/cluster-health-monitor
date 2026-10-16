@@ -170,15 +170,15 @@ All condition types use the prefix `kubernetes.azure.com/`.
 
 Condition types managed by the controller that don't apply to the node's kind are removed.
 
-**GPU conditions.** Each one is computed from the GPU check results listed below:
+**GPU Node conditions.** These are written on the Node (`node.status.conditions`, prefixed `kubernetes.azure.com/`). Each one is computed from the GPU check results listed below:
 
 | Condition | From checks | `False` when | Notes |
 |-----------|-------------|--------------|-------|
-| `GPUCountHealthy` | all GPU checks | any reports `UnexpectedGPUCount` | Every check verifies the GPU count first, so a check that failed with any other code counts as `True` here. |
-| `GPUHostBandwidthHealthy` | `GpuHostBandwidth` | it reports `LowBandwidth` | |
-| `GPUPeerBandwidthHealthy` | `GpuPeerBandwidth` | it reports `LowBandwidth` | Absent on SKUs that don't run peer bandwidth. |
-| `GPUAllReduceBandwidthHealthy` | `NcclAllReduce` | it reports `LowBandwidth` | |
-| `GPUCorrectnessHealthy` | `NcclAllReduce` | it reports `CorrectnessError` | `LowBandwidth` counts as `True`: NCCL checks correctness before bandwidth. |
+| `GPUCountHealthy` | all GPU checks | any reports `UnexpectedGPUCount` | Every check verifies the GPU count first, so a check that is `Unhealthy` with any other code counts as `True` here. An `Unknown` result stays `Unknown`, since the check may have stopped before verifying the count. |
+| `GPUHostBandwidthHealthy` | `GpuHostBandwidth` | it reports `LowBandwidth` | Any other non-healthy result counts as `Unknown`. |
+| `GPUPeerBandwidthHealthy` | `GpuPeerBandwidth` | it reports `LowBandwidth` | Any other non-healthy result counts as `Unknown`. Absent on SKUs that don't run peer bandwidth. |
+| `GPUAllReduceBandwidthHealthy` | `NcclAllReduce` | it reports `LowBandwidth` | Any other non-healthy result counts as `Unknown`. |
+| `GPUCorrectnessHealthy` | `NcclAllReduce` | it reports `CorrectnessError` | `LowBandwidth` counts as `True`: NCCL checks correctness before bandwidth, so low bandwidth means correctness passed. Any other non-healthy result counts as `Unknown`. |
 
 For each condition, a `Healthy` result counts as `True`, a listed code as `False`, and anything else (including a missing result) as `Unknown`, except where noted. Across its checks: any `False` → `False`; otherwise any `Unknown` → `Unknown`; otherwise `True`. The condition's `reason` is the failing `errorCode` when `False`.
 
