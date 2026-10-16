@@ -175,10 +175,10 @@ Condition types managed by the controller that don't apply to the node's kind ar
 | Condition | From checks | `False` when | Notes |
 |-----------|-------------|--------------|-------|
 | `GPUCountHealthy` | all GPU checks | any reports `UnexpectedGPUCount` | Every check verifies the GPU count first, so a check that is `Unhealthy` with any other code counts as `True` here. An `Unknown` result stays `Unknown`, since the check may have stopped before verifying the count. |
-| `GPUHostBandwidthHealthy` | `GpuHostBandwidth` | it reports `LowBandwidth` | Any other non-healthy result counts as `Unknown`. |
-| `GPUPeerBandwidthHealthy` | `GpuPeerBandwidth` | it reports `LowBandwidth` | Any other non-healthy result counts as `Unknown`. Absent on SKUs that don't run peer bandwidth. |
-| `GPUAllReduceBandwidthHealthy` | `NcclAllReduce` | it reports `LowBandwidth` | Any other non-healthy result counts as `Unknown`. |
-| `GPUCorrectnessHealthy` | `NcclAllReduce` | it reports `CorrectnessError` | `LowBandwidth` counts as `True`: NCCL checks correctness before bandwidth, so low bandwidth means correctness passed. Any other non-healthy result counts as `Unknown`. |
+| `GPUHostBandwidthHealthy` | `GpuHostBandwidth` | it reports `BandwidthBelowThreshold` | Any other non-healthy result counts as `Unknown`. |
+| `GPUPeerBandwidthHealthy` | `GpuPeerBandwidth` | it reports `BandwidthBelowThreshold` | Any other non-healthy result counts as `Unknown`. Absent on SKUs that don't run peer bandwidth. |
+| `GPUAllReduceBandwidthHealthy` | `NcclAllReduce` | it reports `BandwidthBelowThreshold` | Any other non-healthy result counts as `Unknown`. |
+| `GPUCorrectnessHealthy` | `NcclAllReduce` | it reports `CorrectnessError` | `BandwidthBelowThreshold` counts as `True`: NCCL checks correctness before bandwidth, so low bandwidth means correctness passed. Any other non-healthy result counts as `Unknown`. |
 
 For each condition, a `Healthy` result counts as `True`, a listed code as `False`, and anything else (including a missing result) as `Unknown`, except where noted. Across its checks: any `False` → `False`; otherwise any `Unknown` → `Unknown`; otherwise `True`. The condition's `reason` is the failing `errorCode` when `False`.
 
