@@ -19,17 +19,21 @@ spec:
       serviceAccountName: checknodehealth-controller
       containers:
         - name: controller
-          image: mcr.microsoft.com/aks/cluster-health-monitor/cluster-health-monitor:latest
+          image: mcr.microsoft.com/aks/cluster-health-monitor/cluster-health-monitor:v0.0.41
           command: ["/controller"]
           args:
             - "-v=5"
+            - "-metrics-bind-address=:8080"
+            - "-enable-gpu-checks"
           imagePullPolicy: Always
           ports:
             - containerPort: 8080
               name: metrics
           env:
             - name: CHECKER_POD_IMAGE
-              value: "mcr.microsoft.com/aks/cluster-health-monitor/cluster-health-monitor:latest"
+              value: "mcr.microsoft.com/aks/cluster-health-monitor/cluster-health-monitor:v0.0.41"
+            - name: GPU_CHECKER_POD_IMAGE
+              value: "mcr.microsoft.com/aks/cluster-health-monitor/cluster-health-monitor-gpu:v0.0.41"
           resources:
             requests:
               cpu: 20m

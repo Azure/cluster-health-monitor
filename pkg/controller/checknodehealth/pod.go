@@ -277,6 +277,48 @@ func (r *CheckNodeHealthReconciler) hasCheckerReportedResult(cnh *chmv1alpha1.Ch
 	return false
 }
 
+// checkFinishedAt returns when the check on the pod ended, taken from timestamps the API server
+// persists, so that a controller that was down when the pod ended does not inflate the duration.
+//
+// A completed pod ended when its last container terminated, as reported by the kubelet. A pod that
+// timed out ended at its deadline. now is the fallback when neither is known, and the result is
+// clamped between startedAt and now so clock skew between the kubelet and the API server cannot
+// produce a negative or future duration.
+func checkFinishedAt(pod *corev1.Pod, completed bool, timeout time.Duration, startedAt *metav1.Time, now metav1.Time) metav1.Time {
+	finishedAt := now
+	if completed {
+		if terminated := containersTerminatedAt(pod); !terminated.IsZero() {
+			finishedAt = terminated
+		}
+	} else if !pod.CreationTimestamp.IsZero() {
+		finishedAt = metav1.NewTime(pod.CreationTimestamp.Add(timeout))
+	}
+
+	if finishedAt.After(now.Time) {
+		finishedAt = now
+	}
+	if startedAt != nil && finishedAt.Before(startedAt) {
+		finishedAt = *startedAt
+	}
+	return finishedAt
+}
+
+// containersTerminatedAt returns when the last of the pod's containers terminated, or the zero time
+// when any container is missing its termination time.
+func containersTerminatedAt(pod *corev1.Pod) metav1.Time {
+	var last metav1.Time
+	for _, containerStatus := range pod.Status.ContainerStatuses {
+		terminated := containerStatus.State.Terminated
+		if terminated == nil || terminated.FinishedAt.IsZero() {
+			return metav1.Time{}
+		}
+		if terminated.FinishedAt.After(last.Time) {
+			last = terminated.FinishedAt
+		}
+	}
+	return last
+}
+
 // markPodStartupResult marks the CheckNodeHealth with a PodStartup check result
 func (r *CheckNodeHealthReconciler) markPodStartupResult(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, status chmv1alpha1.CheckStatus, message string) error {
 	// Create or update the PodStartup result

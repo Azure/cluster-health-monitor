@@ -486,7 +486,7 @@ func TestGPURunKeepsGPURoutingWhenNodeLosesGPUs(t *testing.T) {
 		t.Fatalf("finishing the checker pod: %v", err)
 	}
 
-	resultsBefore := counterSnapshot(t, checkResultCounter)
+	resultsBefore := counterSnapshot(t, checkerResultCounter)
 	for i := 0; i < 3; i++ {
 		if _, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: key}); err != nil {
 			t.Fatalf("reconcile %d returned error: %v", i, err)
@@ -507,7 +507,7 @@ func TestGPURunKeepsGPURoutingWhenNodeLosesGPUs(t *testing.T) {
 		t.Errorf("GPUAllReduceBandwidthHealthy = %+v, want False", c)
 	}
 
-	for series := range counterDelta(resultsBefore, counterSnapshot(t, checkResultCounter)) {
+	for series := range counterDelta(resultsBefore, counterSnapshot(t, checkerResultCounter)) {
 		if !strings.Contains(series, "node_kind="+NodeKindGPU) {
 			t.Errorf("result series %s, want node_kind=%s", series, NodeKindGPU)
 		}

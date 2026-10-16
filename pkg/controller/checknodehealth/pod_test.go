@@ -322,3 +322,87 @@ func TestUpdatePodstartCheckerResult_TimeoutWithoutCheckerResult(t *testing.T) {
 		t.Errorf("expected PodStartup Unhealthy (genuine startup failure), got %v", result.Status)
 	}
 }
+
+func TestCheckFinishedAt(t *testing.T) {
+	created := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	at := func(offset time.Duration) metav1.Time { return metav1.NewTime(created.Add(offset)) }
+	terminated := func(offset time.Duration) corev1.ContainerStatus {
+		return corev1.ContainerStatus{State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{FinishedAt: at(offset)}}}
+	}
+	now := at(time.Hour)
+	startedAt := at(0)
+
+	tests := []struct {
+		name      string
+		completed bool
+		statuses  []corev1.ContainerStatus
+		startedAt *metav1.Time
+		want      metav1.Time
+	}{
+		{
+			name:      "completed pod ends when its container terminated",
+			completed: true,
+			statuses:  []corev1.ContainerStatus{terminated(40 * time.Second)},
+			startedAt: &startedAt,
+			want:      at(40 * time.Second),
+		},
+		{
+			name:      "completed pod ends when its last container terminated",
+			completed: true,
+			statuses:  []corev1.ContainerStatus{terminated(40 * time.Second), terminated(70 * time.Second)},
+			startedAt: &startedAt,
+			want:      at(70 * time.Second),
+		},
+		{
+			name:      "completed pod without a termination time falls back to now",
+			completed: true,
+			statuses:  []corev1.ContainerStatus{terminated(40 * time.Second), {State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}}},
+			startedAt: &startedAt,
+			want:      now,
+		},
+		{
+			name:      "completed pod without container statuses falls back to now",
+			completed: true,
+			startedAt: &startedAt,
+			want:      now,
+		},
+		{
+			name:      "timed out pod ends at its deadline",
+			startedAt: &startedAt,
+			want:      at(PodTimeout),
+		},
+		{
+			name:      "termination before the start from clock skew is clamped to the start",
+			completed: true,
+			statuses:  []corev1.ContainerStatus{terminated(-5 * time.Second)},
+			startedAt: &startedAt,
+			want:      startedAt,
+		},
+		{
+			name:      "termination after now from clock skew is clamped to now",
+			completed: true,
+			statuses:  []corev1.ContainerStatus{terminated(2 * time.Hour)},
+			startedAt: &startedAt,
+			want:      now,
+		},
+		{
+			name:      "missing StartedAt does not clamp",
+			completed: true,
+			statuses:  []corev1.ContainerStatus{terminated(40 * time.Second)},
+			want:      at(40 * time.Second),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{CreationTimestamp: metav1.NewTime(created)},
+				Status:     corev1.PodStatus{ContainerStatuses: tt.statuses},
+			}
+			got := checkFinishedAt(pod, tt.completed, PodTimeout, tt.startedAt, now)
+			if !got.Equal(&tt.want) {
+				t.Errorf("checkFinishedAt() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
