@@ -17,7 +17,7 @@ The binary is `/controller`.
 | `-metrics-bind-address`         | `:8080` | Prometheus metrics endpoint. |
 | `-health-probe-bind-address`    | `:8081` | `/healthz` and `/readyz` endpoints. |
 | `-leader-elect`                 | `false` | Enable leader election (ID `checknodehealth.clusterhealthmonitor.azure.com`). |
-| `-enable-node-condition`        | `false` | Write check results as conditions on the Node (see §5.5). |
+| `-enable-node-condition`        | `false` | Write check results as conditions on the Node (see §4.2). |
 | `-enable-gpu-checks`            | `false` | Run GPU checks on GPU nodes. Requires `GPU_CHECKER_POD_IMAGE`. |
 | `-gpu-wait`                     | `2m`    | How long to wait for a GPU node to expose claimable GPUs before running GPU checks anyway. |
 | `-v`                            | `0`     | klog verbosity. Logs are JSON. |
@@ -77,9 +77,45 @@ The condition's `reason` and all `message` fields are free-form and have no fixe
 
 Each result's `errorCode` is chosen by the checker that wrote it. Every checker defines its own codes; this controller adds only `CheckNotReported`. There is no fixed list across checkers.
 
-### 4.2 Node conditions
+### 4.2 Node conditions (`-enable-node-condition`)
 
-See §5.5.
+All condition types use the prefix `kubernetes.azure.com/`.
+
+| Node kind | Conditions written |
+|-----------|--------------------|
+| Standard  | `NodeHealthy`, which mirrors the CNH `Healthy` condition. |
+| GPU       | Never `NodeHealthy`. Always `PodStartupHealthy` and `PodNetworkHealthy`, one per base check result. The GPU conditions below only when GPU checks reported results, and only those that apply to the SKU. |
+
+Condition types managed by the controller that don't apply to the node's kind are removed.
+
+**GPU Node conditions.** These are written on the Node (`node.status.conditions`, prefixed `kubernetes.azure.com/`). Each one is computed from the GPU check results listed below:
+
+| Condition | From checks | `False` when | Notes |
+|-----------|-------------|--------------|-------|
+| `GPUCountHealthy` | all GPU checks | any reports `UnexpectedGPUCount` | Every check verifies the GPU count first, so a check that is `Unhealthy` with any other code counts as `True` here. An `Unknown` result stays `Unknown`, since the check may have stopped before verifying the count. |
+| `GPUHostBandwidthHealthy` | `GpuHostBandwidth` | it reports `BandwidthBelowThreshold` | Any other non-healthy result counts as `Unknown`. |
+| `GPUPeerBandwidthHealthy` | `GpuPeerBandwidth` | it reports `BandwidthBelowThreshold` | Any other non-healthy result counts as `Unknown`. Absent on SKUs that don't run peer bandwidth. |
+| `GPUAllReduceBandwidthHealthy` | `NcclAllReduce` | it reports `BandwidthBelowThreshold` | Any other non-healthy result counts as `Unknown`. |
+| `GPUCorrectnessHealthy` | `NcclAllReduce` | it reports `CorrectnessError` | `BandwidthBelowThreshold` counts as `True`: NCCL checks correctness before bandwidth, so low bandwidth means correctness passed. Any other non-healthy result counts as `Unknown`. |
+
+For each condition, a `Healthy` result counts as `True`, a listed code as `False`, and anything else (including a missing result) as `Unknown`, except where noted. Across its checks: any `False` → `False`; otherwise any `Unknown` → `Unknown`; otherwise `True`. The condition's `reason` is the failing `errorCode` when `False`.
+
+The base conditions (`PodStartupHealthy`, `PodNetworkHealthy`) map the result status directly (`Healthy`→`True`, `Unhealthy`→`False`, else `Unknown`), with the result's `errorCode` as the reason when set.
+
+**Rules for writing Node conditions:**
+
+- **Circuit breaker.** There is one breaker for standard nodes and one for GPU nodes. Each finished CNH is recorded: `Healthy=False` adds an unhealthy event, and any other result (`True` or `Unknown`) clears all events. Events older than **15m** are dropped; when **3** remain, the breaker opens for **10m**, after which it closes with a clean count. Counting happens even if the Node update itself failed. While open, the controller writes no new conditions; it only removes conditions that no longer apply. This keeps a cluster-wide problem from marking every node unhealthy.
+
+  **Why:** an unhealthy Node condition can lead other components to act on the node, for example by rebooting or replacing it. If a cluster-level problem (for example in the control plane, DNS or networking) makes many checks fail at once, writing `False` on every node would trigger that action fleet-wide for a problem the nodes don't have. Several unhealthy results in a row are treated as a sign of such a problem, so the controller stops publishing conditions until the cooldown ends.
+- **Flipping back after recovery.** A component that sets a condition on a Node owns it: once the node recovers, the condition must go back to `True`. This controller only updates conditions when a CNH for the node finishes; it never re-checks a node on its own. Recovery relies on this loop:
+
+  1. A CNH finishes unhealthy and the controller sets the condition to `False`.
+  2. Another component acts on the condition, typically by rebooting the node.
+  3. The NodeReboot controller sees the new boot ID and creates a new CNH.
+  4. If the node has recovered, that CNH passes and this controller sets the condition back to `True`.
+
+  As a backstop, the NodeReboot controller removes any managed condition not confirmed by a check (`lastHeartbeatTime`) within **30m**, so a stale condition does not stay on the node indefinitely. Step 3 and the backstop both need `-enable-node-reboot-check`.
+- **A failed update does not block the CNH.** If updating the Node conditions fails, the error is logged and the CNH still finishes. The update is not retried: the Node keeps its previous conditions until the next CNH for that node finishes.
 
 ### 4.3 Metrics
 
@@ -114,7 +150,7 @@ A missing node is not rejected: the checker pod is created but stays `Pending`, 
 
 1. **Create the checker pod** and set `status.startedAt` and `Healthy=Unknown`. The pod (`check-node-health-<cnh name>` in `kube-system`, owned by the CNH) is pinned to the node and runs the node-level checks, writing each result into `status.results` itself.
 2. **When the pod has started** (every container is running or has run), record the `PodStartup` result as `Healthy`. If it is still `Pending` after the pod timeout, record `Unhealthy`, unless the pod has already reported other results (then `Healthy`).
-3. **When the pod has finished** (or the pod timeout passes), set `status.finishedAt` and the `Healthy` condition from the results (§5.3), update the Node conditions if enabled (§5.5), and delete the pod.
+3. **When the pod has finished** (or the pod timeout passes), set `status.finishedAt` and the `Healthy` condition from the results (§5.3), update the Node conditions if enabled (§4.2), and delete the pod.
 
 **Keeping the CNH and its pod consistent:**
 
@@ -125,7 +161,7 @@ A missing node is not rejected: the checker pod is created but stays `Pending`, 
 
 Pod timeout, counted from pod creation (not CNH creation): **2m** for standard nodes, **15m** for GPU nodes running GPU checks.
 
-Expected checks: `PodStartup` and `PodNetwork`, plus the GPU checks for the node's SKU when GPU checks run. The GPU checks are `NcclAllReduce`, `GpuHostBandwidth` and `GpuPeerBandwidth`; a known SKU may run only some of them (for example, no peer bandwidth without NVLink), and an unknown SKU runs all three.
+Expected checks: `PodStartup` and `PodNetwork`, plus the GPU checks for the node's SKU when GPU checks run. The GPU checks are `NcclAllReduce`, `GpuHostBandwidth` and `GpuPeerBandwidth`; a known SKU may run only some of them (for example, no peer bandwidth without NVLink). An unknown SKU lists all three, but none of them runs: each reports `Unknown` with `errorCode: UnknownSKU`.
 
 ### 5.3 From results to the `Healthy` condition
 
@@ -155,40 +191,11 @@ GPU checks run only when `-enable-gpu-checks` is on. In that case the checker po
 - gets `--enable-gpu-checks --sku=<node.kubernetes.io/instance-type>`;
 - requests all claimable GPUs.
 
-If the node has no claimable GPUs yet, the controller waits up to `-gpu-wait` from CNH creation, polling every 30s. After that, it runs the pod with `--gpu-skip-reason=GPUsNotClaimable`: every GPU check then reports `Unknown` with `errorCode: GPUsNotClaimable` without running, so the CNH ends `Healthy=Unknown` (unless a base check is `Unhealthy`).
+GPU checks report `Unhealthy` only for a clear hardware problem: a wrong GPU count (`UnexpectedGPUCount`), incorrect results (`CorrectnessError`) or low bandwidth (`BandwidthBelowThreshold`). Anything that stops a check from producing a trusted measurement is `Unknown`, so a healthy node is not acted on by mistake: an unknown SKU (`UnknownSKU`), no claimable GPUs (`GPUsNotClaimable`), too few GPUs for NCCL (`InsufficientGPUs`), or a benchmark tool that produced no usable output (`ToolFailed`).
+
+If the node has no claimable GPUs yet, the controller waits up to `-gpu-wait` from CNH creation, polling every 30s. After that, it runs the pod with `--gpu-skip-reason=GPUsNotClaimable`: every GPU check that applies to a known SKU then reports `Unknown` with `errorCode: GPUsNotClaimable` without running, so the CNH ends `Healthy=Unknown` (unless a base check is `Unhealthy`).
 
 The decision is recorded on the pod as annotations (`clusterhealthmonitor.azure.com/node-kind`, `.../gpu-checks-sku`). Later reconciles read these annotations, so a node that changes mid-run doesn't change the expected checks.
-
-### 5.5 Node conditions (`-enable-node-condition`)
-
-All condition types use the prefix `kubernetes.azure.com/`.
-
-| Node kind | Conditions written |
-|-----------|--------------------|
-| Standard  | `NodeHealthy`, which mirrors the CNH `Healthy` condition. |
-| GPU       | Never `NodeHealthy`. Always `PodStartupHealthy` and `PodNetworkHealthy`, one per base check result. The GPU conditions below only when GPU checks reported results, and only those that apply to the SKU. |
-
-Condition types managed by the controller that don't apply to the node's kind are removed.
-
-**GPU Node conditions.** These are written on the Node (`node.status.conditions`, prefixed `kubernetes.azure.com/`). Each one is computed from the GPU check results listed below:
-
-| Condition | From checks | `False` when | Notes |
-|-----------|-------------|--------------|-------|
-| `GPUCountHealthy` | all GPU checks | any reports `UnexpectedGPUCount` | Every check verifies the GPU count first, so a check that is `Unhealthy` with any other code counts as `True` here. An `Unknown` result stays `Unknown`, since the check may have stopped before verifying the count. |
-| `GPUHostBandwidthHealthy` | `GpuHostBandwidth` | it reports `BandwidthBelowThreshold` | Any other non-healthy result counts as `Unknown`. |
-| `GPUPeerBandwidthHealthy` | `GpuPeerBandwidth` | it reports `BandwidthBelowThreshold` | Any other non-healthy result counts as `Unknown`. Absent on SKUs that don't run peer bandwidth. |
-| `GPUAllReduceBandwidthHealthy` | `NcclAllReduce` | it reports `BandwidthBelowThreshold` | Any other non-healthy result counts as `Unknown`. |
-| `GPUCorrectnessHealthy` | `NcclAllReduce` | it reports `CorrectnessError` | `BandwidthBelowThreshold` counts as `True`: NCCL checks correctness before bandwidth, so low bandwidth means correctness passed. Any other non-healthy result counts as `Unknown`. |
-
-For each condition, a `Healthy` result counts as `True`, a listed code as `False`, and anything else (including a missing result) as `Unknown`, except where noted. Across its checks: any `False` → `False`; otherwise any `Unknown` → `Unknown`; otherwise `True`. The condition's `reason` is the failing `errorCode` when `False`.
-
-The base conditions (`PodStartupHealthy`, `PodNetworkHealthy`) map the result status directly (`Healthy`→`True`, `Unhealthy`→`False`, else `Unknown`), with the result's `errorCode` as the reason when set.
-
-**Circuit breaker.** There is one breaker for standard nodes and one for GPU nodes. Each finished CNH is recorded: `Healthy=False` adds an unhealthy event, and any other result (`True` or `Unknown`) clears all events. Events older than **15m** are dropped; when **3** remain, the breaker opens for **10m**, after which it closes with a clean count. Counting happens even if the Node update itself failed. While open, the controller writes no new conditions; it only removes conditions that no longer apply. This keeps a cluster-wide problem from marking every node unhealthy.
-
-Why: an unhealthy Node condition can lead other components to act on the node, for example by rebooting or replacing it. If a cluster-level problem (for example in the control plane, DNS or networking) makes many checks fail at once, writing `False` on every node would trigger that action fleet-wide for a problem the nodes don't have. Several unhealthy results in a row are treated as a sign of such a problem, so the controller stops publishing conditions until the cooldown ends.
-
-Failing to update Node conditions is logged and does not block finishing the CNH.
 
 ## 6. E2E
 
