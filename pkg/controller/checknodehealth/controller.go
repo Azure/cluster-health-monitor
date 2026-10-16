@@ -9,8 +9,10 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/tools/record"
 	k8sretry "k8s.io/client-go/util/retry"
 	"k8s.io/klog/v2"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -85,14 +87,9 @@ const (
 	// NodeConditionNodeHealthy is the condition type set on non-GPU Nodes to report ConditionTypeHealthy
 	// from CheckNodeHealth checks.
 	//
-	// GPU nodes report granularNodeConditionTypes instead, so that existing remediation keyed on NodeHealthy
-	// is never triggered by a GPU node.
+	// GPU nodes carry no node condition, so that existing remediation keyed on NodeHealthy is never
+	// triggered by a GPU node. Their failures are only reported as node events.
 	NodeConditionNodeHealthy corev1.NodeConditionType = nodeConditionPrefix + "NodeHealthy"
-
-	// NodeConditionPodStartupHealthy reports the PodStartup check on a GPU node.
-	NodeConditionPodStartupHealthy corev1.NodeConditionType = nodeConditionPrefix + "PodStartupHealthy"
-	// NodeConditionPodNetworkHealthy reports the PodNetwork check on a GPU node.
-	NodeConditionPodNetworkHealthy corev1.NodeConditionType = nodeConditionPrefix + "PodNetworkHealthy"
 )
 
 const (
@@ -100,28 +97,8 @@ const (
 	CheckerPodNetwork = "PodNetwork"
 )
 
-// baseCheckConditions maps each base check to the Node condition its result is published as on a
-// GPU node.
-var baseCheckConditions = map[string]corev1.NodeConditionType{
-	CheckerPodStartup: NodeConditionPodStartupHealthy,
-	CheckerPodNetwork: NodeConditionPodNetworkHealthy,
-}
-
-// granularNodeConditionTypes are the conditions that each report a single aspect of node health, as
-// opposed to the aggregate NodeHealthy. Only GPU nodes publish them.
-var granularNodeConditionTypes = func() []corev1.NodeConditionType {
-	types := make([]corev1.NodeConditionType, 0, len(baseCheckerNames)+len(gpuConditions))
-	for _, name := range baseCheckerNames {
-		types = append(types, baseCheckConditions[name])
-	}
-	for _, c := range gpuConditions {
-		types = append(types, c.conditionType)
-	}
-	return types
-}()
-
 // managedNodeConditionTypes are every Node condition this controller owns.
-var managedNodeConditionTypes = append([]corev1.NodeConditionType{NodeConditionNodeHealthy}, granularNodeConditionTypes...)
+var managedNodeConditionTypes = []corev1.NodeConditionType{NodeConditionNodeHealthy}
 
 // ManagedNodeConditionTypes returns every Node condition type this controller owns.
 func ManagedNodeConditionTypes() []corev1.NodeConditionType {
@@ -129,12 +106,12 @@ func ManagedNodeConditionTypes() []corev1.NodeConditionType {
 }
 
 // InapplicableNodeConditionTypes returns the managed conditions that do not apply to this kind of
-// node: NodeHealthy on GPU nodes, and the granular conditions on all others.
+// node: NodeHealthy on GPU nodes, and none on all others.
 func InapplicableNodeConditionTypes(node *corev1.Node) []corev1.NodeConditionType {
 	if gpuNodeInfoFrom(node).isGPUNode {
 		return []corev1.NodeConditionType{NodeConditionNodeHealthy}
 	}
-	return slices.Clone(granularNodeConditionTypes)
+	return nil
 }
 
 // baseCheckerNames are the checks every node reports. PodStartup comes from the
@@ -146,7 +123,7 @@ var baseCheckerNames = []string{CheckerPodStartup, CheckerPodNetwork}
 // checker pod exists, the spec is read back from its annotations instead; see recordedRun.
 type checkerSpec struct {
 	image string
-	// gpuNode decides which Node conditions, metrics and circuit breaker the result goes to.
+	// gpuNode decides whether the result is published as NodeHealthy, and which metrics it goes to.
 	gpuNode bool
 	// timeout bounds the checker pod.
 	timeout time.Duration
@@ -227,14 +204,16 @@ func (r *CheckNodeHealthReconciler) recordMissingResults(ctx context.Context, cn
 type CheckNodeHealthReconciler struct {
 	client.Client
 	Scheme              *runtime.Scheme
-	APIReader           client.Reader                 // Direct API server reader (bypasses cache) for node operations
-	CheckerPodLabel     string                        // Label to identify health check pods
-	CheckerPodImage     string                        // Image for the health check pod
-	GPUCheckerPodImage  string                        // Image for the health check pod on GPU nodes
-	CheckerPodNamespace string                        // Namespace to create pods in
-	EnableNodeCondition bool                          // Whether to set NodeHealthy condition on the Node
-	CircuitBreakers     *NodeConditionCircuitBreakers // Circuit breakers for node condition updates. Required when EnableNodeCondition is set.
-	EnableGPUChecks     bool                          // Whether to run GPU checks on supported GPU nodes
+	APIReader           client.Reader                // Direct API server reader (bypasses cache) for node operations
+	CheckerPodLabel     string                       // Label to identify health check pods
+	CheckerPodImage     string                       // Image for the health check pod
+	GPUCheckerPodImage  string                       // Image for the health check pod on GPU nodes
+	CheckerPodNamespace string                       // Namespace to create pods in
+	EnableNodeCondition bool                         // Whether to set NodeHealthy condition on the Node
+	CircuitBreaker      *NodeConditionCircuitBreaker // Circuit breaker for NodeHealthy updates. Required when EnableNodeCondition is set.
+	EnableGPUChecks     bool                         // Whether to run GPU checks on supported GPU nodes
+	// Recorder emits the events reporting checks that did not pass on the target Node. Required.
+	Recorder record.EventRecorder
 	// GPUWait is how long a GPU node without claimable GPUs is given to get some before its GPU
 	// checks start. Zero starts them immediately. See DefaultGPUWait.
 	GPUWait time.Duration
@@ -245,6 +224,7 @@ type CheckNodeHealthReconciler struct {
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;create;delete,namespace=kube-system
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get
 // +kubebuilder:rbac:groups="",resources=nodes/status,verbs=patch
+// +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
 // SetupWithManager sets up the controller with the Manager
 func (r *CheckNodeHealthReconciler) SetupWithManager(mgr ctrl.Manager) error {
@@ -366,10 +346,12 @@ func (r *CheckNodeHealthReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 
 	// Determine the overall result based on pod status
-	return r.determineCheckResult(ctx, cnh, pod, info, spec)
+	return r.determineCheckResult(ctx, cnh, pod, node, info, spec)
 }
 
-func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, pod *corev1.Pod, info gpuNodeInfo, spec checkerSpec) (ctrl.Result, error) {
+// determineCheckResult completes the check once the checker pod is done. node is the target node,
+// or nil when it no longer exists.
+func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, pod *corev1.Pod, node *corev1.Node, info gpuNodeInfo, spec checkerSpec) (ctrl.Result, error) {
 	// Check if pod succeeded or failed (completed), or if it's timed out
 	isPodCompleted := pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed
 	timeout := spec.timeout
@@ -389,25 +371,28 @@ func (r *CheckNodeHealthReconciler) determineCheckResult(ctx context.Context, cn
 			return ctrl.Result{}, err
 		}
 
-		// Step 2: Update node condition based on health status. GPU nodes report granular
-		// conditions rather than NodeHealthy, so a GPU check failure never reaches the signal
-		// existing AKS remediation acts on.
+		// Step 2: Report a check that did not pass as an event on the node. This happens once, as
+		// later reconciles short circuit through isCompleted.
+		r.recordCheckEvent(cnh, node)
+
+		// Step 3: Update node condition based on health status. GPU nodes get no condition, so a
+		// GPU check failure never reaches the signal existing AKS remediation acts on.
 		if r.EnableNodeCondition {
 			if err := r.updateNodeCondition(ctx, cnh, info); err != nil {
 				klog.ErrorS(err, "Failed to update node condition, continuing with cleanup", "node", cnh.Spec.NodeRef.Name)
 			}
 
-			// Track consecutive unhealthy/healthy results for the circuit breaker guarding the
-			// condition this node reports to.
-			circuitBreaker := r.CircuitBreakers.For(info)
-			if healthyStatus == metav1.ConditionFalse {
-				circuitBreaker.RecordUnhealthyNode()
-			} else {
-				circuitBreaker.RecordHealthyNode()
+			// Track consecutive unhealthy/healthy results for the circuit breaker guarding NodeHealthy.
+			if !info.isGPUNode {
+				if healthyStatus == metav1.ConditionFalse {
+					r.CircuitBreaker.RecordUnhealthyNode()
+				} else {
+					r.CircuitBreaker.RecordHealthyNode()
+				}
 			}
 		}
 
-		// Step 3: Delete the pod
+		// Step 4: Delete the pod
 		if err := r.cleanupPod(ctx, cnh); err != nil {
 			klog.ErrorS(err, "Failed to cleanup pod, will retry")
 			return ctrl.Result{}, nil
@@ -535,20 +520,53 @@ func (r *CheckNodeHealthReconciler) markCompleted(ctx context.Context, cnh *chmv
 	return healthyStatus, nil
 }
 
-// updateNodeCondition publishes the check outcome onto the Node. Non-GPU nodes get the single
-// aggregate NodeHealthy condition. GPU nodes instead get granualar conditions.
+// recordCheckEvent reports a check that did not pass as a Warning event on its target node, with
+// every check result aggregated in the message. Passing checks emit nothing. node is nil when the
+// target no longer exists, in which case there is nothing to report on.
+func (r *CheckNodeHealthReconciler) recordCheckEvent(cnh *chmv1alpha1.CheckNodeHealth, node *corev1.Node) {
+	healthy := meta.FindStatusCondition(cnh.Status.Conditions, ConditionTypeHealthy)
+	if node == nil || healthy == nil || healthy.Status == metav1.ConditionTrue {
+		return
+	}
+	r.Recorder.Event(node, corev1.EventTypeWarning, healthy.Reason, checkEventMessage(cnh))
+}
+
+// checkEventMessage names the CheckNodeHealth and details each of its results on its own line, e.g.:
+//
+//	CheckNodeHealth boot-1a2b3c4d-node-1 results:
+//	PodStartup: Healthy
+//	NcclAllReduce: Unhealthy [CorrectnessError]: NCCL all-reduce reported 3 out-of-bounds values
+func checkEventMessage(cnh *chmv1alpha1.CheckNodeHealth) string {
+	lines := make([]string, 0, len(cnh.Status.Results)+1)
+	lines = append(lines, fmt.Sprintf("CheckNodeHealth %s results:", cnh.Name))
+	for _, result := range cnh.Status.Results {
+		line := fmt.Sprintf("%s: %s", result.Name, result.Status)
+		if result.ErrorCode != "" {
+			line += fmt.Sprintf(" [%s]", result.ErrorCode)
+		}
+		if result.Message != "" {
+			line += ": " + result.Message
+		}
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// updateNodeCondition publishes the check outcome onto a non-GPU Node as NodeHealthy. GPU nodes
+// carry no condition, so a leftover NodeHealthy, e.g. from before the node was seen as a GPU node,
+// is removed from them instead.
 func (r *CheckNodeHealthReconciler) updateNodeCondition(ctx context.Context, cnh *chmv1alpha1.CheckNodeHealth, info gpuNodeInfo) error {
-	desired := desiredNodeConditions(cnh, info)
-	if len(desired) == 0 {
+	healthy := meta.FindStatusCondition(cnh.Status.Conditions, ConditionTypeHealthy)
+	if healthy == nil {
 		return nil
 	}
 
-	publish := r.CircuitBreakers.For(info).Allow()
-	if !publish {
-		klog.InfoS("Circuit breaker is open, only removing node conditions that no longer apply",
+	if !info.isGPUNode && !r.CircuitBreaker.Allow() {
+		klog.InfoS("Circuit breaker is open, skipping node condition update",
 			"node", cnh.Spec.NodeRef.Name,
 			"checkNodeHealth", cnh.Name,
 		)
+		return nil
 	}
 
 	nodeName := cnh.Spec.NodeRef.Name
@@ -558,116 +576,34 @@ func (r *CheckNodeHealthReconciler) updateNodeCondition(ctx context.Context, cnh
 	}
 
 	patch := client.MergeFrom(node.DeepCopy())
-
-	now := metav1.Now()
-	keep := make(map[corev1.NodeConditionType]bool, len(desired))
-	for _, condition := range desired {
-		keep[condition.Type] = true
-		if publish {
-			setNodeCondition(node, condition, now)
+	if info.isGPUNode {
+		i := slices.IndexFunc(node.Status.Conditions, func(c corev1.NodeCondition) bool {
+			return c.Type == NodeConditionNodeHealthy
+		})
+		if i < 0 {
+			return nil
 		}
-	}
-	removed := removeUnwantedNodeConditions(node, keep)
-	if !publish && len(removed) == 0 {
+		node.Status.Conditions = slices.Delete(node.Status.Conditions, i, i+1)
+		if err := r.Status().Patch(ctx, node, patch); err != nil {
+			return fmt.Errorf("failed to remove node %s condition: %w", nodeName, err)
+		}
+		klog.InfoS("Removed node condition that does not apply to a GPU node", "node", nodeName, "type", NodeConditionNodeHealthy)
 		return nil
 	}
 
+	condition := corev1.NodeCondition{
+		Type:    NodeConditionNodeHealthy,
+		Status:  corev1.ConditionStatus(healthy.Status),
+		Reason:  healthy.Reason,
+		Message: healthy.Message,
+	}
+	setNodeCondition(node, condition, metav1.Now())
 	if err := r.Status().Patch(ctx, node, patch); err != nil {
 		return fmt.Errorf("failed to update node %s condition: %w", nodeName, err)
 	}
-
-	if publish {
-		for _, condition := range desired {
-			klog.InfoS("Updated node condition", "node", nodeName, "type", condition.Type,
-				"status", condition.Status, "reason", condition.Reason)
-		}
-	}
-	if len(removed) > 0 {
-		klog.InfoS("Removed node conditions that no longer apply", "node", nodeName, "types", removed)
-	}
+	klog.InfoS("Updated node condition", "node", nodeName, "type", condition.Type,
+		"status", condition.Status, "reason", condition.Reason)
 	return nil
-}
-
-// desiredNodeConditions builds the Node conditions carrying this check's outcome. It returns
-// nothing until the check has completed and the CNH condition is set.
-func desiredNodeConditions(cnh *chmv1alpha1.CheckNodeHealth, info gpuNodeInfo) []corev1.NodeCondition {
-	var healthy *metav1.Condition
-	for i := range cnh.Status.Conditions {
-		if cnh.Status.Conditions[i].Type == ConditionTypeHealthy {
-			healthy = &cnh.Status.Conditions[i]
-			break
-		}
-	}
-	if healthy == nil {
-		return nil
-	}
-
-	if !info.isGPUNode {
-		return []corev1.NodeCondition{{
-			Type:    NodeConditionNodeHealthy,
-			Status:  corev1.ConditionStatus(healthy.Status),
-			Reason:  healthy.Reason,
-			Message: healthy.Message,
-		}}
-	}
-
-	conditions := make([]corev1.NodeCondition, 0, len(cnh.Status.Results))
-	for _, result := range cnh.Status.Results {
-		conditionType, ok := baseCheckConditions[result.Name]
-		if !ok {
-			continue
-		}
-		conditions = append(conditions, corev1.NodeCondition{
-			Type:    conditionType,
-			Status:  nodeConditionStatusFor(result.Status),
-			Reason:  nodeConditionReasonFor(result),
-			Message: result.Message,
-		})
-	}
-	return append(conditions, gpuNodeConditions(cnh.Status.Results, gpu.CheckerNames(info.sku))...)
-}
-
-// nodeConditionStatusFor maps a single check's status onto the Node condition status.
-func nodeConditionStatusFor(status chmv1alpha1.CheckStatus) corev1.ConditionStatus {
-	switch status {
-	case chmv1alpha1.CheckStatusHealthy:
-		return corev1.ConditionTrue
-	case chmv1alpha1.CheckStatusUnhealthy:
-		return corev1.ConditionFalse
-	default:
-		return corev1.ConditionUnknown
-	}
-}
-
-// nodeConditionReasonFor names the specific failure mode.
-func nodeConditionReasonFor(result chmv1alpha1.CheckResult) string {
-	if result.ErrorCode != "" {
-		return result.ErrorCode
-	}
-	switch result.Status {
-	case chmv1alpha1.CheckStatusHealthy:
-		return ReasonCheckPassed
-	case chmv1alpha1.CheckStatusUnhealthy:
-		return ReasonCheckFailed
-	default:
-		return ReasonCheckUnknown
-	}
-}
-
-// removeUnwantedNodeConditions drops every condition this controller manages that is not in keep,
-// returning the types it removed.
-func removeUnwantedNodeConditions(node *corev1.Node, keep map[corev1.NodeConditionType]bool) []corev1.NodeConditionType {
-	kept := make([]corev1.NodeCondition, 0, len(node.Status.Conditions))
-	var removed []corev1.NodeConditionType
-	for _, c := range node.Status.Conditions {
-		if !keep[c.Type] && slices.Contains(managedNodeConditionTypes, c.Type) {
-			removed = append(removed, c.Type)
-			continue
-		}
-		kept = append(kept, c)
-	}
-	node.Status.Conditions = kept
-	return removed
 }
 
 // setNodeCondition upserts a Node condition.

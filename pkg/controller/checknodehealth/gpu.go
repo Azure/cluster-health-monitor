@@ -46,13 +46,9 @@ const (
 	CheckerGpuPeerBandwidth = gpu.PeerBandwidthCheckerName
 )
 
-// gpuCheckerNames are every check a GPU node can report on top of baseCheckerNames. Only the ones
-// gpu.CheckerNames returns for the node's SKU run on it.
-var gpuCheckerNames = []string{CheckerNcclAllReduce, CheckerGpuHostBandwidth, CheckerGpuPeerBandwidth}
-
 // gpuNodeInfo describes the GPU capabilities of a CheckNodeHealth's target node.
 type gpuNodeInfo struct {
-	// isGPUNode decides which Node health conditions the result is published as. See NodeConditionNodeHealthy.
+	// isGPUNode decides whether the result is published as a Node condition. See NodeConditionNodeHealthy.
 	isGPUNode bool
 	// claimableGPUs is how many of the node's GPUs a checker pod can get exclusive use of. The checks
 	// claim all of them and judge the count against the SKU, so a lost GPU shows up as a count failure.

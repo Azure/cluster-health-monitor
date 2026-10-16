@@ -59,8 +59,9 @@ const (
 	NodeKindStandard = "standard"
 )
 
-// nodeKindLabel splits the counters along the same line the node conditions are split on, so that
-// GPU node health can be alerted on without the rest of the fleet diluting it, and vice versa.
+// nodeKindLabel splits the counters between GPU and non-GPU nodes, the same line that decides whether
+// a node gets NodeHealthy, so that GPU node health can be alerted on without the rest of the fleet
+// diluting it, and vice versa.
 func nodeKindLabel(info gpuNodeInfo) string {
 	if info.isGPUNode {
 		return NodeKindGPU

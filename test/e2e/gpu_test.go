@@ -118,7 +118,7 @@ var _ = Describe("GPU CheckNodeHealth flow on Kind", Serial, Ordered, func() {
 		runHealthyGPUControllerFlow(ctx, k8sClient, nodeName)
 	})
 
-	It("reports base check and GPU conditions and never NodeHealthy on a GPU node", func() {
+	It("never sets a node condition or check event on a healthy GPU node", func() {
 		By("Selecting a node with both CoreDNS replicas on remote nodes")
 		nodeName, err := nodeWithRemoteCoreDNS(ctx)
 		Expect(err).NotTo(HaveOccurred())
@@ -126,12 +126,7 @@ var _ = Describe("GPU CheckNodeHealth flow on Kind", Serial, Ordered, func() {
 		simulateManagedNVIDIAGPUNode(ctx, nodeName)
 
 		By("Running the GPU checks to completion")
-		runCheckToCompletion(ctx, k8sClient, nodeName, "gpu-node-conditions")
-
-		By("Verifying every base check and GPU condition reports healthy")
-		for _, conditionType := range slices.Concat(baseCheckConditionTypes, gpuConditionTypes) {
-			expectNodeConditionStatus(ctx, k8sClient, nodeName, conditionType, corev1.ConditionTrue)
-		}
+		cnhName := runCheckToCompletion(ctx, k8sClient, nodeName, "gpu-node-conditions")
 
 		By("Verifying NodeHealthy is never set on a GPU node")
 		// The invariant the whole split exists for: remediation keyed on NodeHealthy must not act
@@ -139,72 +134,37 @@ var _ = Describe("GPU CheckNodeHealth flow on Kind", Serial, Ordered, func() {
 		Consistently(func() *corev1.NodeCondition {
 			return getNodeCondition(ctx, k8sClient, nodeName, checknodehealth.NodeConditionNodeHealthy)
 		}, "15s", "3s").Should(BeNil(), "NodeHealthy must never be set on a GPU node")
+
+		By("Verifying a passing check emits no event")
+		Expect(getCheckEvent(ctx, nodeName, cnhName)).To(BeNil(), "a passing check must not emit an event")
 	})
 
-	It("retires the GPU node conditions when a node stops being a GPU node", func() {
+	It("drops NodeHealthy when a node becomes a GPU node", func() {
 		By("Selecting a node with both CoreDNS replicas on remote nodes")
 		nodeName, err := nodeWithRemoteCoreDNS(ctx)
 		Expect(err).NotTo(HaveOccurred())
 
-		By("Simulating a driver-only GPU node and running the checks so it carries GPU node conditions")
-		// Driver-only nodes report every GPU condition as Unknown, which is all this needs: the
-		// conditions exist and must be retired.
+		By("Running the checks on the node before it is a GPU node so it carries NodeHealthy")
+		runCheckToCompletion(ctx, k8sClient, nodeName, "gpu-cond-before")
+		Eventually(func() *corev1.NodeCondition {
+			return getNodeCondition(ctx, k8sClient, nodeName, checknodehealth.NodeConditionNodeHealthy)
+		}, "60s", "2s").ShouldNot(BeNil(), "expected NodeHealthy on a node that is not a GPU node")
+
+		By("Simulating a driver-only GPU node")
 		restoreNode, err := simulateNVIDIAGPUNode(ctx, nodeName, gpuTestSKU)
 		Expect(err).NotTo(HaveOccurred())
 		DeferCleanup(func() { Expect(restoreNode()).To(Succeed()) })
 
-		runCheckToCompletion(ctx, k8sClient, nodeName, "gpu-cond-before")
-		Eventually(func() *corev1.NodeCondition {
-			return getNodeCondition(ctx, k8sClient, nodeName, gpuConditionTypes[0])
-		}, "60s", "2s").ShouldNot(BeNil(), "expected the GPU node conditions first")
-
-		By("Restoring the node so it is no longer seen as a GPU node")
-		Expect(restoreNode()).To(Succeed())
-
 		By("Running another health check")
 		runCheckToCompletion(ctx, k8sClient, nodeName, "gpu-cond-after")
 
-		By("Verifying the node now reports the aggregate NodeHealthy condition")
+		By("Verifying NodeHealthy was removed rather than left behind")
+		// A leftover condition would keep asserting a verdict nothing produces any more.
 		Eventually(func() *corev1.NodeCondition {
 			return getNodeCondition(ctx, k8sClient, nodeName, checknodehealth.NodeConditionNodeHealthy)
-		}, "60s", "2s").ShouldNot(BeNil(), "expected NodeHealthy once the node is not a GPU node")
-
-		By("Verifying the GPU node conditions were retired rather than left behind")
-		// A leftover condition would keep asserting a verdict nothing produces any more.
-		for _, conditionType := range slices.Concat(baseCheckConditionTypes, gpuConditionTypes) {
-			Eventually(func() *corev1.NodeCondition {
-				return getNodeCondition(ctx, k8sClient, nodeName, conditionType)
-			}, "60s", "2s").Should(BeNil(), "%s should have been removed", conditionType)
-		}
+		}, "60s", "2s").Should(BeNil(), "NodeHealthy should have been removed from the GPU node")
 	})
 })
-
-// baseCheckConditionTypes are the base check conditions a GPU node reports. Spelled out here rather
-// than reused from the controller so the test fails if the published name changes.
-var baseCheckConditionTypes = []corev1.NodeConditionType{
-	"kubernetes.azure.com/PodStartupHealthy",
-	"kubernetes.azure.com/PodNetworkHealthy",
-}
-
-// gpuConditionTypes are the GPU conditions, spelled out for the same reason.
-var gpuConditionTypes = []corev1.NodeConditionType{
-	"kubernetes.azure.com/GPUCountHealthy",
-	"kubernetes.azure.com/GPUHostBandwidthHealthy",
-	"kubernetes.azure.com/GPUPeerBandwidthHealthy",
-	"kubernetes.azure.com/GPUAllReduceBandwidthHealthy",
-	"kubernetes.azure.com/GPUCorrectnessHealthy",
-}
-
-// expectNodeConditionStatus waits for the condition to appear on the node and checks its status.
-func expectNodeConditionStatus(ctx context.Context, k8sClient client.Client, nodeName string, conditionType corev1.NodeConditionType, want corev1.ConditionStatus) {
-	Eventually(func() *corev1.NodeCondition {
-		return getNodeCondition(ctx, k8sClient, nodeName, conditionType)
-	}, "60s", "2s").ShouldNot(BeNil(), "expected %s on the node", conditionType)
-
-	condition := getNodeCondition(ctx, k8sClient, nodeName, conditionType)
-	Expect(condition.Status).To(Equal(want),
-		"%s: reason=%s message=%s", conditionType, condition.Reason, condition.Message)
-}
 
 // getNodeCondition returns the named condition from the node, or nil when it is absent.
 func getNodeCondition(ctx context.Context, k8sClient client.Client, nodeName string, conditionType corev1.NodeConditionType) *corev1.NodeCondition {
@@ -221,8 +181,8 @@ func getNodeCondition(ctx context.Context, k8sClient client.Client, nodeName str
 }
 
 // runCheckToCompletion creates a CheckNodeHealth for the node and waits for the controller to
-// finish it, so the node conditions it publishes have settled before they are asserted on.
-func runCheckToCompletion(ctx context.Context, k8sClient client.Client, nodeName, prefix string) {
+// finish it, so what it publishes has settled before it is asserted on. It returns the CR's name.
+func runCheckToCompletion(ctx context.Context, k8sClient client.Client, nodeName, prefix string) string {
 	cnhName := fmt.Sprintf("%s-%d", prefix, time.Now().UnixNano())
 	DeferCleanup(func() { _ = deleteCheckNodeHealthCR(ctx, k8sClient, cnhName) })
 
@@ -232,6 +192,7 @@ func runCheckToCompletion(ctx context.Context, k8sClient client.Client, nodeName
 		g.Expect(getErr).NotTo(HaveOccurred())
 		g.Expect(cnh.Status.FinishedAt).NotTo(BeNil())
 	}, "120s", "2s").Should(Succeed(), "CheckNodeHealth %s did not complete", cnhName)
+	return cnhName
 }
 
 func runHealthyGPUControllerFlow(ctx context.Context, k8sClient client.Client, nodeName string) {
@@ -354,11 +315,16 @@ func runDriverOnlyGPUControllerFlow(ctx context.Context, k8sClient client.Client
 	Expect(condition.Status).To(Equal(metav1.ConditionUnknown))
 	Expect(condition.Reason).To(Equal(checknodehealth.ReasonCheckUnknown))
 
-	By("Verifying the GPU node conditions are unknown and say why")
-	for _, conditionType := range gpuConditionTypes {
-		expectNodeConditionStatus(ctx, k8sClient, nodeName, conditionType, corev1.ConditionUnknown)
-		Expect(getNodeCondition(ctx, k8sClient, nodeName, conditionType).Message).
-			To(ContainSubstring(gpu.ErrorCodeGPUsNotClaimable))
+	By("Verifying the inconclusive check is reported as a Warning event on the node saying why")
+	var event *corev1.Event
+	Eventually(func() *corev1.Event {
+		event = getCheckEvent(ctx, nodeName, cnhName)
+		return event
+	}, "60s", "2s").ShouldNot(BeNil(), "expected a check event on the node")
+	Expect(event.Type).To(Equal(corev1.EventTypeWarning))
+	Expect(event.Reason).To(Equal(checknodehealth.ReasonCheckUnknown))
+	for _, name := range []string{"NcclAllReduce", "GpuHostBandwidth", "GpuPeerBandwidth"} {
+		Expect(event.Message).To(ContainSubstring(fmt.Sprintf("%s: Unknown [%s]", name, gpu.ErrorCodeGPUsNotClaimable)))
 	}
 	Expect(getNodeCondition(ctx, k8sClient, nodeName, checknodehealth.NodeConditionNodeHealthy)).To(BeNil(),
 		"NodeHealthy must never be set on a GPU node")

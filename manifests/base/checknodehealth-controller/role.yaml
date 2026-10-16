@@ -21,6 +21,13 @@ rules:
   verbs:
   - patch
 - apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
   - clusterhealthmonitor.azure.com
   resources:
   - checknodehealths
