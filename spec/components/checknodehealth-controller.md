@@ -88,7 +88,7 @@ All condition types use the prefix `kubernetes.azure.com/`.
 
 Condition types managed by the controller that don't apply to the node's kind are removed.
 
-**GPU Node conditions.** These are written on the Node (`node.status.conditions`, prefixed `kubernetes.azure.com/`). Each one is computed from the GPU check results listed below:
+**GPU Node conditions.** Each one is computed from the GPU check results listed below:
 
 | Condition | From checks | `False` when | Notes |
 |-----------|-------------|--------------|-------|
