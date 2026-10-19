@@ -18,6 +18,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -217,6 +218,7 @@ func newMetricsReconciler(t *testing.T, failTerminalUpdate bool) (*CheckNodeHeal
 		APIReader:           failingClient,
 		CheckerPodImage:     testCheckerPodImage,
 		CheckerPodNamespace: testCheckerPodNamespace,
+		Recorder:            record.NewFakeRecorder(100),
 	}, failingClient
 }
 

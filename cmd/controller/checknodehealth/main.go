@@ -66,7 +66,7 @@ func main() {
 			"The HealthCheckRequest CRD must be installed in the cluster by the AKS health signal component.")
 	flag.BoolVar(&enableNodeCondition, "enable-node-condition", false,
 		"Enable setting the NodeHealthy condition on Node objects when health checks fail. "+
-			"GPU nodes report granular node conditions instead, so NodeHealthy is never set on them.")
+			"GPU nodes never get NodeHealthy; their failed checks are only reported as node events.")
 	flag.BoolVar(&enableGPUChecks, "enable-gpu-checks", false,
 		"Enable intrusive GPU checks on CheckNodeHealth targets that are GPU nodes. "+
 			"Requires GPU_CHECKER_POD_IMAGE to be set.")
@@ -189,14 +189,14 @@ func main() {
 	}
 
 	// Setup controller
-	var circuitBreakers *checknodehealth.NodeConditionCircuitBreakers
+	var circuitBreaker *checknodehealth.NodeConditionCircuitBreaker
 	if enableNodeCondition {
-		circuitBreakers = checknodehealth.NewNodeConditionCircuitBreakers(
+		circuitBreaker = checknodehealth.NewNodeConditionCircuitBreaker(
 			checknodehealth.DefaultCircuitBreakerThreshold,
 			checknodehealth.DefaultCircuitBreakerWindow,
 			checknodehealth.DefaultCircuitBreakerCooldown,
 		)
-		klog.InfoS("Node condition circuit breakers enabled",
+		klog.InfoS("Node condition circuit breaker enabled",
 			"threshold", checknodehealth.DefaultCircuitBreakerThreshold,
 			"window", checknodehealth.DefaultCircuitBreakerWindow,
 			"cooldown", checknodehealth.DefaultCircuitBreakerCooldown,
@@ -212,9 +212,10 @@ func main() {
 		GPUCheckerPodImage:  gpuCheckerPodImage,
 		CheckerPodNamespace: checkerPodNamespace,
 		EnableNodeCondition: enableNodeCondition,
-		CircuitBreakers:     circuitBreakers,
+		CircuitBreaker:      circuitBreaker,
 		EnableGPUChecks:     enableGPUChecks,
 		GPUWait:             gpuWait,
+		Recorder:            mgr.GetEventRecorderFor("checknodehealth-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		klog.ErrorS(err, "Unable to create controller", "controller", "CheckNodeHealth")
 		klog.FlushAndExit(klog.ExitFlushTimeout, 1)

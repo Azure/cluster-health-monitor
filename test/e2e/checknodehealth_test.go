@@ -3,6 +3,7 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
@@ -12,6 +13,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -61,6 +63,27 @@ func checkNodeHealthCRExists(ctx context.Context, k8sClient client.Client, name 
 	cnh := &chmv1alpha1.CheckNodeHealth{}
 	err := k8sClient.Get(ctx, client.ObjectKey{Name: name}, cnh)
 	return err == nil
+}
+
+// getCheckEvent returns the event the controller emitted on the node for the named CheckNodeHealth,
+// or nil when there is none. Events on cluster-scoped Nodes are recorded in the default namespace.
+func getCheckEvent(ctx context.Context, nodeName, cnhName string) *corev1.Event {
+	events, err := clientset.CoreV1().Events(metav1.NamespaceDefault).List(ctx, metav1.ListOptions{
+		FieldSelector: fields.Set{
+			"involvedObject.kind": "Node",
+			"involvedObject.name": nodeName,
+		}.String(),
+	})
+	if err != nil {
+		return nil
+	}
+	header := fmt.Sprintf("CheckNodeHealth %s results:", cnhName)
+	for i, event := range events.Items {
+		if strings.HasPrefix(event.Message, header) {
+			return &events.Items[i]
+		}
+	}
+	return nil
 }
 
 // These tests create synthetic Node objects and restart the shared controller, so they must not
@@ -424,6 +447,16 @@ var _ = Describe("CheckNodeHealth Controller", Serial, Ordered, ContinueOnFailur
 		Expect(nodeCondition.Reason).NotTo(BeEmpty())
 		GinkgoWriter.Printf("NodeHealthy condition on %s: status=%s, reason=%s, message=%s\n",
 			fakeNodeName, nodeCondition.Status, nodeCondition.Reason, nodeCondition.Message)
+
+		By("Verifying the failed check is reported as a Warning event on the Node")
+		var event *corev1.Event
+		Eventually(func() *corev1.Event {
+			event = getCheckEvent(ctx, fakeNodeName, cnhName)
+			return event
+		}, "30s", "2s").ShouldNot(BeNil(), "Expected a check event on the node, but none was found")
+		Expect(event.Type).To(Equal(corev1.EventTypeWarning))
+		Expect(event.Reason).To(Equal(checknodehealth.ReasonCheckFailed))
+		Expect(event.Message).To(ContainSubstring("PodStartup: Unhealthy"))
 	})
 
 	It("should not act on Windows nodes", func() {

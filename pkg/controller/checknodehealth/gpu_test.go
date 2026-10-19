@@ -358,7 +358,7 @@ func TestRecordedRun(t *testing.T) {
 			wantTimeout:        GPUPodTimeout,
 		},
 		{
-			name:               "gpu node without the gpu checks still reports granular conditions",
+			name:               "gpu node without the gpu checks still stays off NodeHealthy",
 			pod:                pod(map[string]string{annotationNodeKind: NodeKindGPU}),
 			currentGpuNodeInfo: gpuNodeInfo{},
 			wantGPUNode:        true,
@@ -408,8 +408,9 @@ func TestRecordedRun(t *testing.T) {
 
 // TestGPURunKeepsGPURoutingWhenNodeLosesGPUs is the case where a node is recognized as a GPU node
 // at time of checker pod creation but the node is updated and appears to lose GPU status while the
-// GPU checks run. The result must still go to the granular conditions, GPU metrics and GPU circuit
-// breaker, and not use the NodeHealthy condition, which existing remediation acts on.
+// GPU checks run. The result must still be handled as a GPU node's: reported as an event and in the
+// GPU metrics, and kept off the NodeHealthy condition and its circuit breaker, which existing
+// remediation acts on.
 func TestGPURunKeepsGPURoutingWhenNodeLosesGPUs(t *testing.T) {
 	ctx := context.Background()
 	reconciler, fakeClient, _ := setupTest()
@@ -417,7 +418,7 @@ func TestGPURunKeepsGPURoutingWhenNodeLosesGPUs(t *testing.T) {
 	reconciler.EnableGPUChecks = true
 	reconciler.GPUWait = DefaultGPUWait
 	reconciler.EnableNodeCondition = true
-	reconciler.CircuitBreakers = NewNodeConditionCircuitBreakers(1, DefaultCircuitBreakerWindow, DefaultCircuitBreakerCooldown)
+	reconciler.CircuitBreaker = NewNodeConditionCircuitBreaker(1, DefaultCircuitBreakerWindow, DefaultCircuitBreakerCooldown)
 
 	gpus := *resource.NewQuantity(8, resource.DecimalSI)
 	node := &corev1.Node{
@@ -503,8 +504,10 @@ func TestGPURunKeepsGPURoutingWhenNodeLosesGPUs(t *testing.T) {
 	if c := getNodeConditionByType(updatedNode.Status.Conditions, NodeConditionNodeHealthy); c != nil {
 		t.Errorf("NodeHealthy = %s/%s, want it unset on a GPU run", c.Status, c.Reason)
 	}
-	if c := getNodeConditionByType(updatedNode.Status.Conditions, NodeConditionGPUAllReduceBandwidthHealthy); c == nil || c.Status != corev1.ConditionFalse {
-		t.Errorf("GPUAllReduceBandwidthHealthy = %+v, want False", c)
+	events := recordedEvents(t, reconciler)
+	wantLine := "NcclAllReduce: Unhealthy [" + gpu.ErrorCodeLowBandwidth + "]"
+	if len(events) != 1 || !strings.HasPrefix(events[0], corev1.EventTypeWarning+" "+ReasonCheckFailed+" ") || !strings.Contains(events[0], wantLine) {
+		t.Errorf("events = %q, want one Warning %s event containing %q", events, ReasonCheckFailed, wantLine)
 	}
 
 	for series := range counterDelta(resultsBefore, counterSnapshot(t, checkerResultCounter)) {
@@ -513,10 +516,7 @@ func TestGPURunKeepsGPURoutingWhenNodeLosesGPUs(t *testing.T) {
 		}
 	}
 
-	if reconciler.CircuitBreakers.For(gpuNodeInfo{isGPUNode: true}).Allow() {
-		t.Error("the GPU node breaker did not record the unhealthy result")
-	}
-	if !reconciler.CircuitBreakers.For(gpuNodeInfo{}).Allow() {
+	if !reconciler.CircuitBreaker.Allow() {
 		t.Error("the NodeHealthy breaker recorded the GPU result")
 	}
 }

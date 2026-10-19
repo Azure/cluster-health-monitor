@@ -497,44 +497,6 @@ func TestRemoveStaleNodeCondition(t *testing.T) {
 			expectCondCount: 1,
 		},
 		{
-			name: "stale GPUPeerBandwidthHealthy condition without a heartbeat — removed",
-			node: &corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{Name: "node-1"},
-				Status: corev1.NodeStatus{
-					NodeInfo: corev1.NodeSystemInfo{BootID: "boot-1"},
-					Conditions: []corev1.NodeCondition{
-						{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
-						{
-							Type:               "kubernetes.azure.com/GPUPeerBandwidthHealthy",
-							Status:             corev1.ConditionFalse,
-							LastTransitionTime: metav1.NewTime(time.Now().Add(-1 * time.Hour)),
-						},
-					},
-				},
-			},
-			expectRemoved:   true,
-			expectCondCount: 1,
-		},
-		{
-			name: "fresh GPUPeerBandwidthHealthy condition without a heartbeat — not removed",
-			node: &corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{Name: "node-1", Labels: gpuNodeLabels},
-				Status: corev1.NodeStatus{
-					NodeInfo: corev1.NodeSystemInfo{BootID: "boot-1"},
-					Conditions: []corev1.NodeCondition{
-						{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
-						{
-							Type:               "kubernetes.azure.com/GPUPeerBandwidthHealthy",
-							Status:             corev1.ConditionFalse,
-							LastTransitionTime: metav1.Now(),
-						},
-					},
-				},
-			},
-			expectRemoved:   false,
-			expectCondCount: 2,
-		},
-		{
 			// A GPU node never carries NodeHealthy, so one left by an older controller is retired
 			// right away rather than after NodeConditionTTL.
 			name: "fresh NodeHealthy condition on a GPU node — removed",
@@ -549,52 +511,6 @@ func TestRemoveStaleNodeCondition(t *testing.T) {
 							Status:             corev1.ConditionFalse,
 							LastTransitionTime: metav1.Now(),
 							LastHeartbeatTime:  metav1.Now(),
-						},
-					},
-				},
-			},
-			expectRemoved:   true,
-			expectCondCount: 1,
-		},
-		{
-			// A node that is not a GPU node never carries the granular conditions.
-			name: "fresh GPUPeerBandwidthHealthy condition on a non-GPU node — removed",
-			node: &corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{Name: "node-1"},
-				Status: corev1.NodeStatus{
-					NodeInfo: corev1.NodeSystemInfo{BootID: "boot-1"},
-					Conditions: []corev1.NodeCondition{
-						{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
-						{
-							Type:               "kubernetes.azure.com/GPUPeerBandwidthHealthy",
-							Status:             corev1.ConditionFalse,
-							LastTransitionTime: metav1.Now(),
-							LastHeartbeatTime:  metav1.Now(),
-						},
-					},
-				},
-			},
-			expectRemoved:   true,
-			expectCondCount: 1,
-		},
-		{
-			// Both conditions go stale together, so both are dropped in a single patch.
-			name: "stale NodeHealthy and GPUPeerBandwidthHealthy conditions without heartbeats — both removed",
-			node: &corev1.Node{
-				ObjectMeta: metav1.ObjectMeta{Name: "node-1"},
-				Status: corev1.NodeStatus{
-					NodeInfo: corev1.NodeSystemInfo{BootID: "boot-1"},
-					Conditions: []corev1.NodeCondition{
-						{Type: corev1.NodeReady, Status: corev1.ConditionTrue},
-						{
-							Type:               "kubernetes.azure.com/NodeHealthy",
-							Status:             corev1.ConditionTrue,
-							LastTransitionTime: metav1.NewTime(time.Now().Add(-1 * time.Hour)),
-						},
-						{
-							Type:               "kubernetes.azure.com/GPUPeerBandwidthHealthy",
-							Status:             corev1.ConditionFalse,
-							LastTransitionTime: metav1.NewTime(time.Now().Add(-1 * time.Hour)),
 						},
 					},
 				},

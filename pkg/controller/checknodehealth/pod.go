@@ -124,8 +124,8 @@ func (r *CheckNodeHealthReconciler) buildHealthCheckPod(cnh *chmv1alpha1.CheckNo
 	if spec.gpuNode {
 		annotations[annotationNodeKind] = NodeKindGPU
 	}
-	if spec.gpu != nil {
-		annotations[annotationGPUChecksSKU] = spec.gpu.sku
+	if spec.gpuChecks != nil {
+		annotations[annotationGPUChecksSKU] = spec.gpuChecks.sku
 	}
 
 	// Determine service account name from annotation or use default
@@ -180,8 +180,8 @@ func (r *CheckNodeHealthReconciler) buildHealthCheckPod(cnh *chmv1alpha1.CheckNo
 		return nil, err
 	}
 
-	if spec.gpu != nil {
-		configureGPUChecker(&pod.Spec.Containers[0], *spec.gpu)
+	if spec.gpuChecks != nil {
+		configureGPUChecker(&pod.Spec.Containers[0], *spec.gpuChecks)
 	}
 
 	return pod, nil
