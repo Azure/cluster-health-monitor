@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -123,14 +124,14 @@ var baseCheckerNames = []string{CheckerPodStartup, CheckerPodNetwork}
 // checker pod exists, the spec is read back from its annotations instead; see recordedRun.
 type checkerSpec struct {
 	image string
-	// gpuNode decides whether the result is published as NodeHealthy, and which metrics it goes to.
+	// gpuNode marks a GPU node, keeping its result off NodeHealthy. It does not decide which checks run.
 	gpuNode bool
 	// timeout bounds the checker pod.
 	timeout time.Duration
 	// checkerNames are the checks this node owes a result for. Anything unreported becomes Unknown.
 	checkerNames []string
-	// gpu is set when the checker runs the GPU checks, and nil otherwise.
-	gpu *gpuChecks
+	// gpuChecks, when set, adds the GPU checks to the base checks every node runs.
+	gpuChecks *gpuChecks
 	// wait, when set, means the GPU checks cannot be decided yet: select again after this long, and
 	// create no checker pod meanwhile.
 	wait time.Duration
@@ -149,11 +150,11 @@ func (r *CheckNodeHealthReconciler) checkerSpecFor(info gpuNodeInfo, age time.Du
 	spec.checkerNames, spec.timeout = expectedRun(true, info.sku)
 	switch {
 	case info.claimableGPUs > 0:
-		spec.gpu = &gpuChecks{sku: info.sku, gpus: info.claimableGPUs}
+		spec.gpuChecks = &gpuChecks{sku: info.sku, gpus: info.claimableGPUs}
 	case age < r.GPUWait:
 		spec.wait = min(r.GPUWait-age, gpuPollInterval)
 	default:
-		spec.gpu = &gpuChecks{sku: info.sku, skipReason: gpu.ErrorCodeGPUsNotClaimable}
+		spec.gpuChecks = &gpuChecks{sku: info.sku, skipReason: gpu.ErrorCodeGPUsNotClaimable}
 	}
 	return spec
 }
@@ -319,11 +320,11 @@ func (r *CheckNodeHealthReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 				"name", cnh.Name, "node", cnh.Spec.NodeRef.Name, "requeueAfter", spec.wait)
 			return ctrl.Result{RequeueAfter: spec.wait}, nil
 		}
-		if spec.gpu != nil {
+		if spec.gpuChecks != nil {
 			// How long after the CheckNodeHealth the GPU checks started, for tuning GPUWait.
 			klog.InfoS("Starting GPU checks", "name", cnh.Name, "node", cnh.Spec.NodeRef.Name,
 				"sinceCreated", time.Since(cnh.CreationTimestamp.Time).Round(time.Millisecond),
-				"gpus", spec.gpu.gpus, "skipReason", spec.gpu.skipReason)
+				"gpus", spec.gpuChecks.gpus, "skipReason", spec.gpuChecks.skipReason)
 		}
 		if pod, err = r.createHealthCheckPod(ctx, cnh, spec); err != nil {
 			klog.ErrorS(err, "Failed to create health check pod")
@@ -536,20 +537,69 @@ func (r *CheckNodeHealthReconciler) recordCheckEvent(cnh *chmv1alpha1.CheckNodeH
 //	CheckNodeHealth boot-1a2b3c4d-node-1 results:
 //	PodStartup: Healthy
 //	NcclAllReduce: Unhealthy [CorrectnessError]: NCCL all-reduce reported 3 out-of-bounds values
+//
+// Results that would take it past maxEventMessageLen are left out and counted in a final line.
 func checkEventMessage(cnh *chmv1alpha1.CheckNodeHealth) string {
-	lines := make([]string, 0, len(cnh.Status.Results)+1)
+	results := cnh.Status.Results
+	lines := make([]string, 0, len(results)+1)
 	lines = append(lines, fmt.Sprintf("CheckNodeHealth %s results:", cnh.Name))
-	for _, result := range cnh.Status.Results {
-		line := fmt.Sprintf("%s: %s", result.Name, result.Status)
-		if result.ErrorCode != "" {
-			line += fmt.Sprintf(" [%s]", result.ErrorCode)
+	size := len(lines[0])
+	for i, result := range results {
+		line := resultEventLine(result)
+		room := maxEventMessageLen - size - 1
+		// Leave room to say how many results are left out, unless this is the last one.
+		if i < len(results)-1 {
+			room -= 1 + len(omittedResultsLine(cnh.Name, len(results)-i-1))
 		}
-		if result.Message != "" {
-			line += ": " + result.Message
+		if len(line) > room {
+			lines = append(lines, omittedResultsLine(cnh.Name, len(results)-i))
+			break
 		}
 		lines = append(lines, line)
+		size += 1 + len(line)
 	}
 	return strings.Join(lines, "\n")
+}
+
+func resultEventLine(result chmv1alpha1.CheckResult) string {
+	line := fmt.Sprintf("%s: %s", result.Name, result.Status)
+	if result.ErrorCode != "" {
+		line += fmt.Sprintf(" [%s]", result.ErrorCode)
+	}
+	if result.Message != "" {
+		line += ": " + eventResultMessage(result.Message)
+	}
+	return line
+}
+
+func omittedResultsLine(cnhName string, omitted int) string {
+	return fmt.Sprintf("... (%d more, see CheckNodeHealth %s)", omitted, cnhName)
+}
+
+const (
+	// maxEventMessageLen bounds the event message. The CRD does not bound the number of results, so
+	// the per-result bound alone does not bound the message.
+	maxEventMessageLen = 8 * 1024
+	// maxEventResultMessageLen bounds each result message in the event, so one long message cannot
+	// crowd out the other results. A result message can be up to 32 KiB; the full message stays on the
+	// CheckNodeHealth.
+	maxEventResultMessageLen = 1024
+)
+
+var newlineReplacer = strings.NewReplacer("\r\n", "; ", "\n", "; ")
+
+// eventResultMessage fits a result message onto its one event line: line breaks become "; ", and
+// anything past maxEventResultMessageLen bytes is cut, without splitting a UTF-8 character.
+func eventResultMessage(msg string) string {
+	msg = newlineReplacer.Replace(strings.TrimSpace(msg))
+	if len(msg) <= maxEventResultMessageLen {
+		return msg
+	}
+	cut := maxEventResultMessageLen
+	for cut > 0 && !utf8.RuneStart(msg[cut]) {
+		cut--
+	}
+	return msg[:cut] + "... (truncated)"
 }
 
 // updateNodeCondition publishes the check outcome onto a non-GPU Node as NodeHealthy. GPU nodes

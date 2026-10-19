@@ -358,7 +358,7 @@ func TestRecordedRun(t *testing.T) {
 			wantTimeout:        GPUPodTimeout,
 		},
 		{
-			name:               "gpu node without the gpu checks still reports granular conditions",
+			name:               "gpu node without the gpu checks still stays off NodeHealthy",
 			pod:                pod(map[string]string{annotationNodeKind: NodeKindGPU}),
 			currentGpuNodeInfo: gpuNodeInfo{},
 			wantGPUNode:        true,

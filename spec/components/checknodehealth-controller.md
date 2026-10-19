@@ -134,7 +134,7 @@ message: |-
 |-----------|-------|
 | `type`    | Always `Warning`. |
 | `reason`  | `CheckFailed` when `Healthy=False`; `CheckUnknown` when `Healthy=Unknown`. |
-| `message` | The first line is `CheckNodeHealth <name> results:`. It is followed by one line per entry in `status.results`, in the same order, as `<name>: <status>`, with ` [<errorCode>]` appended when the code is set and `: <message>` appended when the message is set. |
+| `message` | The first line is `CheckNodeHealth <name> results:`. It is followed by one line per entry in `status.results`, in the same order, as `<name>: <status>`, with ` [<errorCode>]` appended when the code is set and `: <message>` appended when the message is set. Line breaks in a result message become `; `. A result message over **1024** bytes is cut to its first 1024 bytes, without splitting a UTF-8 character, and ends with `... (truncated)`. The whole message is at most **8 KiB**: results that would go past it are left out, and the last line is `... (<n> more, see CheckNodeHealth <name>)`. The full results stay on the CNH. |
 
 Unlike the CNH condition's `reason` (§4.1), the event's `reason` has fixed values. The first message line is stable, so the event can be matched to its CNH. The result lines are for people and repeat the free-form result messages, so clients must not parse them. Read the CNH for structured results while it exists (§5.1).
 

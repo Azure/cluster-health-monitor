@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/go-cmp/cmp"
 	corev1 "k8s.io/api/core/v1"
@@ -1194,7 +1195,7 @@ func TestCheckerSpecFor(t *testing.T) {
 			want: checkerSpec{
 				gpuNode: true,
 				image:   "gpu-image", timeout: GPUPodTimeout, checkerNames: gpuNames,
-				gpu: &gpuChecks{sku: h100, gpus: 8},
+				gpuChecks: &gpuChecks{sku: h100, gpus: 8},
 			},
 		},
 		{
@@ -1205,7 +1206,7 @@ func TestCheckerSpecFor(t *testing.T) {
 			want: checkerSpec{
 				gpuNode: true,
 				image:   "gpu-image", timeout: GPUPodTimeout, checkerNames: gpuNames,
-				gpu: &gpuChecks{sku: h100, gpus: 7},
+				gpuChecks: &gpuChecks{sku: h100, gpus: 7},
 			},
 		},
 		{
@@ -1217,7 +1218,7 @@ func TestCheckerSpecFor(t *testing.T) {
 				image:   "gpu-image", timeout: GPUPodTimeout,
 				// The A10 has no NVLink, so peer bandwidth is not one of its checks.
 				checkerNames: []string{"PodStartup", "PodNetwork", "NcclAllReduce", "GpuHostBandwidth"},
-				gpu:          &gpuChecks{sku: "Standard_NV72ads_A10_v5", gpus: 2},
+				gpuChecks:    &gpuChecks{sku: "Standard_NV72ads_A10_v5", gpus: 2},
 			},
 		},
 		{
@@ -1252,7 +1253,7 @@ func TestCheckerSpecFor(t *testing.T) {
 			want: checkerSpec{
 				gpuNode: true,
 				image:   "gpu-image", timeout: GPUPodTimeout, checkerNames: gpuNames,
-				gpu: &gpuChecks{sku: h100, skipReason: gpu.ErrorCodeGPUsNotClaimable},
+				gpuChecks: &gpuChecks{sku: h100, skipReason: gpu.ErrorCodeGPUsNotClaimable},
 			},
 		},
 		{
@@ -1584,13 +1585,128 @@ func assertManagedNodeConditions(t *testing.T, node *corev1.Node, want map[corev
 	}
 }
 
+// TestReconcileGPUCheckEvents covers the event a GPU node gets for each kind of GPU check result that
+// did not pass. GPU nodes carry no node condition, so the event is the only place these show up on the
+// node. Each case runs a full H100 check where every result is Healthy unless overridden.
+func TestReconcileGPUCheckEvents(t *testing.T) {
+	tests := []struct {
+		name string
+		// overrides replace the Healthy result of the GPU checks they name.
+		overrides []chmv1alpha1.CheckResult
+		// wantReason is the reason of the single Warning event on the node.
+		wantReason string
+	}{
+		{
+			name: "unexpected gpu count",
+			overrides: []chmv1alpha1.CheckResult{
+				{Name: CheckerGpuHostBandwidth, Status: chmv1alpha1.CheckStatusUnhealthy, ErrorCode: gpu.ErrorCodeUnexpectedGPUCount, Message: "found 7 GPUs, expected 8"},
+			},
+			wantReason: ReasonCheckFailed,
+		},
+		{
+			name: "nccl all-reduce bandwidth below threshold",
+			overrides: []chmv1alpha1.CheckResult{
+				{Name: CheckerNcclAllReduce, Status: chmv1alpha1.CheckStatusUnhealthy, ErrorCode: gpu.ErrorCodeLowBandwidth, Message: "400.000 GB/s is below the 460.000 GB/s threshold"},
+			},
+			wantReason: ReasonCheckFailed,
+		},
+		{
+			name: "unknown sku",
+			overrides: []chmv1alpha1.CheckResult{
+				{Name: CheckerNcclAllReduce, Status: chmv1alpha1.CheckStatusUnknown, ErrorCode: gpu.ErrorCodeUnknownSKU, Message: "no GPU check profile for SKU"},
+			},
+			wantReason: ReasonCheckUnknown,
+		},
+		{
+			// Unhealthy wins over Unknown, and the event still lists both.
+			name: "unhealthy and unknown results together",
+			overrides: []chmv1alpha1.CheckResult{
+				{Name: CheckerNcclAllReduce, Status: chmv1alpha1.CheckStatusUnhealthy, ErrorCode: gpu.ErrorCodeLowBandwidth, Message: "400.000 GB/s is below the 460.000 GB/s threshold"},
+				{Name: CheckerGpuPeerBandwidth, Status: chmv1alpha1.CheckStatusUnknown, ErrorCode: gpu.ErrorCodeToolFailed, Message: "nvbandwidth produced no output"},
+			},
+			wantReason: ReasonCheckFailed,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			reconciler, fakeClient, _ := setupTest()
+			reconciler.EnableGPUChecks = true
+			reconciler.EnableNodeCondition = true
+			reconciler.CircuitBreaker = NewNodeConditionCircuitBreaker(DefaultCircuitBreakerThreshold, DefaultCircuitBreakerWindow, DefaultCircuitBreakerCooldown)
+
+			node := gpuNode("node-1")
+			if err := fakeClient.Create(ctx, node); err != nil {
+				t.Fatalf("creating the node: %v", err)
+			}
+
+			results := []chmv1alpha1.CheckResult{{Name: CheckerPodNetwork, Status: chmv1alpha1.CheckStatusHealthy}}
+			for _, name := range []string{CheckerNcclAllReduce, CheckerGpuHostBandwidth, CheckerGpuPeerBandwidth} {
+				result := chmv1alpha1.CheckResult{Name: name, Status: chmv1alpha1.CheckStatusHealthy}
+				if i := slices.IndexFunc(tt.overrides, func(r chmv1alpha1.CheckResult) bool { return r.Name == name }); i >= 0 {
+					result = tt.overrides[i]
+				}
+				results = append(results, result)
+			}
+
+			cnh := testCNH("cnh-gpu-event")
+			if err := fakeClient.Create(ctx, cnh); err != nil {
+				t.Fatalf("creating the CR: %v", err)
+			}
+			cnh.Status.Results = results
+			if err := fakeClient.Status().Update(ctx, cnh); err != nil {
+				t.Fatalf("seeding reported results: %v", err)
+			}
+			if err := fakeClient.Create(ctx, finishedCheckerPod(cnh.Name, true, node.Labels[instanceTypeLabel])); err != nil {
+				t.Fatalf("creating the checker pod: %v", err)
+			}
+
+			key := types.NamespacedName{Name: cnh.Name}
+			for i := 0; i < 3; i++ {
+				if _, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: key}); err != nil {
+					t.Fatalf("reconcile %d returned error: %v", i, err)
+				}
+			}
+
+			events := recordedEvents(t, reconciler)
+			if len(events) != 1 {
+				t.Fatalf("events = %q, want exactly one", events)
+			}
+			wantPrefix := corev1.EventTypeWarning + " " + tt.wantReason + " "
+			if !strings.HasPrefix(events[0], wantPrefix) {
+				t.Errorf("event = %q, want it to start with %q", events[0], wantPrefix)
+			}
+			lines := strings.Split(strings.TrimPrefix(events[0], wantPrefix), "\n")
+			for _, override := range tt.overrides {
+				want := fmt.Sprintf("%s: %s [%s]: %s", override.Name, override.Status, override.ErrorCode, override.Message)
+				if !slices.Contains(lines, want) {
+					t.Errorf("event message lines = %q, want a line %q", lines, want)
+				}
+			}
+
+			updatedNode := &corev1.Node{}
+			if err := fakeClient.Get(ctx, client.ObjectKey{Name: node.Name}, updatedNode); err != nil {
+				t.Fatalf("reading the node: %v", err)
+			}
+			// Checked by prefix rather than against the managed types, so a condition this controller
+			// no longer manages, such as the removed GPU conditions, would be caught too.
+			for _, c := range updatedNode.Status.Conditions {
+				if strings.HasPrefix(string(c.Type), nodeConditionPrefix) {
+					t.Errorf("node condition %s = %s, want no condition on a GPU node", c.Type, c.Status)
+				}
+			}
+		})
+	}
+}
+
 func TestCheckEventMessage(t *testing.T) {
 	t.Parallel()
 
 	cnh := testCNH("cnh-message")
 	cnh.Status.Results = []chmv1alpha1.CheckResult{
 		{Name: CheckerPodStartup, Status: chmv1alpha1.CheckStatusHealthy},
-		{Name: CheckerPodNetwork, Status: chmv1alpha1.CheckStatusHealthy, Message: "reached 3 endpoints"},
+		{Name: CheckerPodNetwork, Status: chmv1alpha1.CheckStatusHealthy, Message: "reached 3 endpoints\nDNS resolved"},
 		{Name: CheckerNcclAllReduce, Status: chmv1alpha1.CheckStatusUnhealthy, ErrorCode: gpu.ErrorCodeLowBandwidth, Message: "400.000 GB/s is below the 460.000 GB/s threshold"},
 		{Name: CheckerGpuHostBandwidth, Status: chmv1alpha1.CheckStatusUnknown, ErrorCode: ErrorCodeCheckNotReported},
 	}
@@ -1598,13 +1714,128 @@ func TestCheckEventMessage(t *testing.T) {
 	want := strings.Join([]string{
 		"CheckNodeHealth cnh-message results:",
 		"PodStartup: Healthy",
-		"PodNetwork: Healthy: reached 3 endpoints",
+		"PodNetwork: Healthy: reached 3 endpoints; DNS resolved",
 		"NcclAllReduce: Unhealthy [" + gpu.ErrorCodeLowBandwidth + "]: 400.000 GB/s is below the 460.000 GB/s threshold",
 		"GpuHostBandwidth: Unknown [" + ErrorCodeCheckNotReported + "]",
 	}, "\n")
 	if got := checkEventMessage(cnh); got != want {
 		t.Errorf("checkEventMessage() =\n%s\nwant\n%s", got, want)
 	}
+}
+
+func TestEventResultMessage(t *testing.T) {
+	t.Parallel()
+
+	atLimit := strings.Repeat("a", maxEventResultMessageLen)
+	// "é" is two bytes, so this string's limit falls in the middle of the last character.
+	splitRune := strings.Repeat("a", maxEventResultMessageLen-1) + "é"
+
+	tests := []struct {
+		name string
+		msg  string
+		want string
+	}{
+		{name: "short message is unchanged", msg: "found 8 of 8 GPUs", want: "found 8 of 8 GPUs"},
+		{
+			name: "line breaks are flattened",
+			msg:  "host_to_device_memcpy_ce: min 50.000 GB/s\r\ndevice_to_host_memcpy_ce: min 49.000 GB/s\n",
+			want: "host_to_device_memcpy_ce: min 50.000 GB/s; device_to_host_memcpy_ce: min 49.000 GB/s",
+		},
+		{name: "message at the limit is kept", msg: atLimit, want: atLimit},
+		{name: "message over the limit is cut", msg: atLimit + "b", want: atLimit + "... (truncated)"},
+		{
+			name: "cut does not split a character",
+			msg:  splitRune,
+			want: strings.Repeat("a", maxEventResultMessageLen-1) + "... (truncated)",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := eventResultMessage(tt.msg)
+			if got != tt.want {
+				t.Errorf("eventResultMessage() = %q (%d bytes), want %q (%d bytes)", got, len(got), tt.want, len(tt.want))
+			}
+			if !utf8.ValidString(got) {
+				t.Errorf("eventResultMessage() = %q, which is not valid UTF-8", got)
+			}
+		})
+	}
+}
+
+func TestCheckEventMessageCap(t *testing.T) {
+	t.Parallel()
+
+	filler := strings.Repeat("a", 1000)
+	results := func(n int) []chmv1alpha1.CheckResult {
+		out := make([]chmv1alpha1.CheckResult, 0, n)
+		for i := range n {
+			out = append(out, chmv1alpha1.CheckResult{Name: fmt.Sprintf("Check%d", i), Status: chmv1alpha1.CheckStatusHealthy, Message: filler})
+		}
+		return out
+	}
+
+	t.Run("results that fit are all listed", func(t *testing.T) {
+		t.Parallel()
+
+		cnh := testCNH("cnh-cap")
+		cnh.Status.Results = results(5)
+		lines := strings.Split(checkEventMessage(cnh), "\n")
+		if len(lines) != 6 {
+			t.Fatalf("got %d lines, want the header and 5 results", len(lines))
+		}
+		if last := lines[len(lines)-1]; last != "Check4: Healthy: "+filler {
+			t.Errorf("last line = %q, want the last result", last)
+		}
+	})
+
+	t.Run("results past the cap are counted", func(t *testing.T) {
+		t.Parallel()
+
+		cnh := testCNH("cnh-cap")
+		cnh.Status.Results = results(20)
+		msg := checkEventMessage(cnh)
+		if len(msg) > maxEventMessageLen {
+			t.Errorf("message is %d bytes, want at most %d", len(msg), maxEventMessageLen)
+		}
+		lines := strings.Split(msg, "\n")
+		listed := lines[1 : len(lines)-1]
+		for i, line := range listed {
+			if want := fmt.Sprintf("Check%d: Healthy: %s", i, filler); line != want {
+				t.Errorf("line %d = %q, want the whole result", i+1, line)
+			}
+		}
+		want := fmt.Sprintf("... (%d more, see CheckNodeHealth cnh-cap)", 20-len(listed))
+		if last := lines[len(lines)-1]; last != want {
+			t.Errorf("last line = %q, want %q", last, want)
+		}
+	})
+
+	t.Run("last result may use the room kept for the omitted line", func(t *testing.T) {
+		t.Parallel()
+
+		cnh := testCNH("cnh-cap")
+		cnh.Status.Results = results(7)
+		size := len(checkEventMessage(cnh))
+		// Sized so the message ends exactly at the cap, leaving no room for an omitted line.
+		lastPrefix := "Last: Healthy: "
+		cnh.Status.Results = append(cnh.Status.Results, chmv1alpha1.CheckResult{
+			Name:    "Last",
+			Status:  chmv1alpha1.CheckStatusHealthy,
+			Message: strings.Repeat("b", maxEventMessageLen-size-1-len(lastPrefix)),
+		})
+
+		msg := checkEventMessage(cnh)
+		if len(msg) != maxEventMessageLen {
+			t.Errorf("message is %d bytes, want exactly %d", len(msg), maxEventMessageLen)
+		}
+		lines := strings.Split(msg, "\n")
+		if last := lines[len(lines)-1]; !strings.HasPrefix(last, lastPrefix) {
+			t.Errorf("last line = %.40q..., want the last result", last)
+		}
+	})
 }
 
 func TestRecordCheckEvent(t *testing.T) {
