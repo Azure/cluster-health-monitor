@@ -1,6 +1,6 @@
 module github.com/Azure/cluster-health-monitor/test/e2e/fake-device-plugin
 
-go 1.26.9
+go 1.26.10
 
 require (
 	google.golang.org/grpc v1.68.1
