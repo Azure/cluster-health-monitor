@@ -24,7 +24,7 @@ type Result struct {
 
 // Detail provides additional information about the health check result if it is not healthy.
 type Detail struct {
-	// Code is a string that represents the error code of the unhealthy check result.
+	// Code identifies the reason for an unhealthy or inconclusive check result.
 	Code string
 
 	// Message is a string that provides a human-readable message about the unhealthy result.

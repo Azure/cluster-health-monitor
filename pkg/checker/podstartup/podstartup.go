@@ -161,7 +161,9 @@ func (c *PodStartupChecker) check(ctx context.Context) (*checker.Result, error) 
 			return nil, fmt.Errorf("failed to check Karpenter NodePool CRD presence: %w", err)
 		}
 		if !karpenterNodePoolCRDPresent {
-			return checker.Skipped("Karpenter NodePool CRD was not found, pod startup test was skipped"), nil
+			result := checker.Unknown("Karpenter NodePool CRD was not found, cannot test pod startup with node provisioning")
+			result.Detail.Code = ErrCodeKarpenterNodePoolCRDNotFound
+			return result, nil
 		}
 		// create a NodePool first, then create synthetic pods on a new node from the node pool.
 		if err := c.createKarpenterNodePool(ctx, c.karpenterNodePool(nodePoolName, timeStampStr)); err != nil {

@@ -67,6 +67,12 @@ func RecordResult(checker Checker, result *Result, err error) {
 	case StatusUnhealthy:
 		status = metrics.UnhealthyStatus
 		errorCode = result.Detail.Code
+	case StatusUnknown:
+		status = metrics.UnknownStatus
+		errorCode = result.Detail.Code
+		if errorCode == "" {
+			errorCode = metrics.UnknownCode
+		}
 	}
 
 	metrics.CheckerResultCounter.WithLabelValues(checkerType, checkerName, status, errorCode).Inc()
