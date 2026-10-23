@@ -7,8 +7,6 @@ const (
 	StatusHealthy Status = "Healthy"
 	// StatusUnhealthy indicates the checker failed.
 	StatusUnhealthy Status = "Unhealthy"
-	// StatusSkipped indicates the test was skipped by the checker.
-	StatusSkipped Status = "Skipped"
 	// StatusUnknown indicates the test result is inconclusive.
 	StatusUnknown Status = "Unknown"
 )
@@ -24,7 +22,7 @@ type Result struct {
 
 // Detail provides additional information about the health check result if it is not healthy.
 type Detail struct {
-	// Code is a string that represents the error code of the unhealthy check result.
+	// Code identifies the reason for an unhealthy or inconclusive check result.
 	Code string
 
 	// Message is a string that provides a human-readable message about the unhealthy result.
@@ -52,16 +50,7 @@ func Unhealthy(code, message string) *Result {
 	}
 }
 
-// Skipped is a helper function to create a skipped Result with a specific code and message.
-func Skipped(message string) *Result {
-	return &Result{
-		Status: StatusSkipped,
-		Detail: Detail{
-			Message: message,
-		},
-	}
-}
-
+// Unknown is a helper function to create an inconclusive Result with a message.
 func Unknown(message string) *Result {
 	return &Result{
 		Status: StatusUnknown,

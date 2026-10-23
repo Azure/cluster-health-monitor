@@ -94,7 +94,7 @@ Incremented once per checker run.
 | `checker_type` | The `type` from config (`DNS`, `PodStartup`, …).            |
 | `checker_name` | The `name` from config (the instance).                      |
 | `status`       | `Healthy`, `Unhealthy`, or `Unknown`.                       |
-| `error_code`   | `Result.Detail.Code` when unhealthy; `Healthy`/`Unknown` sentinel otherwise. |
+| `error_code`   | `Result.Detail.Code` when unhealthy or explicitly coded Unknown; `Healthy`/`Unknown` sentinel otherwise. |
 
 ### `cluster_health_monitor_pod_health_result_total`
 Per-pod variant, used by the per-pod CoreDNS checks. Same labels as above, plus:
@@ -109,6 +109,7 @@ Per-pod variant, used by the per-pod CoreDNS checks. Same labels as above, plus:
 - A run that **passes** → `status="Healthy"`.
 - A run that **fails a check** → `status="Unhealthy"`, with `error_code` naming the failure.
 - A run that **errors out** (e.g. timeout, unexpected error) → `status="Unknown"`.
+- If PodStartup has node provisioning enabled but the Karpenter NodePool CRD is missing, it reports `status="Unknown"` with `error_code="KarpenterNodePoolCRDNotFound"` without creating a synthetic pod.
 
 
 Example scrape output:
