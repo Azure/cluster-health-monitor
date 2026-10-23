@@ -10,8 +10,8 @@ import (
 )
 
 const (
-	h100SKU = "Standard_ND96isr_H100_v5"
-	a10SKU  = "Standard_NV72ads_A10_v5"
+	nd96isr_h100_v5 = "Standard_ND96isr_H100_v5"
+	nv72ads_a10_v5  = "Standard_NV72ads_A10_v5"
 )
 
 func TestConfigWithDefaults(t *testing.T) {
@@ -38,13 +38,18 @@ func TestNewCheckers(t *testing.T) {
 	}{
 		{
 			name: "sku with every threshold runs every checker",
-			sku:  h100SKU,
+			sku:  nd96isr_h100_v5,
 			want: []string{NCCLAllReduceCheckerName, HostBandwidthCheckerName, PeerBandwidthCheckerName},
 		},
 		{
 			name: "sku without a p2p threshold skips peer bandwidth",
-			sku:  a10SKU,
+			sku:  nv72ads_a10_v5,
 			want: []string{NCCLAllReduceCheckerName, HostBandwidthCheckerName},
+		},
+		{
+			name: "sku with single gpu runs only host bandwidth",
+			sku:  "Standard_NC40ads_H100_v5",
+			want: []string{HostBandwidthCheckerName},
 		},
 		{
 			name: "unknown sku runs every checker",
@@ -83,8 +88,10 @@ func TestNewCheckersWithSkipReason(t *testing.T) {
 		// wantCode is what every checker reports.
 		wantCode string
 	}{
-		{name: "h100", cfg: Config{SKU: h100SKU, SkipReason: ErrorCodeGPUsNotClaimable}, wantCode: ErrorCodeGPUsNotClaimable},
-		{name: "a10", cfg: Config{SKU: a10SKU, SkipReason: ErrorCodeGPUsNotClaimable}, wantCode: ErrorCodeGPUsNotClaimable},
+		{name: "nd96isr_h100_v5", cfg: Config{SKU: nd96isr_h100_v5, SkipReason: ErrorCodeGPUsNotClaimable}, wantCode: ErrorCodeGPUsNotClaimable},
+		{name: "nv72ads_a10_v5", cfg: Config{SKU: nv72ads_a10_v5, SkipReason: ErrorCodeGPUsNotClaimable}, wantCode: ErrorCodeGPUsNotClaimable},
+		{name: "nc40ads_h100_v5", cfg: Config{SKU: "Standard_NC40ads_H100_v5", SkipReason: ErrorCodeGPUsNotClaimable}, wantCode: ErrorCodeGPUsNotClaimable},
+		{name: "nc80adis_h100_v5", cfg: Config{SKU: "Standard_NC80adis_H100_v5", SkipReason: ErrorCodeGPUsNotClaimable}, wantCode: ErrorCodeGPUsNotClaimable},
 		{name: "unknown sku", cfg: Config{SKU: "unrecognized_sku", SkipReason: ErrorCodeGPUsNotClaimable}, wantCode: ErrorCodeUnknownSKU},
 	}
 

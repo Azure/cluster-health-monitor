@@ -39,9 +39,9 @@ func readTestdata(t *testing.T, path string) string {
 func TestParseBandwidthResult(t *testing.T) {
 	t.Parallel()
 
-	h100, ok := profileFor(h100SKU)
+	h100, ok := profileFor(nd96isr_h100_v5)
 	if !ok {
-		t.Fatalf("profile for SKU %q not found", h100SKU)
+		t.Fatalf("profile for SKU %q not found", nd96isr_h100_v5)
 	}
 
 	tests := []struct {
@@ -151,7 +151,7 @@ func TestParseBandwidthResult(t *testing.T) {
 func TestBandwidthCheckerWithoutThreshold(t *testing.T) {
 	t.Parallel()
 
-	for _, sku := range []string{a10SKU, "unrecognized_sku"} {
+	for _, sku := range []string{nv72ads_a10_v5, "unrecognized_sku"} {
 		got, err := NewPeerBandwidthChecker(Config{SKU: sku}).Run(context.Background())
 		if err != nil {
 			t.Fatalf("%s: Run() returned error %v, want nil", sku, err)
