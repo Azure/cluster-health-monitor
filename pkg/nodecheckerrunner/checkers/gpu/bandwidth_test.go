@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Azure/cluster-health-monitor/pkg/checker"
 )
@@ -144,6 +146,57 @@ func TestParseBandwidthResult(t *testing.T) {
 				t.Errorf("Message = %q, want it to contain %q", got.Detail.Message, tt.wantMessage)
 			}
 		})
+	}
+}
+
+// The real A10 run produced valid JSON on stdout, but hwloc emitted a warning on stderr.
+// Previously runTool combined both streams and json.Unmarshal rejected the warning prefix.
+func TestRunToolStdoutKeepsNvbandwidthJSON(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	report := nvbandwidthHostOutput(t)
+	reportPath := filepath.Join(dir, "report.json")
+	if err := os.WriteFile(reportPath, []byte(report), 0600); err != nil {
+		t.Fatal(err)
+	}
+	toolPath := filepath.Join(dir, "nvbandwidth")
+	script := "#!/bin/sh\nprintf '%s\\n' '* hwloc 2.9.2 received invalid information from the operating system.' >&2\ncat \"$1\"\n"
+	if err := os.WriteFile(toolPath, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr, execErr := runToolStdout(context.Background(), toolPath, time.Second, reportPath)
+	if execErr != nil {
+		t.Fatalf("runToolStdout: %v", execErr)
+	}
+	if stdout != report || !strings.Contains(stderr, "hwloc 2.9.2 received invalid information") {
+		t.Fatalf("unexpected stdout/stderr: stdout=%q stderr=%q", stdout, stderr)
+	}
+	h100, ok := profileFor(h100SKU)
+	if !ok {
+		t.Fatal("missing H100 profile")
+	}
+	check := func(output string, err error) *checker.Result {
+		return parseBandwidthResult(output, hostBandwidth.testcases, hostBandwidth.threshold(h100), err)
+	}
+	if got := check(stdout, nil); got.Status != checker.StatusHealthy {
+		t.Errorf("separate JSON output: got %s/%s (%s), want Healthy", got.Status, got.Detail.Code, got.Detail.Message)
+	}
+	if got := check(stderr+stdout, nil); got.Status != checker.StatusUnknown || got.Detail.Code != ErrorCodeToolFailed {
+		t.Errorf("combined output: got %s/%s, want Unknown/ToolFailed", got.Status, got.Detail.Code)
+	}
+
+	// A warning is harmless, but a nonzero exit must still fail even if stdout is valid JSON.
+	if err := os.WriteFile(toolPath, []byte(script+"exit 1\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	stdout, _, execErr = runToolStdout(context.Background(), toolPath, time.Second, reportPath)
+	if execErr == nil {
+		t.Fatal("expected nonzero exit")
+	}
+	if got := check(stdout, execErr); got.Status != checker.StatusUnknown || got.Detail.Code != ErrorCodeToolFailed {
+		t.Errorf("dirty exit: got %s/%s, want Unknown/ToolFailed", got.Status, got.Detail.Code)
 	}
 }
 
