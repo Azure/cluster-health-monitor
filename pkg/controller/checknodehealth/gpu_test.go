@@ -179,7 +179,8 @@ func TestReconcileWaitsForClaimableGPUs(t *testing.T) {
 		// age is how long ago the CheckNodeHealth was created.
 		age time.Duration
 		// existingPod is a checker pod created before this reconcile.
-		existingPod bool
+		existingPod  bool
+		upgradeCheck bool
 		// wantWait means the reconcile requeues without creating the checker pod.
 		wantWait bool
 		// wantImage and wantArgs describe the checker pod when one is created.
@@ -230,6 +231,20 @@ func TestReconcileWaitsForClaimableGPUs(t *testing.T) {
 			wantImage: "default-image",
 		},
 		{
+			name:            "upgrade request skips GPU checks with claimable GPUs",
+			registered:      ptr.To(gpus(8)),
+			allocatable:     ptr.To(gpus(8)),
+			enableGPUChecks: true,
+			upgradeCheck:    true,
+			wantImage:       "default-image",
+		},
+		{
+			name:            "upgrade request does not wait for claimable GPUs",
+			enableGPUChecks: true,
+			upgradeCheck:    true,
+			wantImage:       "default-image",
+		},
+		{
 			// The node's GPU state can change while a check runs, e.g. a device plugin restart. The
 			// check that is already underway carries on.
 			name:            "does not hold back a check that already has its pod",
@@ -262,6 +277,15 @@ func TestReconcileWaitsForClaimableGPUs(t *testing.T) {
 			}
 
 			cnh := testCNH("cnh-wait")
+			if tt.upgradeCheck {
+				cnh.OwnerReferences = []metav1.OwnerReference{{
+					APIVersion: "health.aks.io/v1alpha1",
+					Kind:       "HealthSignal",
+					Name:       "upgrade-signal",
+					UID:        "upgrade-signal-uid",
+					Controller: ptr.To(true),
+				}}
+			}
 			cnh.CreationTimestamp = metav1.NewTime(time.Now().Add(-tt.age))
 			if err := fakeClient.Create(ctx, cnh); err != nil {
 				t.Fatalf("creating the CR: %v", err)
@@ -310,6 +334,15 @@ func TestReconcileWaitsForClaimableGPUs(t *testing.T) {
 			c := pods.Items[0].Spec.Containers[0]
 			if c.Image != tt.wantImage {
 				t.Errorf("image = %q, want %q", c.Image, tt.wantImage)
+			}
+			if tt.upgradeCheck {
+				if slices.Contains(c.Args, "--enable-gpu-checks") {
+					t.Errorf("upgrade request enabled GPU checks: %v", c.Args)
+				}
+				_, spec := recordedRun(&pods.Items[0], gpuNodeInfo{})
+				if spec.gpuChecks != nil || spec.timeout != PodTimeout || !slices.Equal(spec.checkerNames, baseCheckerNames) {
+					t.Errorf("upgrade request must expect only base checks with the base timeout: %+v", spec)
+				}
 			}
 			for _, arg := range tt.wantArgs {
 				if !slices.Contains(c.Args, arg) {
