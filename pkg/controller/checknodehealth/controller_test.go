@@ -1233,6 +1233,48 @@ func TestCheckerSpecFor(t *testing.T) {
 			},
 		},
 		{
+			name:            "healthy gpus wait for a missing sku label",
+			info:            gpuNodeInfo{isGPUNode: true, claimableGPUs: 2},
+			enableGPUChecks: true,
+			want: checkerSpec{
+				gpuNode: true,
+				image:   "gpu-image", timeout: GPUPodTimeout, checkerNames: gpuNames,
+				wait: gpuPollInterval,
+			},
+		},
+		{
+			name:            "missing sku shares the remaining startup budget",
+			info:            gpuNodeInfo{isGPUNode: true, claimableGPUs: 2},
+			enableGPUChecks: true,
+			age:             wait - time.Second,
+			want: checkerSpec{
+				gpuNode: true,
+				image:   "gpu-image", timeout: GPUPodTimeout, checkerNames: gpuNames,
+				wait: time.Second,
+			},
+		},
+		{
+			name:            "missing sku at the deadline does not claim gpus",
+			info:            gpuNodeInfo{isGPUNode: true, claimableGPUs: 2},
+			enableGPUChecks: true,
+			age:             wait,
+			want: checkerSpec{
+				gpuNode: true,
+				image:   "gpu-image", timeout: GPUPodTimeout, checkerNames: gpuNames,
+				gpuChecks: &gpuChecks{skipReason: gpu.ErrorCodeNodeSKUNotAvailable},
+			},
+		},
+		{
+			name:            "nonempty unsupported sku is not treated as missing metadata",
+			info:            gpuNodeInfo{isGPUNode: true, claimableGPUs: 2, sku: "unrecognized_sku"},
+			enableGPUChecks: true,
+			want: checkerSpec{
+				gpuNode: true,
+				image:   "gpu-image", timeout: GPUPodTimeout, checkerNames: gpuNames,
+				gpuChecks: &gpuChecks{sku: "unrecognized_sku", gpus: 2},
+			},
+		},
+		{
 			name:            "the last wait only runs out the gpu wait",
 			info:            gpuNodeInfo{isGPUNode: true, sku: h100},
 			enableGPUChecks: true,
@@ -1280,6 +1322,15 @@ func TestCheckerSpecFor(t *testing.T) {
 				t.Errorf("checkerSpecFor() mismatch (-want +got):\n%s", diff)
 			}
 		})
+	}
+}
+
+func TestMissingSKUWithZeroGPUWait(t *testing.T) {
+	r := &CheckNodeHealthReconciler{EnableGPUChecks: true, GPUCheckerPodImage: "gpu-image"}
+	spec := r.checkerSpecFor(testCNH("boot-no-wait"), gpuNodeInfo{isGPUNode: true, claimableGPUs: 2}, 0)
+	if spec.wait != 0 || spec.gpuChecks == nil || spec.gpuChecks.gpus != 0 ||
+		spec.gpuChecks.skipReason != gpu.ErrorCodeNodeSKUNotAvailable {
+		t.Fatalf("zero wait must diagnose missing metadata without claiming GPUs: %+v", spec)
 	}
 }
 

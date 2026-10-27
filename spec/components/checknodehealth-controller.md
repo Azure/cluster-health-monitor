@@ -19,7 +19,7 @@ The binary is `/controller`.
 | `-leader-elect`                 | `false` | Enable leader election (ID `checknodehealth.clusterhealthmonitor.azure.com`). |
 | `-enable-node-condition`        | `false` | Write the `NodeHealthy` condition on standard Nodes (see §4.2). Node events (§4.3) are emitted either way. |
 | `-enable-gpu-checks`            | `false` | Run GPU checks on GPU nodes, except upgrade-request checks (§5.5). Requires `GPU_CHECKER_POD_IMAGE`. |
-| `-gpu-wait`                     | `2m`    | How long to wait for a GPU node to expose claimable GPUs before running GPU checks anyway. |
+| `-gpu-wait`                     | `2m`    | Startup budget for the GPU node's SKU label and claimable GPUs; missing prerequisites are reported as `Unknown` after the deadline. |
 | `-v`                            | `0`     | klog verbosity. Logs are JSON. |
 
 ### Environment variables
@@ -179,7 +179,7 @@ The controller watches `CheckNodeHealth` resources and the checker pods they own
 2. **Finished right away:**
    - **Node is not Linux:** no checker pod is created; the CNH finishes with `Healthy=Unknown`, reason `CheckUnsupported`, and no results. Metrics are recorded (with `reason=CheckUnsupported`), but Node conditions are not touched, no Node event is emitted, and the circuit breaker does not count it. The OS comes from the `kubernetes.io/os` label, falling back to `status.nodeInfo.operatingSystem`; an empty OS also counts as not Linux.
 3. **Delayed:**
-   - **GPU node with no claimable GPUs yet** (only with `-enable-gpu-checks`, excluding upgrade-request checks): start is delayed up to `-gpu-wait` after CNH creation (§5.4).
+   - **GPU node whose SKU label or claimable GPUs are not available yet** (only with `-enable-gpu-checks`, excluding upgrade-request checks): start is delayed up to `-gpu-wait` after CNH creation (§5.4).
 4. **Otherwise, run the check (§5.2).**
 
 A missing node is not rejected: the checker pod is created but stays `Pending`, and the run ends by pod timeout with `PodStartup=Unhealthy`. No Node event is emitted, since there is no Node to attach it to.
@@ -232,7 +232,13 @@ GPU checks run only when `-enable-gpu-checks` is on and the CNH is not an upgrad
 
 GPU checks report `Unhealthy` only for a clear hardware problem: a wrong GPU count (`UnexpectedGPUCount`), incorrect results (`CorrectnessError`) or low bandwidth (`BandwidthBelowThreshold`). Anything that stops a check from producing a trusted measurement is `Unknown`, so a healthy node is not acted on by mistake: an unknown SKU (`UnknownSKU`), no claimable GPUs (`GPUsNotClaimable`), too few GPUs for NCCL (`InsufficientGPUs`), or a benchmark tool that produced no usable output (`ToolFailed`).
 
-If the node has no claimable GPUs yet, the controller waits up to `-gpu-wait` from CNH creation, polling every 30s. After that, it runs the pod with `--gpu-skip-reason=GPUsNotClaimable`: every GPU check that applies to a known SKU then reports `Unknown` with `errorCode: GPUsNotClaimable` without running, so the CNH ends `Healthy=Unknown` (unless a base check is `Unhealthy`).
+The node's `node.kubernetes.io/instance-type` label and NVIDIA device-plugin registration can arrive independently. Even a Ready node with advertised GPUs may not have its SKU label yet. The controller waits up to `-gpu-wait` from CNH creation for both prerequisites, polling every 30s. It creates no checker pod during this wait; a benchmark run snapshots the SKU only once that metadata is available.
+
+The budget is shared, not restarted when either prerequisite arrives. At the deadline:
+- If the SKU label is still missing, the pod gets `--gpu-skip-reason=NodeSKUNotAvailable`, claims no GPUs, and reports the GPU checks as `Unknown` with `errorCode: NodeSKUNotAvailable`. No GPU tools run. This is missing metadata, not an unsupported GPU model.
+- If the SKU is present but no GPUs are claimable, the existing `--gpu-skip-reason=GPUsNotClaimable` behavior applies: applicable GPU checks report `Unknown` without running.
+
+Base pod checks still run on these diagnostic pods. The CNH ends `Healthy=Unknown` unless a base check is `Unhealthy`. A zero `-gpu-wait` skips waiting and reports a missing prerequisite immediately. Non-empty unsupported SKUs retain `UnknownSKU`; they are not treated as missing startup metadata.
 
 The decision is recorded on the pod as annotations (`clusterhealthmonitor.azure.com/node-kind`, `.../gpu-checks-sku`). Later reconciles read these annotations, so a node that changes mid-run changes neither the expected checks nor whether the result can reach `NodeHealthy` (§4.2).
 

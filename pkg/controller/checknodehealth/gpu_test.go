@@ -164,10 +164,9 @@ func TestGPUNodeInfoFrom(t *testing.T) {
 	}
 }
 
-// TestReconcileWaitsForClaimableGPUs covers a GPU node whose device plugin has not reported any healthy
-// GPUs yet. After a node boots, a CheckNodeHealth can be created before its device plugin registers;
-// on AKS the GPUs reached the Node 10-33s later, so the GPU checks wait for them.
-func TestReconcileWaitsForClaimableGPUs(t *testing.T) {
+// GPU registration and the cloud SKU label can arrive independently after a boot CNH.
+// Do not create the checker pod until both are available, or the shared wait expires.
+func TestReconcileWaitsForGPUReadiness(t *testing.T) {
 	gpus := func(n int64) resource.Quantity { return *resource.NewQuantity(n, resource.DecimalSI) }
 
 	tests := []struct {
@@ -176,6 +175,7 @@ func TestReconcileWaitsForClaimableGPUs(t *testing.T) {
 		// leaves the resource off the node, as before the device plugin registers.
 		registered, allocatable *resource.Quantity
 		enableGPUChecks         bool
+		missingSKU              bool
 		// age is how long ago the CheckNodeHealth was created.
 		age time.Duration
 		// existingPod is a checker pod created before this reconcile.
@@ -209,6 +209,52 @@ func TestReconcileWaitsForClaimableGPUs(t *testing.T) {
 			wantImage:       "gpu-image",
 			wantArgs:        []string{"--enable-gpu-checks", "--sku=Standard_ND96isr_H100_v5"},
 			wantGPUs:        "8",
+		},
+		{
+			name:            "registered gpus still wait for the cloud sku label",
+			registered:      ptr.To(gpus(8)),
+			allocatable:     ptr.To(gpus(8)),
+			enableGPUChecks: true,
+			missingSKU:      true,
+			wantWait:        true,
+		},
+		{
+			name:            "waits while both sku and gpus are missing",
+			enableGPUChecks: true,
+			missingSKU:      true,
+			wantWait:        true,
+		},
+		{
+			name:            "missing sku expires even when gpus are registered",
+			registered:      ptr.To(gpus(8)),
+			allocatable:     ptr.To(gpus(8)),
+			enableGPUChecks: true,
+			missingSKU:      true,
+			age:             3 * time.Minute,
+			wantImage:       "gpu-image",
+			wantArgs:        []string{"--enable-gpu-checks", "--sku=", "--gpu-skip-reason=NodeSKUNotAvailable"},
+		},
+		{
+			name:            "missing sku is explicit when both prerequisites time out",
+			enableGPUChecks: true,
+			missingSKU:      true,
+			age:             3 * time.Minute,
+			wantImage:       "gpu-image",
+			wantArgs:        []string{"--enable-gpu-checks", "--gpu-skip-reason=NodeSKUNotAvailable"},
+		},
+		{
+			name:            "missing sku does not delay an upgrade request",
+			registered:      ptr.To(gpus(8)),
+			allocatable:     ptr.To(gpus(8)),
+			enableGPUChecks: true,
+			missingSKU:      true,
+			upgradeCheck:    true,
+			wantImage:       "default-image",
+		},
+		{
+			name:       "missing sku does not delay disabled gpu checks",
+			missingSKU: true,
+			wantImage:  "default-image",
 		},
 		{
 			name:            "reports a driver-only node once the wait is over",
@@ -265,6 +311,9 @@ func TestReconcileWaitsForClaimableGPUs(t *testing.T) {
 			reconciler.GPUWait = DefaultGPUWait
 
 			node := gpuNode("node-1")
+			if tt.missingSKU {
+				delete(node.Labels, instanceTypeLabel)
+			}
 			node.Status = corev1.NodeStatus{Capacity: corev1.ResourceList{}, Allocatable: corev1.ResourceList{}}
 			if tt.registered != nil {
 				node.Status.Capacity[nvidiaGPUResourceName] = *tt.registered
@@ -355,6 +404,95 @@ func TestReconcileWaitsForClaimableGPUs(t *testing.T) {
 			}
 			if gotGPUs != tt.wantGPUs {
 				t.Errorf("gpu limit = %q, want %q", gotGPUs, tt.wantGPUs)
+			}
+		})
+	}
+}
+
+// Exercise the real reconcile path with a Ready node, not an E2E-side settling delay.
+// Either asynchronous prerequisite may arrive first; only the second may start a GPU pod.
+func TestReconcileStartsGPUChecksWhenStartupMetadataArrives(t *testing.T) {
+	for _, order := range [][]string{{"gpus", "sku"}, {"sku", "gpus"}} {
+		t.Run(strings.Join(order, " then "), func(t *testing.T) {
+			ctx := context.Background()
+			r, c, _ := setupTest()
+			r.EnableGPUChecks = true
+			r.GPUCheckerPodImage = "gpu-image"
+			r.GPUWait = DefaultGPUWait
+
+			node := gpuNode("node-1")
+			delete(node.Labels, instanceTypeLabel)
+			node.Status.Allocatable = corev1.ResourceList{}
+			node.Status.Conditions = []corev1.NodeCondition{{Type: corev1.NodeReady, Status: corev1.ConditionTrue}}
+			if err := c.Create(ctx, node); err != nil {
+				t.Fatal(err)
+			}
+			cnh := testCNH("boot-startup")
+			if err := c.Create(ctx, cnh); err != nil {
+				t.Fatal(err)
+			}
+			req := ctrl.Request{NamespacedName: types.NamespacedName{Name: cnh.Name}}
+			assertWaiting := func() {
+				t.Helper()
+				result, err := r.Reconcile(ctx, req)
+				if err != nil || result.RequeueAfter <= 0 || result.RequeueAfter > gpuPollInterval {
+					t.Fatalf("expected bounded readiness requeue, got %+v, error %v", result, err)
+				}
+				pods := &corev1.PodList{}
+				if err := c.List(ctx, pods, client.MatchingLabels{CheckNodeHealthLabel: cnh.Name}); err != nil {
+					t.Fatal(err)
+				}
+				if len(pods.Items) != 0 {
+					t.Fatalf("created %d checker pods before both prerequisites arrived", len(pods.Items))
+				}
+			}
+			assertWaiting()
+
+			for i, prerequisite := range order {
+				if err := c.Get(ctx, client.ObjectKey{Name: node.Name}, node); err != nil {
+					t.Fatal(err)
+				}
+				if prerequisite == "sku" {
+					node.Labels[instanceTypeLabel] = "Standard_NV72ads_A10_v5"
+					if err := c.Update(ctx, node); err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					node.Status.Allocatable = corev1.ResourceList{nvidiaGPUResourceName: resource.MustParse("2")}
+					if err := c.Status().Update(ctx, node); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if i == 0 {
+					assertWaiting()
+				}
+			}
+
+			// Repeated reconciles must reuse one pod with the valid initial snapshot.
+			for range 2 {
+				if _, err := r.Reconcile(ctx, req); err != nil {
+					t.Fatal(err)
+				}
+			}
+			pods := &corev1.PodList{}
+			if err := c.List(ctx, pods, client.MatchingLabels{CheckNodeHealthLabel: cnh.Name}); err != nil {
+				t.Fatal(err)
+			}
+			if len(pods.Items) != 1 {
+				t.Fatalf("got %d checker pods after readiness, want exactly one", len(pods.Items))
+			}
+			pod := &pods.Items[0]
+			container := pod.Spec.Containers[0]
+			if !slices.Contains(container.Args, "--sku=Standard_NV72ads_A10_v5") ||
+				pod.Annotations[annotationGPUChecksSKU] != "Standard_NV72ads_A10_v5" {
+				t.Fatalf("checker did not snapshot the available SKU: args=%v annotations=%v", container.Args, pod.Annotations)
+			}
+			if q := container.Resources.Limits[nvidiaGPUResourceName]; q.Value() != 2 {
+				t.Fatalf("GPU limit = %s, want 2", q.String())
+			}
+			_, spec := recordedRun(pod, gpuNodeInfo{})
+			if !slices.Equal(spec.checkerNames, []string{CheckerPodStartup, CheckerPodNetwork, CheckerNcclAllReduce, CheckerGpuHostBandwidth}) {
+				t.Fatalf("ready A10 must select its four checks, got %v", spec.checkerNames)
 			}
 		})
 	}

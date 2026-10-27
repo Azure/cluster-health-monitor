@@ -25,18 +25,17 @@ const (
 	// checker pod image on top of the benchmarks themselves.
 	GPUPodTimeout = 15 * time.Minute
 
-	// DefaultGPUWait is how long a GPU node without any GPUs the checks can claim is given to get some
-	// before its GPU checks start.
+	// DefaultGPUWait bounds startup waiting for both the node's SKU label and GPUs the checks can claim.
 	//
-	// This exists because after a node boots, the a CNH can be created for it before something like
-	// the NVIDIA device plugin has registered its GPUs. This provides a grace period so that the checks
-	// do not return Unknown due to no GPUs being found/available.
+	// A boot-triggered CNH can precede both cloud metadata initialization and NVIDIA device-plugin
+	// registration. These updates are independent: GPUs may already be advertised while the SKU
+	// label is still absent. Wait before creating the pod so a benchmark run never snapshots an empty SKU.
 	//
 	// The 2 minute time was chosen after rebooting and scaling up/down some A10 and H100 nodes using
 	// Nvidia device plugin. The GPUs reached the Node 10-33s after the CheckNodeHealth was created.
 	DefaultGPUWait = 2 * time.Minute
 
-	// gpuPollInterval is how often the node is re-read while waiting for claimable GPUs.
+	// gpuPollInterval is how often the node is re-read while waiting for GPU startup prerequisites.
 	gpuPollInterval = 30 * time.Second
 )
 
