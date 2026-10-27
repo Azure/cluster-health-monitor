@@ -138,8 +138,8 @@ type checkerSpec struct {
 	wait time.Duration
 }
 
-// checkerSpecFor picks the checker run for a node. A GPU node without claimable GPUs waits up to
-// GPUWait after the CheckNodeHealth is created for them to appear before reporting it has none.
+// checkerSpecFor picks the checker run for a node. GPU checks wait up to GPUWait after CNH creation
+// for both the node's SKU label and claimable GPUs, which can arrive independently during startup.
 func (r *CheckNodeHealthReconciler) checkerSpecFor(cnh *chmv1alpha1.CheckNodeHealth, info gpuNodeInfo, age time.Duration) checkerSpec {
 	spec := checkerSpec{image: r.CheckerPodImage, gpuNode: info.isGPUNode}
 	// HealthSignal-owned checks gate upgrades. Skip experimental GPU checks and their wait,
@@ -154,10 +154,14 @@ func (r *CheckNodeHealthReconciler) checkerSpecFor(cnh *chmv1alpha1.CheckNodeHea
 	spec.image = r.GPUCheckerPodImage
 	spec.checkerNames, spec.timeout = expectedRun(true, info.sku)
 	switch {
+	case (info.sku == "" || info.claimableGPUs <= 0) && age < r.GPUWait:
+		spec.wait = min(r.GPUWait-age, gpuPollInterval)
+	case info.sku == "":
+		// Missing cloud metadata is not an unsupported GPU model. Do not claim GPUs
+		// for benchmarks whose profile cannot be selected, even after the wait expires.
+		spec.gpuChecks = &gpuChecks{skipReason: gpu.ErrorCodeNodeSKUNotAvailable}
 	case info.claimableGPUs > 0:
 		spec.gpuChecks = &gpuChecks{sku: info.sku, gpus: info.claimableGPUs}
-	case age < r.GPUWait:
-		spec.wait = min(r.GPUWait-age, gpuPollInterval)
 	default:
 		spec.gpuChecks = &gpuChecks{sku: info.sku, skipReason: gpu.ErrorCodeGPUsNotClaimable}
 	}
@@ -220,8 +224,8 @@ type CheckNodeHealthReconciler struct {
 	EnableGPUChecks     bool                         // Whether to run GPU checks on supported GPU nodes
 	// Recorder emits the events reporting checks that did not pass on the target Node. Required.
 	Recorder record.EventRecorder
-	// GPUWait is how long a GPU node without claimable GPUs is given to get some before its GPU
-	// checks start. Zero starts them immediately. See DefaultGPUWait.
+	// GPUWait bounds startup waiting for a GPU node's SKU label and claimable GPUs.
+	// Zero disables waiting; missing prerequisites are reported as Unknown. See DefaultGPUWait.
 	GPUWait time.Duration
 }
 
@@ -321,8 +325,9 @@ func (r *CheckNodeHealthReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		// The wait only gates creating the pod. Once it exists the check is underway, whatever the
 		// node reports since.
 		if spec.wait > 0 {
-			klog.InfoS("Waiting for claimable GPUs before starting the GPU checks",
-				"name", cnh.Name, "node", cnh.Spec.NodeRef.Name, "requeueAfter", spec.wait)
+			klog.InfoS("Waiting for the node SKU and claimable GPUs before starting GPU checks",
+				"name", cnh.Name, "node", cnh.Spec.NodeRef.Name, "sku", info.sku,
+				"claimableGPUs", info.claimableGPUs, "requeueAfter", spec.wait)
 			return ctrl.Result{RequeueAfter: spec.wait}, nil
 		}
 		if spec.gpuChecks != nil {

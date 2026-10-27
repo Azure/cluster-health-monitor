@@ -91,7 +91,7 @@ func (c *BandwidthChecker) Run(ctx context.Context) (*checker.Result, error) {
 	args := append([]string{"-t"}, c.path.testcases...)
 	args = append(args, "-i", "10", "--format", "json")
 	stdout, stderr, execErr := runToolStdout(ctx, toolsDir+"/nvbandwidth", c.cfg.ToolTimeout, args...)
-	result := parseBandwidthResult(stdout, c.path.testcases, c.path.threshold(profile), execErr)
+	result = parseBandwidthResult(stdout, c.path.testcases, c.path.threshold(profile), execErr)
 	if result.Status == checker.StatusUnknown && stderr != "" {
 		result.Detail.Message = truncateMessage(result.Detail.Message + "\nnvbandwidth stderr:\n" + stderr)
 	}

@@ -71,8 +71,8 @@ func main() {
 		"Enable intrusive GPU checks on CheckNodeHealth targets that are GPU nodes. "+
 			"Requires GPU_CHECKER_POD_IMAGE to be set.")
 	flag.DurationVar(&gpuWait, "gpu-wait", checknodehealth.DefaultGPUWait,
-		"How long a GPU node without GPUs the checks can claim is given to get some before its GPU checks start. "+
-			"Covers the GPUs being registered after the node, e.g. by the NVIDIA device plugin, when it boots.")
+		"How long to wait for a GPU node's SKU label and claimable GPUs before reporting missing startup prerequisites. "+
+			"Covers asynchronous cloud metadata and NVIDIA device-plugin registration after boot.")
 
 	// Set up logging configuration with JSON format (no CLI override needed)
 	logConfig := logsapi.NewLoggingConfiguration()

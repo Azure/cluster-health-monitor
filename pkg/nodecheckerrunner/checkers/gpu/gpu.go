@@ -174,6 +174,7 @@ func unsupportedSKU(sku string) *checker.Result {
 
 // skipMessages explain the skip reasons the controller sets.
 var skipMessages = map[string]string{
+	ErrorCodeNodeSKUNotAvailable: "the node.kubernetes.io/instance-type label is not available on the target node, so GPU checks could not select a SKU profile and did not run",
 	// The NVIDIA device plugin is the only way the checks claim GPUs today, so the message says so.
 	ErrorCodeGPUsNotClaimable: "GPU checks are only supported on nodes whose GPUs are advertised as healthy by the NVIDIA device plugin for now, and this node has none, so the check did not run",
 }

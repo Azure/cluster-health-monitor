@@ -16,6 +16,10 @@ const (
 	// produce a verdict.
 	ErrorCodeUnknownSKU = "UnknownSKU"
 
+	// ErrorCodeNodeSKUNotAvailable indicates the node's VM SKU metadata was still missing
+	// after the controller's startup-readiness wait. It does not mean the GPU model is unsupported.
+	ErrorCodeNodeSKUNotAvailable = "NodeSKUNotAvailable"
+
 	// ErrorCodeGPUsNotClaimable indicates the checks could not get exclusive use of any of the node's
 	// GPUs, so there were none to benchmark.
 	ErrorCodeGPUsNotClaimable = "GPUsNotClaimable"

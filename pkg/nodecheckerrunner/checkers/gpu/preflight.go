@@ -10,10 +10,15 @@ import (
 // preflight decides whether a benchmark can run, returning the SKU profile it is judged against when
 // it can, and otherwise the result to report instead. Every benchmark calls this before running its
 // tool, so all the reasons one does not run are decided here, in order:
+//   - the node's SKU metadata is missing: no profile can be selected yet
 //   - the SKU has no profile, or no threshold for this benchmark: nothing to judge a measurement by
 //   - the controller set a skip reason: there are no GPUs to benchmark
 //   - the GPU count does not match the profile the thresholds came from
 func preflight(ctx context.Context, cfg Config, c Checker) (skuProfile, *checker.Result) {
+	if cfg.SKU == "" {
+		return skuProfile{}, skipped(ErrorCodeNodeSKUNotAvailable)
+	}
+
 	profile, ok := profileFor(cfg.SKU)
 	if !ok || !c.appliesTo(profile) {
 		return skuProfile{}, unsupportedSKU(cfg.SKU)

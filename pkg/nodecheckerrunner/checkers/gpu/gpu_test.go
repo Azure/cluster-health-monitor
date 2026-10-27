@@ -3,6 +3,7 @@ package gpu
 import (
 	"context"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -86,6 +87,9 @@ func TestNewCheckersWithSkipReason(t *testing.T) {
 		{name: "h100", cfg: Config{SKU: h100SKU, SkipReason: ErrorCodeGPUsNotClaimable}, wantCode: ErrorCodeGPUsNotClaimable},
 		{name: "a10", cfg: Config{SKU: a10SKU, SkipReason: ErrorCodeGPUsNotClaimable}, wantCode: ErrorCodeGPUsNotClaimable},
 		{name: "unknown sku", cfg: Config{SKU: "unrecognized_sku", SkipReason: ErrorCodeGPUsNotClaimable}, wantCode: ErrorCodeUnknownSKU},
+		{name: "missing sku", cfg: Config{}, wantCode: ErrorCodeNodeSKUNotAvailable},
+		{name: "missing sku at readiness deadline", cfg: Config{SkipReason: ErrorCodeNodeSKUNotAvailable}, wantCode: ErrorCodeNodeSKUNotAvailable},
+		{name: "missing sku and gpus", cfg: Config{SkipReason: ErrorCodeGPUsNotClaimable}, wantCode: ErrorCodeNodeSKUNotAvailable},
 	}
 
 	for _, tt := range tests {
@@ -106,6 +110,9 @@ func TestNewCheckersWithSkipReason(t *testing.T) {
 				}
 				if got.Detail.Code != tt.wantCode {
 					t.Errorf("%s Code = %q, want %q", c.Name(), got.Detail.Code, tt.wantCode)
+				}
+				if tt.wantCode == ErrorCodeNodeSKUNotAvailable && !strings.Contains(got.Detail.Message, "node.kubernetes.io/instance-type") {
+					t.Errorf("%s must explain the missing node label, got %q", c.Name(), got.Detail.Message)
 				}
 			}
 			if want := CheckerNames(tt.cfg.SKU); !slices.Equal(names, want) {
