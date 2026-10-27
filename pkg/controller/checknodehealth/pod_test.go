@@ -209,7 +209,8 @@ func TestBuildHealthCheckPodShape(t *testing.T) {
 			reconciler.GPUCheckerPodImage = "gpu-image"
 			reconciler.EnableGPUChecks = tt.enableGPUChecks
 
-			pod, err := reconciler.buildHealthCheckPod(testCNH("cnh-1"), reconciler.checkerSpecFor(tt.info, 0))
+			cnh := testCNH("cnh-1")
+			pod, err := reconciler.buildHealthCheckPod(cnh, reconciler.checkerSpecFor(cnh, tt.info, 0))
 			if err != nil {
 				t.Fatalf("buildHealthCheckPod returned error: %v", err)
 			}

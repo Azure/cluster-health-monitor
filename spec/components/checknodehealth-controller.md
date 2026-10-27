@@ -18,7 +18,7 @@ The binary is `/controller`.
 | `-health-probe-bind-address`    | `:8081` | `/healthz` and `/readyz` endpoints. |
 | `-leader-elect`                 | `false` | Enable leader election (ID `checknodehealth.clusterhealthmonitor.azure.com`). |
 | `-enable-node-condition`        | `false` | Write the `NodeHealthy` condition on standard Nodes (see §4.2). Node events (§4.3) are emitted either way. |
-| `-enable-gpu-checks`            | `false` | Run GPU checks on GPU nodes. Requires `GPU_CHECKER_POD_IMAGE`. |
+| `-enable-gpu-checks`            | `false` | Run GPU checks on GPU nodes, except upgrade-request checks (§5.5). Requires `GPU_CHECKER_POD_IMAGE`. |
 | `-gpu-wait`                     | `2m`    | How long to wait for a GPU node to expose claimable GPUs before running GPU checks anyway. |
 | `-v`                            | `0`     | klog verbosity. Logs are JSON. |
 
@@ -179,7 +179,7 @@ The controller watches `CheckNodeHealth` resources and the checker pods they own
 2. **Finished right away:**
    - **Node is not Linux:** no checker pod is created; the CNH finishes with `Healthy=Unknown`, reason `CheckUnsupported`, and no results. Metrics are recorded (with `reason=CheckUnsupported`), but Node conditions are not touched, no Node event is emitted, and the circuit breaker does not count it. The OS comes from the `kubernetes.io/os` label, falling back to `status.nodeInfo.operatingSystem`; an empty OS also counts as not Linux.
 3. **Delayed:**
-   - **GPU node with no claimable GPUs yet** (only with `-enable-gpu-checks`): start is delayed up to `-gpu-wait` after CNH creation (§5.4).
+   - **GPU node with no claimable GPUs yet** (only with `-enable-gpu-checks`, excluding upgrade-request checks): start is delayed up to `-gpu-wait` after CNH creation (§5.4).
 4. **Otherwise, run the check (§5.2).**
 
 A missing node is not rejected: the checker pod is created but stays `Pending`, and the run ends by pod timeout with `PodStartup=Unhealthy`. No Node event is emitted, since there is no Node to attach it to.
@@ -198,7 +198,7 @@ A missing node is not rejected: the checker pod is created but stays `Pending`, 
    - **Owner reference:** the pod is owned by the CNH, so if the CNH is gone, Kubernetes garbage collection deletes the pod.
    - **Label:** the pod carries `clusterhealthmonitor.azure.com/checknodehealth=<cnh name>`. When a run finishes, and when a CNH is deleted, the controller lists pods by this label and deletes all of them. The controller's cache also only watches `kube-system` pods with this label.
 
-Pod timeout, counted from pod creation (not CNH creation): **2m** for standard nodes, **15m** for GPU nodes running GPU checks.
+Pod timeout, counted from pod creation (not CNH creation): **2m** for runs without GPU checks (including upgrade-request checks), **15m** for GPU nodes running GPU checks.
 
 Expected checks: `PodStartup` and `PodNetwork`, plus the GPU checks for the node's SKU when GPU checks run. The GPU checks are `NcclAllReduce`, `GpuHostBandwidth` and `GpuPeerBandwidth`; a known SKU may run only some of them (for example, no peer bandwidth without NVLink). An unknown SKU lists all three, but none of them runs: each reports `Unknown` with `errorCode: UnknownSKU`.
 
@@ -225,7 +225,7 @@ Before the run finishes, `Healthy` is `Unknown`. A node that is not Linux also g
 
 A node is a GPU node if it has allocatable `nvidia.com/gpu` or the label `kubernetes.azure.com/accelerator=nvidia`.
 
-GPU checks run only when `-enable-gpu-checks` is on. In that case the checker pod:
+GPU checks run only when `-enable-gpu-checks` is on and the CNH is not an upgrade-request check (§5.5). In that case the checker pod:
 - uses `GPU_CHECKER_POD_IMAGE`;
 - gets `--enable-gpu-checks --sku=<node.kubernetes.io/instance-type>`;
 - requests all claimable GPUs.
@@ -235,6 +235,19 @@ GPU checks report `Unhealthy` only for a clear hardware problem: a wrong GPU cou
 If the node has no claimable GPUs yet, the controller waits up to `-gpu-wait` from CNH creation, polling every 30s. After that, it runs the pod with `--gpu-skip-reason=GPUsNotClaimable`: every GPU check that applies to a known SKU then reports `Unknown` with `errorCode: GPUsNotClaimable` without running, so the CNH ends `Healthy=Unknown` (unless a base check is `Unhealthy`).
 
 The decision is recorded on the pod as annotations (`clusterhealthmonitor.azure.com/node-kind`, `.../gpu-checks-sku`). Later reconciles read these annotations, so a node that changes mid-run changes neither the expected checks nor whether the result can reach `NodeHealthy` (§4.2).
+
+### 5.5 Upgrade-request checks
+
+A CNH whose controller owner reference is a `health.aks.io/v1alpha1` `HealthSignal` is an upgrade-request check. For these requests, even when `-enable-gpu-checks` is on:
+
+- Skip GPU checks and the wait for claimable GPUs.
+- Use `CHECKER_POD_IMAGE`, expect only `PodStartup` and `PodNetwork`, and apply the **2m** base pod timeout.
+- Do not add missing GPU results as `Unknown`; GPU results are not expected.
+- Preserve GPU-node classification: GPU nodes still receive no `NodeHealthy` condition (§4.2).
+
+**Why:** GPU checks are experimental, and their runtime (up to 15m plus the GPU availability wait) can exceed AKS RP's upgrade health-check deadline (1m by default). They must not introduce GPU-related failures or delays into upgrade health checks. The base checks can still fail or time out; this exemption does not guarantee completion within RP's deadline.
+
+On-demand and reboot-triggered CNHs without this controller owner remain eligible for GPU checks. Existing checker pods continue with the run recorded in their annotations (§5.4).
 
 ## 6. E2E
 
@@ -264,4 +277,3 @@ These cases run with `-enable-gpu-checks`. Kind has no real GPUs, so a node is m
 | 9  | Fully managed GPU node | Fake device plugin exposes GPUs | GPU checks run and report `Healthy`. |
 | 10 | Healthy GPU node publishes nothing | Run GPU checks to completion | `NodeHealthy` is never set, and the CNH emits no event. |
 | 11 | Node becomes a GPU node | Run on a standard node, then simulate a driver-only GPU node and run again | The first run sets `NodeHealthy`; the second removes it. |
-

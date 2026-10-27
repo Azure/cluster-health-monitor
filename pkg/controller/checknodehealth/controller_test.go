@@ -1275,7 +1275,7 @@ func TestCheckerSpecFor(t *testing.T) {
 				GPUWait:            wait,
 			}
 
-			got := r.checkerSpecFor(tt.info, tt.age)
+			got := r.checkerSpecFor(testCNH("cnh-1"), tt.info, tt.age)
 			if diff := cmp.Diff(tt.want, got, cmp.AllowUnexported(checkerSpec{}, gpuChecks{})); diff != "" {
 				t.Errorf("checkerSpecFor() mismatch (-want +got):\n%s", diff)
 			}
@@ -2188,7 +2188,7 @@ func TestRecordMissingResults(t *testing.T) {
 				t.Fatalf("seeding results: %v", err)
 			}
 
-			if err := reconciler.recordMissingResults(context.Background(), cnh, reconciler.checkerSpecFor(tt.info, 0)); err != nil {
+			if err := reconciler.recordMissingResults(context.Background(), cnh, reconciler.checkerSpecFor(cnh, tt.info, 0)); err != nil {
 				t.Fatalf("recordMissingResults returned error: %v", err)
 			}
 

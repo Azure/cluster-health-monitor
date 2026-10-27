@@ -22,6 +22,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
+	healthv1alpha1 "github.com/Azure/aks-health-signal/api/health/v1alpha1"
 	chmv1alpha1 "github.com/Azure/cluster-health-monitor/apis/chm/v1alpha1"
 	"github.com/Azure/cluster-health-monitor/pkg/nodecheckerrunner/checkers/gpu"
 	"github.com/Azure/cluster-health-monitor/pkg/utils"
@@ -139,9 +140,13 @@ type checkerSpec struct {
 
 // checkerSpecFor picks the checker run for a node. A GPU node without claimable GPUs waits up to
 // GPUWait after the CheckNodeHealth is created for them to appear before reporting it has none.
-func (r *CheckNodeHealthReconciler) checkerSpecFor(info gpuNodeInfo, age time.Duration) checkerSpec {
+func (r *CheckNodeHealthReconciler) checkerSpecFor(cnh *chmv1alpha1.CheckNodeHealth, info gpuNodeInfo, age time.Duration) checkerSpec {
 	spec := checkerSpec{image: r.CheckerPodImage, gpuNode: info.isGPUNode}
-	if !info.isGPUNode || !r.EnableGPUChecks {
+	// HealthSignal-owned checks gate upgrades. Skip experimental GPU checks and their wait,
+	// which can exceed RP's health-check deadline and fail otherwise healthy upgrades.
+	owner := metav1.GetControllerOf(cnh)
+	upgradeCheck := owner != nil && owner.APIVersion == healthv1alpha1.GroupVersion.String() && owner.Kind == "HealthSignal"
+	if !info.isGPUNode || !r.EnableGPUChecks || upgradeCheck {
 		spec.checkerNames, spec.timeout = expectedRun(false, "")
 		return spec
 	}
@@ -301,7 +306,7 @@ func (r *CheckNodeHealthReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		}
 	}
 
-	spec := r.checkerSpecFor(info, time.Since(cnh.CreationTimestamp.Time))
+	spec := r.checkerSpecFor(cnh, info, time.Since(cnh.CreationTimestamp.Time))
 	if info.isGPUNode {
 		klog.InfoS("Detected GPU node", "name", cnh.Name, "node", cnh.Spec.NodeRef.Name,
 			"claimableGPUs", info.claimableGPUs, "sku", info.sku)

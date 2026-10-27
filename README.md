@@ -30,6 +30,10 @@ For custom deployments, create your own overlay in `manifests/overlays/` and cha
 
 ## Testing
 
+GPU checks run only when enabled and are skipped for upgrade-request checks owned by
+a `HealthSignal`. They are experimental, and their runtime can exceed AKS RP's
+upgrade health-check deadline. Other node health checks still run for these requests.
+
 ### Running Unit Tests
 
 To run unit tests:
