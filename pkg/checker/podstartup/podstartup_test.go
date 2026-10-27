@@ -395,7 +395,7 @@ func TestPodStartupChecker_check(t *testing.T) {
 			},
 		},
 		{
-			name: "skipped result - node pool CRD not found",
+			name: "unknown result - node pool CRD not found",
 			mutators: []scenarioMutator{
 				func(s *testScenario) {
 					s.enableNodeProvisioning = true
@@ -411,7 +411,9 @@ func TestPodStartupChecker_check(t *testing.T) {
 			validateResult: func(g *WithT, result *checker.Result, err error, fakeDynamicClient *dynamicfake.FakeDynamicClient) {
 				g.Expect(err).ToNot(HaveOccurred())
 				g.Expect(result).ToNot(BeNil())
-				g.Expect(result.Status).To(Equal(checker.StatusSkipped))
+				g.Expect(result.Status).To(Equal(checker.StatusUnknown))
+				g.Expect(result.Detail.Code).To(Equal(ErrCodeKarpenterNodePoolCRDNotFound))
+				g.Expect(result.Detail.Message).To(Equal("Karpenter NodePool CRD was not found, cannot test pod startup with node provisioning"))
 
 				g.Expect(fakeDynamicClient.Actions()).To(HaveLen(2))
 				g.Expect(fakeDynamicClient.Actions()[0].GetResource()).To(Equal(NodePoolGVR))
@@ -610,6 +612,11 @@ func TestPodStartupChecker_check(t *testing.T) {
 
 			result, err := podStartupChecker.check(ctx)
 			tt.validateResult(g, result, err, scenario.fakeDynamicClient)
+			if result != nil && result.Status == checker.StatusUnknown {
+				for _, action := range client.Actions() {
+					g.Expect(action.Matches("create", "pods")).To(BeFalse(), "an inconclusive node provisioning check must not create a synthetic pod")
+				}
+			}
 		})
 	}
 }
