@@ -29,3 +29,4 @@ A spec describes behavior, not implementation. Leave out internal details that c
 |------|-----------|
 | [cluster-health-monitor.md](components/cluster-health-monitor.md) | Overlay monitor that runs control-plane checkers and exposes Prometheus metrics. |
 | [checknodehealth-controller.md](components/checknodehealth-controller.md) | Controller that runs on-demand node health checks through `CheckNodeHealth` resources. |
+| [node-controller.md](components/node-controller.md) | Controller that creates `CheckNodeHealth` resources for new and rebooted nodes and cleans up stale `NodeHealthy` conditions. |
