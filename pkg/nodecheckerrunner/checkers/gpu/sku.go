@@ -25,6 +25,20 @@ var skuProfiles = map[string]skuProfile{
 		NcclMessageSize: "4G",
 		BwPCIeGBps:      10.0, // TODO: set a validated NV72 H2D/D2H PCIe floor from more real measurements.
 	},
+	// Sourced from https://github.com/Azure/azurehpc-health-checks/blob/main/conf/nc40ads_h100_v5.conf.
+	// Peer bandwidth and NCCL all-reduce do not apply to a single GPU.
+	"nc40ads_h100_v5": {
+		ExpectedGPUs: 1,
+		BwPCIeGBps:   48.0,
+	},
+	// Sourced from https://github.com/Azure/azurehpc-health-checks/blob/main/conf/nc80adis_h100_v5.conf.
+	"nc80adis_h100_v5": {
+		ExpectedGPUs:    2,
+		NcclBusGBps:     208.0,
+		NcclMessageSize: "16G",
+		BwPCIeGBps:      48.0,
+		BwP2PGBps:       335.0,
+	},
 	// Sourced from https://github.com/Azure/azurehpc-health-checks/blob/main/conf/nd96isr_h100_v5.conf.
 	"nd96isr_h100_v5": {
 		ExpectedGPUs:    8,

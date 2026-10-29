@@ -170,21 +170,21 @@ func TestParseNCCLResult(t *testing.T) {
 		{
 			name:        "healthy above threshold",
 			reportJSON:  report,
-			sku:         h100SKU,
+			sku:         nd96isr_h100_v5,
 			wantStatus:  checker.StatusHealthy,
 			wantMessage: "bus bandwidth 480.294 GB/s (>= 460.000 GB/s threshold",
 		},
 		{
 			name:       "bandwidth below threshold",
 			reportJSON: strings.Replace(report, "480.294297", "300.000", 1),
-			sku:        h100SKU,
+			sku:        nd96isr_h100_v5,
 			wantStatus: checker.StatusUnhealthy,
 			wantCode:   ErrorCodeLowBandwidth,
 		},
 		{
 			name:        "correctness failure wins over passing bandwidth",
 			reportJSON:  strings.Replace(report, `"count": 0`, `"count": 3`, 1),
-			sku:         h100SKU,
+			sku:         nd96isr_h100_v5,
 			wantStatus:  checker.StatusUnhealthy,
 			wantCode:    ErrorCodeCorrectness,
 			wantMessage: "3 out-of-bounds values",
@@ -192,7 +192,7 @@ func TestParseNCCLResult(t *testing.T) {
 		{
 			name:        "correctness failure prioritized over low bandwidth",
 			reportJSON:  strings.Replace(strings.Replace(report, `"count": 0`, `"count": 3`, 1), "480.294297", "300.000", 1),
-			sku:         h100SKU,
+			sku:         nd96isr_h100_v5,
 			wantStatus:  checker.StatusUnhealthy,
 			wantCode:    ErrorCodeCorrectness,
 			wantMessage: "3 out-of-bounds values",
@@ -200,7 +200,7 @@ func TestParseNCCLResult(t *testing.T) {
 		{
 			name:        "low bandwidth with a dirty exit is a tool failure",
 			reportJSON:  strings.Replace(report, "480.294297", "300.000", 1),
-			sku:         h100SKU,
+			sku:         nd96isr_h100_v5,
 			execErr:     errors.New("exit status 3"),
 			wantStatus:  checker.StatusUnknown,
 			wantCode:    ErrorCodeToolFailed,
@@ -210,7 +210,7 @@ func TestParseNCCLResult(t *testing.T) {
 			name:        "passing report with a dirty exit is a tool failure",
 			reportJSON:  report,
 			output:      "one or more processes exited with non-zero status",
-			sku:         h100SKU,
+			sku:         nd96isr_h100_v5,
 			execErr:     errors.New("exit status 3"),
 			wantStatus:  checker.StatusUnknown,
 			wantCode:    ErrorCodeToolFailed,
@@ -220,7 +220,7 @@ func TestParseNCCLResult(t *testing.T) {
 			// The tool dies before writing a report, so stdout is the only explanation.
 			name:        "argument error is a tool failure",
 			output:      ncclBadArgOutput,
-			sku:         h100SKU,
+			sku:         nd96isr_h100_v5,
 			execErr:     errors.New("exit status 255"),
 			wantStatus:  checker.StatusUnknown,
 			wantCode:    ErrorCodeToolFailed,
@@ -229,7 +229,7 @@ func TestParseNCCLResult(t *testing.T) {
 		{
 			name:        "rank mismatch is a tool failure",
 			output:      ncclRankFailureOutput,
-			sku:         h100SKU,
+			sku:         nd96isr_h100_v5,
 			execErr:     errors.New("exit status 5"),
 			wantStatus:  checker.StatusUnknown,
 			wantCode:    ErrorCodeToolFailed,
@@ -240,7 +240,7 @@ func TestParseNCCLResult(t *testing.T) {
 			// all; the launcher's complaint is then the only thing to report.
 			name:        "launcher rejection is a tool failure",
 			output:      ncclLaunchFailureOutput,
-			sku:         h100SKU,
+			sku:         nd96isr_h100_v5,
 			execErr:     errors.New("exit status 1"),
 			wantStatus:  checker.StatusUnknown,
 			wantCode:    ErrorCodeToolFailed,
@@ -250,7 +250,7 @@ func TestParseNCCLResult(t *testing.T) {
 			// A report with no measurements must not read as a zero-bandwidth failure.
 			name:        "report without results is a tool failure",
 			reportJSON:  `{"results": [], "average_bus_bandwidth": {"bandwidth": 0}}`,
-			sku:         h100SKU,
+			sku:         nd96isr_h100_v5,
 			wantStatus:  checker.StatusUnknown,
 			wantCode:    ErrorCodeToolFailed,
 			wantMessage: "nccl-tests produced no report",
