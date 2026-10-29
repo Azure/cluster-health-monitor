@@ -15,6 +15,19 @@ type skuProfile struct {
 // skuProfiles is keyed by normalizeSKU. When GPU checks are enabled, SKUs absent from this map
 // are treated as unknown and checks do not run.
 var skuProfiles = map[string]skuProfile{
+	// NV36ads and NV36adms each have one full 24 GiB A10 GPU:
+	// https://learn.microsoft.com/azure/virtual-machines/sizes/gpu-accelerated/nvadsa10v5-series
+	// NCCL all-reduce and peer bandwidth do not apply to a single GPU.
+	// TODO: Validate the provisional 10 GB/s NV72 H2D/D2H floor on both NV36 sizes.
+	// Fractional A10 sizes remain unprofiled pending GPU-visibility and bandwidth validation.
+	"nv36ads_a10_v5": {
+		ExpectedGPUs: 1,
+		BwPCIeGBps:   10.0,
+	},
+	"nv36adms_a10_v5": {
+		ExpectedGPUs: 1,
+		BwPCIeGBps:   10.0,
+	},
 	// NV72 has two 24 GiB A10 GPUs without NVLink; the 4G message fits in memory.
 	// Initial real-AKS samples measured 2.03-2.31 GB/s, so use 1.5 GB/s as a
 	// conservative bring-up floor with headroom for host variance.

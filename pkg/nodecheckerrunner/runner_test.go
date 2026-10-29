@@ -322,6 +322,24 @@ func TestNewRunnerCheckers(t *testing.T) {
 			want: []string{"PodNetwork", "NcclAllReduce", "GpuHostBandwidth", "GpuPeerBandwidth"},
 		},
 		{
+			name: "single gpu a10 adds only host bandwidth",
+			opts: Options{
+				NodeName: "node-1",
+				CRName:   "cnh-1",
+				GPU:      &GPUOptions{SKU: "Standard_NV36ads_A10_v5"},
+			},
+			want: []string{"PodNetwork", "GpuHostBandwidth"},
+		},
+		{
+			name: "memory optimized single gpu a10 adds only host bandwidth",
+			opts: Options{
+				NodeName: "node-1",
+				CRName:   "cnh-1",
+				GPU:      &GPUOptions{SKU: "Standard_NV36adms_A10_v5"},
+			},
+			want: []string{"PodNetwork", "GpuHostBandwidth"},
+		},
+		{
 			name: "gpu node with an unknown sku still wires the gpu checkers",
 			opts: Options{
 				NodeName: "node-1",

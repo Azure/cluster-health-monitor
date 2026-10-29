@@ -1222,6 +1222,28 @@ func TestCheckerSpecFor(t *testing.T) {
 			},
 		},
 		{
+			name:            "single gpu a10 only expects host bandwidth",
+			info:            gpuNodeInfo{isGPUNode: true, claimableGPUs: 1, sku: "Standard_NV36ads_A10_v5"},
+			enableGPUChecks: true,
+			want: checkerSpec{
+				gpuNode: true,
+				image:   "gpu-image", timeout: GPUPodTimeout,
+				checkerNames: []string{"PodStartup", "PodNetwork", "GpuHostBandwidth"},
+				gpuChecks:    &gpuChecks{sku: "Standard_NV36ads_A10_v5", gpus: 1},
+			},
+		},
+		{
+			name:            "memory optimized single gpu a10 only expects host bandwidth",
+			info:            gpuNodeInfo{isGPUNode: true, claimableGPUs: 1, sku: "Standard_NV36adms_A10_v5"},
+			enableGPUChecks: true,
+			want: checkerSpec{
+				gpuNode: true,
+				image:   "gpu-image", timeout: GPUPodTimeout,
+				checkerNames: []string{"PodStartup", "PodNetwork", "GpuHostBandwidth"},
+				gpuChecks:    &gpuChecks{sku: "Standard_NV36adms_A10_v5", gpus: 1},
+			},
+		},
+		{
 			name:            "gpu node without claimable gpus waits for them",
 			info:            gpuNodeInfo{isGPUNode: true, sku: h100},
 			enableGPUChecks: true,
@@ -1406,6 +1428,30 @@ func TestReconcileNodeConditionRouting(t *testing.T) {
 			seededResults: []chmv1alpha1.CheckResult{
 				{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusHealthy},
 				{Name: "NcclAllReduce", Status: chmv1alpha1.CheckStatusHealthy},
+				{Name: "GpuHostBandwidth", Status: chmv1alpha1.CheckStatusHealthy},
+			},
+			wantHealthy:        metav1.ConditionTrue,
+			wantNodeConditions: map[corev1.NodeConditionType]corev1.ConditionStatus{},
+		},
+		{
+			name:            "single gpu a10 does not owe nccl or peer results",
+			gpuNode:         true,
+			sku:             "Standard_NV36ads_A10_v5",
+			enableGPUChecks: true,
+			seededResults: []chmv1alpha1.CheckResult{
+				{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusHealthy},
+				{Name: "GpuHostBandwidth", Status: chmv1alpha1.CheckStatusHealthy},
+			},
+			wantHealthy:        metav1.ConditionTrue,
+			wantNodeConditions: map[corev1.NodeConditionType]corev1.ConditionStatus{},
+		},
+		{
+			name:            "memory optimized single gpu a10 does not owe nccl or peer results",
+			gpuNode:         true,
+			sku:             "Standard_NV36adms_A10_v5",
+			enableGPUChecks: true,
+			seededResults: []chmv1alpha1.CheckResult{
+				{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusHealthy},
 				{Name: "GpuHostBandwidth", Status: chmv1alpha1.CheckStatusHealthy},
 			},
 			wantHealthy:        metav1.ConditionTrue,
@@ -2205,6 +2251,20 @@ func TestRecordMissingResults(t *testing.T) {
 			enableGPUChecks: true,
 			reported:        []string{"PodStartup", "PodNetwork"},
 			wantAdded:       []string{"NcclAllReduce", "GpuHostBandwidth"},
+		},
+		{
+			name:            "single gpu a10 only fills host bandwidth",
+			info:            gpuNodeInfo{isGPUNode: true, sku: "Standard_NV36ads_A10_v5"},
+			enableGPUChecks: true,
+			reported:        []string{"PodStartup", "PodNetwork"},
+			wantAdded:       []string{"GpuHostBandwidth"},
+		},
+		{
+			name:            "memory optimized single gpu a10 only fills host bandwidth",
+			info:            gpuNodeInfo{isGPUNode: true, sku: "Standard_NV36adms_A10_v5"},
+			enableGPUChecks: true,
+			reported:        []string{"PodStartup", "PodNetwork"},
+			wantAdded:       []string{"GpuHostBandwidth"},
 		},
 		{
 			name:      "gpu node without the checks only fills the base checks",
