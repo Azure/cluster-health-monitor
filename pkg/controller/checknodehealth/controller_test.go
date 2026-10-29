@@ -1222,6 +1222,17 @@ func TestCheckerSpecFor(t *testing.T) {
 			},
 		},
 		{
+			name:            "fractional gpu a10 claims one vgpu and only expects host bandwidth",
+			info:            gpuNodeInfo{isGPUNode: true, claimableGPUs: 1, sku: "Standard_NV6ads_A10_v5"},
+			enableGPUChecks: true,
+			want: checkerSpec{
+				gpuNode: true,
+				image:   "gpu-image", timeout: GPUPodTimeout,
+				checkerNames: []string{"PodStartup", "PodNetwork", "GpuHostBandwidth"},
+				gpuChecks:    &gpuChecks{sku: "Standard_NV6ads_A10_v5", gpus: 1},
+			},
+		},
+		{
 			name:            "single gpu a10 only expects host bandwidth",
 			info:            gpuNodeInfo{isGPUNode: true, claimableGPUs: 1, sku: "Standard_NV36ads_A10_v5"},
 			enableGPUChecks: true,
@@ -1428,6 +1439,18 @@ func TestReconcileNodeConditionRouting(t *testing.T) {
 			seededResults: []chmv1alpha1.CheckResult{
 				{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusHealthy},
 				{Name: "NcclAllReduce", Status: chmv1alpha1.CheckStatusHealthy},
+				{Name: "GpuHostBandwidth", Status: chmv1alpha1.CheckStatusHealthy},
+			},
+			wantHealthy:        metav1.ConditionTrue,
+			wantNodeConditions: map[corev1.NodeConditionType]corev1.ConditionStatus{},
+		},
+		{
+			name:            "fractional gpu a10 does not owe nccl or peer results",
+			gpuNode:         true,
+			sku:             "Standard_NV6ads_A10_v5",
+			enableGPUChecks: true,
+			seededResults: []chmv1alpha1.CheckResult{
+				{Name: "PodNetwork", Status: chmv1alpha1.CheckStatusHealthy},
 				{Name: "GpuHostBandwidth", Status: chmv1alpha1.CheckStatusHealthy},
 			},
 			wantHealthy:        metav1.ConditionTrue,
@@ -2251,6 +2274,13 @@ func TestRecordMissingResults(t *testing.T) {
 			enableGPUChecks: true,
 			reported:        []string{"PodStartup", "PodNetwork"},
 			wantAdded:       []string{"NcclAllReduce", "GpuHostBandwidth"},
+		},
+		{
+			name:            "fractional gpu a10 only fills host bandwidth",
+			info:            gpuNodeInfo{isGPUNode: true, sku: "Standard_NV6ads_A10_v5"},
+			enableGPUChecks: true,
+			reported:        []string{"PodStartup", "PodNetwork"},
+			wantAdded:       []string{"GpuHostBandwidth"},
 		},
 		{
 			name:            "single gpu a10 only fills host bandwidth",

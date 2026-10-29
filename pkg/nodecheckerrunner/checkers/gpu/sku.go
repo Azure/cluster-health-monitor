@@ -4,7 +4,7 @@ import "strings"
 
 // skuProfile is the per-SKU expectation for a GPU node.
 type skuProfile struct {
-	ExpectedGPUs    int     // GPUs the SKU should expose; `check_gpu_count <n>`
+	ExpectedGPUs    int     // GPU/vGPU devices the SKU should expose; `check_gpu_count <n>`
 	NcclBusGBps     float64 // NCCL all-reduce bus bandwidth; `check_nccl_allreduce <busbw>`
 	NcclMessageSize string  // NcclMessageSize is `check_nccl_allreduce <_> <_> <size>`.
 	NcclTopoFile    string  // Names the NCCL topology file in topoDir.
@@ -15,11 +15,26 @@ type skuProfile struct {
 // skuProfiles is keyed by normalizeSKU. When GPU checks are enabled, SKUs absent from this map
 // are treated as unknown and checks do not run.
 var skuProfiles = map[string]skuProfile{
-	// NV36ads and NV36adms each have one full 24 GiB A10 GPU:
+	// NVadsA10_v5 sizes and GPU shares are documented at:
 	// https://learn.microsoft.com/azure/virtual-machines/sizes/gpu-accelerated/nvadsa10v5-series
-	// NCCL all-reduce and peer bandwidth do not apply to a single GPU.
-	// TODO: Validate the provisional 10 GB/s NV72 H2D/D2H floor on both NV36 sizes.
-	// Fractional A10 sizes remain unprofiled pending GPU-visibility and bandwidth validation.
+	// NV6/NV12/NV18 have 1/6, 1/3, and 1/2 of an A10 (4/8/12 GiB); each is
+	// expected to expose one vGPU. NV36ads/NV36adms have one full 24 GiB A10.
+	// NCCL all-reduce and peer bandwidth do not apply to a single GPU/vGPU.
+	// Fractional H2D/D2H floors scale NV72's provisional 10 GB/s floor by GPU
+	// share as a bring-up heuristic, not a measured or Azure-guaranteed bandwidth.
+	// TODO: Validate GPU visibility and H2D/D2H floors on all five new A10 sizes.
+	"nv6ads_a10_v5": {
+		ExpectedGPUs: 1,
+		BwPCIeGBps:   10.0 / 6,
+	},
+	"nv12ads_a10_v5": {
+		ExpectedGPUs: 1,
+		BwPCIeGBps:   10.0 / 3,
+	},
+	"nv18ads_a10_v5": {
+		ExpectedGPUs: 1,
+		BwPCIeGBps:   10.0 / 2,
+	},
 	"nv36ads_a10_v5": {
 		ExpectedGPUs: 1,
 		BwPCIeGBps:   10.0,
