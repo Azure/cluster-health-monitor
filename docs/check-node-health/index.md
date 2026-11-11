@@ -280,8 +280,6 @@ The controller detects NVIDIA GPU nodes through allocatable `nvidia.com/gpu` or 
 The [source profile table](../../pkg/nodecheckerrunner/checkers/gpu/sku.go) is authoritative for supported SKUs.
 
 - `Standard_NV72ads_A10_v5`
-- `Standard_NC40ads_H100_v5`
-- `Standard_NC80adis_H100_v5`
 - `Standard_ND96isr_H100_v5`
 
 #### Benchmarks

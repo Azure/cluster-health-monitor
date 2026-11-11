@@ -76,6 +76,15 @@ Creation failures, startup duration at or above the threshold, exhausted TCP att
 
 Optional node-provisioning tests require the Karpenter NodePool CRD; otherwise the result is Unknown with `KarpenterNodePoolCRDNotFound`. CSI tests require a non-empty `enabledCSIs` list whose entries specify `type` (`azureFile`, `azureDisk`, or `azureBlob`) and a unique, existing `storageClass`. Both features are disabled in the base configuration.
 
+Before enabling CSI tests, grant the monitor's service account (`kube-system/cluster-health-monitor` in the base installation) these additional permissions, which the base RBAC does not include:
+
+| API group / resource | Verbs | Scope |
+|---|---|---|
+| `storage.k8s.io` / `storageclasses` | `get` | Cluster-scoped, through a ClusterRole and ClusterRoleBinding. |
+| Core (`""`) / `persistentvolumeclaims` | `list`, `create`, `delete` | The configured `syntheticPodNamespace`, through a Role and RoleBinding. |
+
+Without these permissions, CSI checks report Unknown on forbidden API requests even when the StorageClass exists.
+
 ### API server
 
 `APIServer` creates, reads, and deletes a test ConfigMap to validate API reachability and backing storage. These are real operations, not dry runs.
