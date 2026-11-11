@@ -18,7 +18,7 @@ They share a repository and status vocabulary, but they have separate deployment
 | Scope | Cluster control plane components | One Linux node |
 | Process | `cluster-health-monitor` Deployment | `checknodehealth-controller` plus temporary checker pods |
 | Trigger | A configured interval for each checker | A `CheckNodeHealth` custom resource |
-| Automatic triggers | Not applicable; scheduling is intrinsic to the feature | Optional new-node, reboot, or `HealthCheckRequest` integration; periodic triggers may be added later |
+| Automatic triggers | Not applicable; scheduling is intrinsic to the feature | Optional new-node, reboot, or `HealthCheckRequest` integration. |
 | Configuration | Checker list in a ConfigMap | Controller flags and custom resource (CR) requests |
 | Primary result | Prometheus counters | `CheckNodeHealth` status |
 | Additional results | Logs | Prometheus metrics, Warning Events for non-passing supported-node checks, optional standard-node `NodeHealthy`, and optional `HealthSignal` status |
@@ -73,8 +73,7 @@ checknodehealth-controller
 
 Each `CheckNodeHealth` custom resource represents one run. The controller chooses the appropriate checker pod, waits for results, records missing results as Unknown, computes the overall condition, and removes the checker pod.
 
-The controller can optionally create runs in response to new nodes, node reboots, or external `HealthCheckRequest` resources. Future periodic node checks belong to this trigger layer; they are not part of the continuous-check scheduler.
-
+The controller can optionally create runs in response to new nodes, node reboots, or external `HealthCheckRequest` resources.
 See [Check Node Health](check-node-health/index.md).
 
 ## Shared status vocabulary
@@ -119,12 +118,12 @@ See [Getting started](getting-started.md) for the installation and verification 
 
 ### Continuous checks
 
-Use Prometheus-compatible tooling to scrape or query counters from port 9800. In the supplied manifests, use port-forwarding because no Service or monitoring custom resource is installed.
+Use Prometheus-compatible tooling to scrape or query counters from port 9800.
 
 See [Continuous-check results](continuous-checks/results.md).
 
 ### Check Node Health
 
-Use the completed `CheckNodeHealth` status as the authoritative result for an individual run. Metrics provide aggregate fleet-level views. A supported-node run that executes checks and finishes non-passing emits a Warning Event on its target Node. Standard nodes can also publish the optional `NodeHealthy` condition for scheduling or remediation; AKS consumes this condition internally. GPU nodes never receive controller-managed Node conditions.
+Use the completed `CheckNodeHealth` status as the authoritative result for an individual run. Metrics provide aggregate fleet-level views. A supported-node run that executes checks and finishes non-passing emits a Warning Event on its target Node. Standard nodes can also publish the optional `NodeHealthy` condition for scheduling or remediation; AKS consumes this condition internally. GPU nodes do not receive controller-managed Node conditions.
 
 See [Check Node Health results](check-node-health/results.md).

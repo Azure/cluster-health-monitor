@@ -1,7 +1,5 @@
 # Getting started
 
-Choose and install the feature that answers your health question. Continuous checks and Check Node Health are independent; you do not need to enable both.
-
 > [!IMPORTANT]
 > All features are in preview and intended for AKS. Review the supplied images, permissions, configuration, and optional behavior before relying on them in your environment.
 
@@ -37,7 +35,7 @@ kubectl -n kube-system get pod -l app=cluster-health-monitor
 
 ### Read metrics
 
-The supplied manifests expose port 9800 on the container but do not create a Service or ServiceMonitor.
+Continuous-check metrics are available on port 9800:
 
 ```bash
 kubectl -n kube-system port-forward deployment/cluster-health-monitor 9800:9800
@@ -84,7 +82,7 @@ This creates:
 
 The base installation supports manual requests, automatically checks eligible new and rebooted nodes, publishes `NodeHealthy` on standard nodes, and emits Warning Events for non-passing supported-node checks. Intrusive GPU checks are enabled with a separate GPU image, including for automatic boot checks. `HealthCheckRequest` reconciliation remains disabled.
 
-Review [automatic checks and condition publication](check-node-health/running-checks.md) and [GPU checks](check-node-health/gpu-checks.md) before installing: GPU benchmarks claim all advertised GPUs, and external remediation may consume `NodeHealthy`. To disable a capability, remove its enable flag from the controller arguments in a Kustomize overlay. Removing `-enable-gpu-checks` limits runs to base checks; removing `-enable-node-reboot-check` disables automatic boot checks and Node-controller condition cleanup.
+Review [automatic checks and condition publication](check-node-health/running-checks.md) and [GPU checks](check-node-health/gpu-checks.md) before installing: GPU benchmarks claim all advertised GPUs for the duration of the health check, and external remediation may consume `NodeHealthy`. To disable a capability, remove its enable flag from the controller arguments in a Kustomize overlay. Removing `-enable-gpu-checks` limits runs to base checks; removing `-enable-node-reboot-check` disables automatic boot checks and Node-controller condition cleanup.
 
 ### Verify the controller
 
@@ -139,7 +137,7 @@ Next:
 
 ### Read controller metrics
 
-The supplied manifests expose the controller-runtime metrics endpoint on port 8080 without creating a Service or ServiceMonitor:
+Controller metrics are available on port 8080:
 
 ```bash
 kubectl -n kube-system port-forward deployment/checknodehealth-controller 8080:8080
@@ -169,9 +167,3 @@ kubectl apply -k manifests/base
 ```
 
 The bundle does not enable the corresponding `HealthCheckRequest` controller flag. See [automatic triggers](check-node-health/running-checks.md#automatic-triggers).
-
-## Customize an installation
-
-Create a Kustomize overlay rather than editing the base manifests directly. Use the subsystem base you need as the overlay resource, then patch images, configuration, controller arguments, and environment variables.
-
-The repository's `manifests/overlays/test` directory is intended for tests and local development, not as a production configuration.
