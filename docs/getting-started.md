@@ -12,7 +12,43 @@
 
 The examples assume this repository is the current directory.
 
-## Path 1: continuous checks
+## Choose an installation
+
+Install everything to monitor cluster control plane components and check individual nodes. If you need only one of these capabilities, install that feature on its own:
+
+1. [Install everything](#install-everything)
+2. [Install only continuous checks](#install-only-continuous-checks)
+3. [Install only Check Node Health](#install-only-check-node-health)
+
+## Install everything
+
+This installs both features plus the optional external `HealthCheckRequest` and `HealthSignal` CRDs. The node-check defaults include automatic boot checks, standard-node condition publication, and intrusive GPU checks. Review the [node-check configuration](#install-only-check-node-health) before installing.
+
+```bash
+kubectl apply -k manifests/base
+```
+
+The bundle does not enable `HealthCheckRequest` reconciliation. See [automatic triggers](check-node-health/running-checks.md#automatic-triggers).
+
+### Verify the installation
+
+```bash
+kubectl -n kube-system rollout status deployment/cluster-health-monitor
+kubectl -n kube-system rollout status deployment/checknodehealth-controller
+```
+
+Continue with [continuous-check metrics](#read-metrics) or [request a node check](#request-a-node-check).
+
+### Remove everything
+
+Delete node-check requests before removing the controller so their finalizers and checker pods can be cleaned up:
+
+```bash
+kubectl delete checknodehealth --all
+kubectl delete -k manifests/base
+```
+
+## Install only continuous checks
 
 Choose continuous checks to monitor cluster control plane components through DNS, synthetic pod startup, Kubernetes API server, and Metrics Server checks.
 
@@ -61,7 +97,7 @@ Next:
 kubectl delete -k manifests/base/cluster-health-monitor
 ```
 
-## Path 2: Check Node Health
+## Install only Check Node Health
 
 Choose Check Node Health when you need a health verdict for one specific node.
 
@@ -157,13 +193,3 @@ Delete any `CheckNodeHealth` resources before removing the controller so their f
 kubectl delete checknodehealth --all
 kubectl delete -k manifests/base/checknodehealth-controller
 ```
-
-## Install the repository bundle
-
-To install both features plus the optional external `HealthCheckRequest` and `HealthSignal` CRDs:
-
-```bash
-kubectl apply -k manifests/base
-```
-
-The bundle does not enable the corresponding `HealthCheckRequest` controller flag. See [automatic triggers](check-node-health/running-checks.md#automatic-triggers).
