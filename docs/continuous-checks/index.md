@@ -69,8 +69,8 @@ It requires `podStartupConfig`:
 | `tcpTimeout` | Required timeout per TCP attempt. Must be greater than zero. |
 | `tcpMaxRetries` | Number of retries after the initial TCP attempt. Must be zero or greater. |
 | `tcpRetryInterval` | Must be zero with no retries, or greater than zero when retries are enabled. |
-| `enableNodeProvisioningTest` | Optional Karpenter NodePool test that schedules the pod onto a newly provisioned node. Disabled in the base configuration. |
-| `enabledCSIs` | Optional list of CSI-backed volumes to attach. Disabled in the base configuration. |
+| `enableNodeProvisioningTest` | Optional Karpenter NodePool test that schedules the pod onto a newly provisioned node. |
+| `enabledCSIs` | Optional list of CSI-backed volumes to attach. |
 
 Creation failures, startup duration at or above the threshold, exhausted TCP attempts, or missing StorageClasses produce Unhealthy. Inconclusive client or infrastructure errors produce Unknown.
 
@@ -128,20 +128,12 @@ curl http://127.0.0.1:9800/metrics
 
 | Label | Meaning |
 |---|---|
-| `checker_type` | Implementation type; default instances use `DNS`, `PodStartup`, `APIServer`, and `MetricsServer`. |
+| `checker_type` | Checker implementation type. |
 | `checker_name` | Configured instance name. |
 | `status` | `Healthy` when criteria pass, `Unhealthy` for a detected failure, or `Unknown` when a reliable verdict cannot be produced. |
 | `error_code` | `Healthy` for healthy results; the checker-specific code for Unhealthy or explicitly coded Unknown results; otherwise `Unknown`. |
 
 The per-pod counter adds `pod_namespace` and `pod_name` from the endpoint's Pod reference.
-
-For example:
-
-```text
-cluster_health_monitor_checker_result_total{checker_type="APIServer",checker_name="APIServer",status="Unhealthy",error_code="APIServerGetTimeout"} 1
-```
-
-Counters accumulate outcomes since process startup; they do not represent the latest health state. Distinguish Unhealthy results from inconclusive Unknown results and missing samples.
 
 ### Troubleshooting
 

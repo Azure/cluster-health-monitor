@@ -44,7 +44,7 @@ The checker pod requires all allocatable GPUs, so existing GPU workloads must fi
 
 ## Installation and configuration
 
-See [Getting started](../getting-started.md#install-only-check-node-health) for installation, verification, and removal commands. The [base Deployment](../../manifests/base/checknodehealth-controller/deployment.yaml) enables automatic new-node/reboot checks, standard-node condition publication, and intrusive GPU checks.
+See [Getting started](../getting-started.md#install-only-check-node-health) for installation commands. The settings below show binary defaults and the capabilities enabled by the [base Deployment](../../manifests/base/checknodehealth-controller/deployment.yaml).
 
 > [!IMPORTANT]
 > Automatic checks on GPU nodes can claim all advertised GPUs while benchmarks run. Standard-node conditions can trigger external remediation. Review the settings before deploying.
@@ -63,7 +63,7 @@ Remove an enable flag from the Deployment to disable that capability. See the [c
 
 ## How to run checks
 
-The controller automatically selects the relevant checks for the target node: base checks on all nodes, plus applicable SKU-based GPU checks when enabled. `HealthCheckRequest`-triggered runs use only non-GPU checks.
+The controller selects base checks for all nodes and applicable SKU-based GPU checks when enabled.
 
 ### Manual request
 
@@ -89,7 +89,7 @@ kubectl wait --for=jsonpath='{.status.finishedAt}' \
 kubectl get checknodehealth manual-node-check -o yaml
 ```
 
-Each resource is one-shot; applying the same resource again does not rerun it. Create a new request for another run.
+Create a new request for each run; reapplying a completed resource does not rerun it.
 
 ### `HealthCheckRequest` integration
 
@@ -124,7 +124,7 @@ With `--enable-node-reboot-check`, eligible new Linux nodes and nodes whose boot
 
 ### CheckNodeHealth Status
 
-CheckNodeHealth CR status is authoritative for an individual run. Use a non-empty `status.finishedAt` to identify a terminal run.
+CR status is authoritative. A non-empty `status.finishedAt` identifies a completed run.
 
 | Individual results | Aggregate `Healthy` condition | Current reason |
 |---|---|---|
@@ -250,8 +250,6 @@ kubectl -n kube-system port-forward deployment/checknodehealth-controller 8080:8
 | `reason` | Aggregate condition reason, such as `CheckPassed` or `CheckFailed`. |
 | `checker_name` | Individual check name, such as `PodStartup` or `PodNetwork`. |
 | `error_code` | Recorded error code; `Healthy` or `Unknown` when no code is recorded. |
-
-Node names are omitted to bound cardinality. Use CR status and controller logs to investigate individual runs.
 
 ### Controller logs
 
