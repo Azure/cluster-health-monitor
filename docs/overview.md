@@ -2,7 +2,7 @@
 
 Cluster Health Monitor contains two independent preview features for Azure Kubernetes Service (AKS):
 
-1. **Continuous checks** monitor shared cluster services and synthetic workload behavior on configurable schedules.
+1. **Continuous checks** monitor cluster control plane components on configurable schedules.
 2. **Check Node Health** performs a requested set of checks against one specific node.
 
 They share a repository and status vocabulary, but they have separate deployments, configuration models, execution paths, and primary outputs. Neither feature requires the other.
@@ -14,12 +14,12 @@ They share a repository and status vocabulary, but they have separate deployment
 
 | | Continuous checks | Check Node Health |
 |---|---|---|
-| Primary question | Are important cluster services and synthetic workload paths working? | Is this particular node healthy? |
-| Scope | Cluster-wide services and synthetic resources | One Linux node |
+| Primary question | Are cluster control plane components healthy? | Is this particular node healthy? |
+| Scope | Cluster control plane components | One Linux node |
 | Process | `cluster-health-monitor` Deployment | `checknodehealth-controller` plus temporary checker pods |
 | Trigger | A configured interval for each checker | A `CheckNodeHealth` custom resource |
 | Automatic triggers | Not applicable; scheduling is intrinsic to the feature | Optional new-node, reboot, or `HealthCheckRequest` integration; periodic triggers may be added later |
-| Configuration | Checker list in a ConfigMap | Controller flags, environment variables, and request resources |
+| Configuration | Checker list in a ConfigMap | Controller flags and custom resource (CR) requests |
 | Primary result | Prometheus counters | `CheckNodeHealth` status |
 | Additional results | Logs | Prometheus metrics, Warning Events for non-passing supported-node checks, optional standard-node `NodeHealthy`, and optional `HealthSignal` status |
 
@@ -37,7 +37,6 @@ cluster-health-monitor Deployment
           +-- Pod startup checks
           +-- API server checks
           +-- Metrics Server checks
-          +-- Azure Policy checks
    |
    v
 Prometheus metrics on :9800/metrics

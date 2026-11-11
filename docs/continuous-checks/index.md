@@ -1,16 +1,15 @@
 # Continuous checks
 
-Continuous checks are a standalone preview feature that runs configured cluster-level health checkers on recurring schedules. It is independent of Check Node Health: it does not create `CheckNodeHealth` resources, target individual nodes, or use the Check Node Health controller.
+Continuous checks are a standalone preview feature that monitors cluster control plane components on recurring schedules. It is independent of Check Node Health: it does not create `CheckNodeHealth` resources, target individual nodes, or use the Check Node Health controller.
 
 ## When to use continuous checks
 
-Use this feature when you want recurring signals for:
+Use this feature when you want recurring health signals for cluster control plane components through:
 
 - Cluster DNS resolution paths
 - Synthetic pod startup and connectivity
 - Kubernetes API server read/write behavior
 - Metrics Server availability
-- Azure Policy enforcement
 
 Each checker emits cumulative Prometheus counters. See [Consuming continuous-check results](results.md).
 
@@ -53,7 +52,6 @@ The supplied ConfigMap defines:
 | `PodStartup` | `PodStartup` | 1m | Create a synthetic pod, measure startup, and verify TCP connectivity. |
 | `APIServer` | `APIServer` | 30s | Create, get, and delete a ConfigMap through the Kubernetes API. |
 | `MetricsServer` | `MetricsServer` | 30s | List Node metrics through the resource metrics API. |
-| `AzurePolicy` | `AzurePolicy` | 1m | Verify expected Azure Policy enforcement on a dry-run Pod request. |
 
 These are configured instances, not a fixed required set. You can add, remove, or rename instances within the validation limits.
 
@@ -134,20 +132,6 @@ The checker attempts to garbage-collect old ConfigMaps before each run and enfor
 The Metrics Server checker lists Node metrics through the `metrics.k8s.io/v1beta1` API.
 
 A successful API response is Healthy. A timeout or unavailable resource metrics API is Unhealthy.
-
-### Azure Policy
-
-The Azure Policy checker performs a dry-run Pod creation in the `default` namespace. The test Pod intentionally:
-
-- Omits liveness and readiness probes.
-- Uses an AKS-restricted label.
-
-The checker expects Azure Policy to return a recognizable admission warning or denial.
-
-> [!NOTE]
-> For this checker, Healthy means expected policy enforcement was detected. If the request produces no recognized policy violation, the result is Unhealthy with `AzurePolicyEnforcementMissing`.
-
-The dry-run request does not persist the test Pod.
 
 ## Permissions and side effects
 

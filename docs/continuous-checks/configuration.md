@@ -53,10 +53,6 @@ checkers:
     interval: 30s
     timeout: 10s
 
-  - name: AzurePolicy
-    type: AzurePolicy
-    interval: 1m
-    timeout: 10s
 ```
 
 For the complete default configuration, see `manifests/base/cluster-health-monitor/configmap.yaml`.
@@ -74,7 +70,7 @@ Current validation requires a non-empty list and rejects duplicate names. It doe
 | Field | Required | Description |
 |---|---|---|
 | `name` | Yes | Non-empty, unique, case-sensitive identifier used in logs and the `checker_name` metric label. The shipped names use mixed case; RFC 1123 syntax is not enforced. |
-| `type` | Yes | Checker implementation. One of `DNS`, `PodStartup`, `APIServer`, `MetricsServer`, or `AzurePolicy`. |
+| `type` | Yes | Checker implementation. Documented types are `DNS`, `PodStartup`, `APIServer`, and `MetricsServer`. |
 | `interval` | Yes | How often the checker runs, using Go duration syntax such as `10s`, `1m`, or `1m30s`. Must be greater than zero. |
 | `timeout` | Yes | Maximum duration of one run. Uses Go duration syntax and must be greater than zero. |
 
@@ -179,19 +175,6 @@ The supplied RBAC grants these operations in `kube-system`. If you change `names
 ```
 
 The cluster must expose the `metrics.k8s.io/v1beta1` API and the service account must be able to list Node metrics.
-
-## Azure Policy configuration
-
-`AzurePolicy` has no checker-specific object:
-
-```yaml
-- name: AzurePolicy
-  type: AzurePolicy
-  interval: 1m
-  timeout: 10s
-```
-
-The supplied RBAC allows dry-run Pod creation in `default`, where Azure Policy evaluates the test request. If that namespace or its policy exclusions change, verify that the checker still reaches the expected admission policies.
 
 ## Apply configuration changes
 

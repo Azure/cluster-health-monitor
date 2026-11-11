@@ -11,21 +11,20 @@ Continuous checks and Check Node Health are separate features. You can install, 
 
 | | Continuous checks | Check Node Health |
 |---|---|---|
-| Scope | Cluster services and synthetic workloads | One Kubernetes node |
+| Scope | Cluster control plane components | One Kubernetes node |
 | Execution | Long-running scheduled checkers | One checker pod per request |
 | Trigger | Per-checker interval | `CheckNodeHealth` creation or an automatic trigger |
-| Configuration | ConfigMap checker list | Controller flags, images, and request resources |
+| Configuration | ConfigMap checker list | Controller flags and custom resource (CR) requests |
 | Results | Prometheus metrics | CR status, metrics, Warning Events for non-passing supported-node checks, and an optional standard-node condition |
 
 ### Continuous checks
 
-Continuous checks run independently on configured intervals and validate:
+Continuous checks monitor cluster control plane components on configured intervals and validate:
 
 - CoreDNS and LocalDNS resolution
 - Synthetic pod startup and pod connectivity
 - API server create, read, and delete operations
 - Metrics Server availability
-- Azure Policy enforcement
 
 Start with [Continuous checks](docs/continuous-checks/index.md).
 

@@ -25,7 +25,7 @@ This counter records aggregate checker outcomes.
 
 | Label | Meaning |
 |---|---|
-| `checker_type` | Implementation type: `DNS`, `PodStartup`, `APIServer`, `MetricsServer`, or `AzurePolicy`. |
+| `checker_type` | Implementation type; the default checkers use `DNS`, `PodStartup`, `APIServer`, and `MetricsServer`. |
 | `checker_name` | User-configured checker instance name. |
 | `status` | `Healthy`, `Unhealthy`, or `Unknown`. |
 | `error_code` | `Healthy` for healthy results; the checker-specific code for Unhealthy or explicitly coded Unknown results; otherwise `Unknown` for inconclusive results and execution errors. |
@@ -136,7 +136,6 @@ sum by (checker_name, error_code) (
 | Pod startup | `PodCreationError`, `PodCreationTimeout`, `PodStartupDurationExceeded`, `RequestFailed`, `RequestTimeout`, `StorageClassNotFound`, `KarpenterNodePoolCRDNotFound` |
 | API server | `APIServerCreateError`, `APIServerCreateTimeout`, `APIServerGetError`, `APIServerGetTimeout`, `APIServerDeleteError`, `APIServerDeleteTimeout` |
 | Metrics Server | `MetricsServerUnavailable`, `MetricsServerTimeout` |
-| Azure Policy | `AzurePolicyEnforcementMissing` |
 
 An `Unknown` result can carry a checker-specific error code. When Pod startup has node provisioning enabled but the Karpenter NodePool CRD is missing, it reports `status="Unknown"` with `error_code="KarpenterNodePoolCRDNotFound"` without creating a synthetic pod. Uncoded Unknown results and execution errors use `error_code="Unknown"`.
 
@@ -159,6 +158,5 @@ kubectl -n kube-system logs deployment/cluster-health-monitor
 - A healthy Pod startup result includes startup-duration and TCP-connectivity success.
 - A healthy API server result includes persistent create, get, and delete operations.
 - A healthy Metrics Server result means the Node metrics list API responded.
-- A healthy Azure Policy result means the checker observed expected policy enforcement.
 
 For checker mechanics and side effects, see [Continuous checks](index.md).

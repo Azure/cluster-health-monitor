@@ -16,7 +16,7 @@ The examples assume this repository is the current directory.
 
 ## Path 1: continuous checks
 
-Choose continuous checks for recurring health signals about DNS, synthetic pod startup, the Kubernetes API server, Metrics Server, and Azure Policy.
+Choose continuous checks to monitor cluster control plane components through DNS, synthetic pod startup, Kubernetes API server, and Metrics Server checks.
 
 ### Install
 

@@ -23,7 +23,7 @@ The config file is a YAML document with a single top-level `checkers` list. Each
 checkers:
     # Every checker has these four fields:
     #   name     - unique instance name; becomes a metric label
-    #   type     - which checker: DNS | PodStartup | APIServer | MetricsServer | AzurePolicy
+    #   type     - examples: DNS | PodStartup | APIServer | MetricsServer
     #   interval - how often it runs (Go duration)
     #   timeout  - deadline for a single run: the scheduler runs the checker
     #              with a context that is cancelled after this duration. If the
@@ -68,10 +68,6 @@ checkers:
     interval: "30s"
     timeout: "10s"
 
-  - name: "AzurePolicy"        # no extra config block
-    type: "AzurePolicy"
-    interval: "1m"
-    timeout: "10s"
 ```
 
 Each checker runs independently on its own `interval`, each run bounded by its `timeout`. See `manifests/base/cluster-health-monitor/configmap.yaml` for the full shipped config.
