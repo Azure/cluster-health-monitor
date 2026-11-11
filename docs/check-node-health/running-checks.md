@@ -151,8 +151,6 @@ Deleting the `HealthCheckRequest` allows Kubernetes garbage collection to remove
 
 Periodic automatic creation of `CheckNodeHealth` resources is planned but is not implemented in the current controller.
 
-When added, periodic scheduling belongs to this request-trigger layer. It will remain independent of the continuous-check scheduler and configuration.
-
 ## Node Events
 
 No feature flag is required for Node Events. When a run completes with `Healthy=False` or `Healthy=Unknown`, the controller emits one Warning Event on the target Node containing all individual check results. A run that completes with `Healthy=True` emits no Event.

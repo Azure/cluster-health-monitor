@@ -22,7 +22,7 @@ Install everything to monitor cluster control plane components and check individ
 
 ## Install everything
 
-This installs both features plus the optional external `HealthCheckRequest` and `HealthSignal` CRDs. The node-check defaults include automatic boot checks, standard-node condition publication, and intrusive GPU checks. Review the [node-check configuration](#install-only-check-node-health) before installing.
+This installs both features plus the optional external `HealthCheckRequest` and `HealthSignal` CRDs. Review the [node-check defaults and precautions](#install-only-check-node-health) before installing.
 
 ```bash
 kubectl apply -k manifests/base
@@ -37,7 +37,7 @@ kubectl -n kube-system rollout status deployment/cluster-health-monitor
 kubectl -n kube-system rollout status deployment/checknodehealth-controller
 ```
 
-Continue with [continuous-check metrics](#read-metrics) or [request a node check](#request-a-node-check).
+Continue with [continuous-check metrics](continuous-checks/index.md#metrics-and-results) or [request a node check](check-node-health/running-checks.md#manual-request).
 
 ### Remove everything
 
@@ -50,7 +50,7 @@ kubectl delete -k manifests/base
 
 ## Install only continuous checks
 
-Choose continuous checks to monitor cluster control plane components through DNS, synthetic pod startup, Kubernetes API server, and Metrics Server checks.
+Choose continuous checks to monitor cluster control plane components.
 
 ### Install
 
@@ -69,27 +69,7 @@ kubectl -n kube-system rollout status deployment/cluster-health-monitor
 kubectl -n kube-system get pod -l app=cluster-health-monitor
 ```
 
-### Read metrics
-
-Continuous-check metrics are available on port 9800:
-
-```bash
-kubectl -n kube-system port-forward deployment/cluster-health-monitor 9800:9800
-```
-
-In another terminal:
-
-```bash
-curl http://127.0.0.1:9800/metrics
-```
-
-Each checker first runs after its configured interval. The default intervals range from 10 seconds to one minute, so allow at least one minute plus execution time for initial results. LocalDNS instances are not registered when the monitor pod's resolver configuration does not use LocalDNS.
-
-Next:
-
-- Review [what continuous checks run](continuous-checks/index.md).
-- Customize [continuous-check configuration](continuous-checks/configuration.md).
-- Learn how to [query continuous-check results](continuous-checks/results.md).
+See the [continuous-check guide](continuous-checks/index.md) for checker behavior, configuration, and metrics.
 
 ### Remove
 
@@ -109,16 +89,11 @@ Install only the Check Node Health subsystem:
 kubectl apply -k manifests/base/checknodehealth-controller
 ```
 
-This creates:
+This creates the `CheckNodeHealth` CRD, controller Deployment, service accounts, and RBAC.
 
-- The `CheckNodeHealth` CRD
-- The controller Deployment
-- Controller and checker-pod service accounts
-- Controller and checker-pod RBAC
+The base enables automatic checks for new and rebooted nodes, `NodeHealthy` publication on non-GPU nodes, and intrusive GPU checks. `HealthCheckRequest` reconciliation remains disabled.
 
-The base installation supports manual requests, automatically checks eligible new and rebooted nodes, publishes `NodeHealthy` on standard nodes, and emits Warning Events for non-passing supported-node checks. Intrusive GPU checks are enabled with a separate GPU image, including for automatic boot checks. `HealthCheckRequest` reconciliation remains disabled.
-
-Review [automatic checks and condition publication](check-node-health/running-checks.md) and [GPU checks](check-node-health/gpu-checks.md) before installing: GPU benchmarks claim all advertised GPUs for the duration of the health check, and external remediation may consume `NodeHealthy`. To disable a capability, remove its enable flag from the controller arguments in a Kustomize overlay. Removing `-enable-gpu-checks` limits runs to base checks; removing `-enable-node-reboot-check` disables automatic boot checks and Node-controller condition cleanup.
+GPU checks claim all advertised GPUs while running, and external remediation may consume `NodeHealthy`. Review [controller configuration](check-node-health/running-checks.md#controller-capability-table) and [GPU checks](check-node-health/gpu-checks.md) before installing; use a Kustomize overlay to adjust enabled capabilities.
 
 ### Verify the controller
 
@@ -128,62 +103,10 @@ kubectl -n kube-system get pod -l app=checknodehealth-controller
 kubectl get crd checknodehealths.clusterhealthmonitor.azure.com
 ```
 
-### Request a node check
-
-Select a Linux node:
-
-```bash
-kubectl get nodes -l kubernetes.io/os=linux
-```
-
-Replace `<node-name>` and create a request:
-
-```bash
-kubectl apply -f - <<EOF
-apiVersion: clusterhealthmonitor.azure.com/v1alpha1
-kind: CheckNodeHealth
-metadata:
-  name: manual-node-check
-spec:
-  nodeRef:
-    name: <node-name>
-EOF
-```
-
-Watch the run:
-
-```bash
-kubectl get checknodehealth manual-node-check --watch
-```
-
-Inspect the complete result:
-
-```bash
-kubectl get checknodehealth manual-node-check -o yaml
-```
-
-The `HEALTHY` printer column is `Unknown` while the check is running and becomes `True`, `False`, or remains `Unknown` when the run reaches a terminal result. `status.finishedAt` identifies completion.
-
 Next:
 
-- Review [what Check Node Health runs](check-node-health/index.md).
-- Learn about [manual and automatic triggers](check-node-health/running-checks.md).
-- Learn how to [consume CRs, metrics, Events, and the optional standard-node condition](check-node-health/results.md).
-- Review [intrusive GPU checks](check-node-health/gpu-checks.md) before enabling them.
-
-### Read controller metrics
-
-Controller metrics are available on port 8080:
-
-```bash
-kubectl -n kube-system port-forward deployment/checknodehealth-controller 8080:8080
-```
-
-In another terminal:
-
-```bash
-curl http://127.0.0.1:8080/metrics
-```
+- [Request a node check](check-node-health/running-checks.md#manual-request).
+- [Read results and controller metrics](check-node-health/results.md).
 
 ### Remove
 

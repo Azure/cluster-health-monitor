@@ -1,8 +1,8 @@
 # Check Node Health
 
-Check Node Health is a standalone preview feature that evaluates one AKS node per `CheckNodeHealth` custom resource. It is independent of continuous checks and does not use the continuous checker configuration or scheduler.
+Check Node Health is a preview feature that evaluates one AKS node per `CheckNodeHealth` custom resource.
 
-Each custom resource represents one run. Runs can be created manually or by optional automatic triggers. This request-driven model can accommodate additional triggers, including periodic node checks, without becoming part of the separate continuous-check feature.
+Each custom resource represents one run. Runs can be created manually or by automatic triggers.
 
 ## When to use Check Node Health
 
@@ -59,8 +59,6 @@ The controller owns this result. It tests whether the target node can start all 
 A container passes startup if it is running or if it terminated after it started. A later application or checker failure does not turn `PodStartup` into Unhealthy because the container runtime successfully started it.
 
 If the pod remains Pending until its run timeout and no checker-reported result proves that the container ran, `PodStartup` is Unhealthy.
-
-This is different from the synthetic recurring Pod startup checker in [continuous checks](../continuous-checks/index.md#pod-startup).
 
 ### `PodNetwork`
 
@@ -130,4 +128,4 @@ See [Consuming Check Node Health results](results.md) for complete examples.
 - [Create requests and enable automatic triggers](running-checks.md)
 - [Consume CR status, metrics, Events, and the optional standard-node condition](results.md)
 - [Review intrusive GPU checks](gpu-checks.md)
-- [Return to the project overview](../overview.md)
+- [Return to the project README](../../README.md)

@@ -73,11 +73,8 @@ For independent installation commands, see [Getting started](docs/getting-starte
 
 ## Documentation
 
-- [Overview and architecture](docs/overview.md)
 - [Getting started](docs/getting-started.md)
 - [Continuous checks](docs/continuous-checks/index.md)
-  - [Configuration](docs/continuous-checks/configuration.md)
-  - [Consuming results](docs/continuous-checks/results.md)
 - [Check Node Health](docs/check-node-health/index.md)
   - [Running checks](docs/check-node-health/running-checks.md)
   - [Consuming results](docs/check-node-health/results.md)
