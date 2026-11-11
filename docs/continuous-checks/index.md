@@ -5,9 +5,7 @@ Continuous checks monitor cluster control plane components on recurring schedule
 - [Installation](#installation)
 - [Configuration and scheduling](#configuration-and-scheduling)
 - [Checkers](#checkers)
-- [Apply configuration changes](#apply-configuration-changes)
 - [Metrics and results](#metrics-and-results)
-- [Permissions and side effects](#permissions-and-side-effects)
 
 > [!IMPORTANT]
 > Configuration, metrics, labels, and error codes are in preview and may change between versions.
@@ -16,22 +14,25 @@ Continuous checks monitor cluster control plane components on recurring schedule
 
 See [Getting started](../getting-started.md#install-only-continuous-checks) for installation, verification, and removal commands.
 
-The Deployment reads `/etc/cluster-health-monitor/config.yaml` from the `cluster-health-monitor-config` ConfigMap at startup. The [base ConfigMap](../../manifests/base/cluster-health-monitor/configmap.yaml) contains the full shipped configuration.
-
 ## Configuration and scheduling
 
-The YAML configuration requires a non-empty `checkers` list. Each instance has these fields:
+The Deployment reads the `cluster-health-monitor-config` ConfigMap at startup. Use the [base ConfigMap](../../manifests/base/cluster-health-monitor/configmap.yaml) for defaults and a configuration example. Its `checkers` list must contain at least one instance:
 
 | Field | Description |
 |---|---|
-| `name` | Non-empty, unique, case-sensitive identifier used in logs and the `checker_name` metric label. RFC 1123 syntax is not enforced. |
+| `name` | Unique instance name used in logs and the `checker_name` metric label. |
 | `type` | Checker implementation. Documented types are `DNS`, `PodStartup`, `APIServer`, and `MetricsServer`. |
-| `interval` | How often the checker runs, using Go duration syntax such as `10s`, `1m`, or `1m30s`. Must be greater than zero. |
-| `timeout` | Maximum duration of one run, using Go duration syntax. Must be greater than zero. |
+| `interval` | Time between runs, such as `10s` or `1m`. Must be greater than zero. |
+| `timeout` | Maximum duration of one run. Must be greater than zero. |
 
-Instances run independently and can run concurrently with other instances. The first run begins after one `interval`, not immediately at startup. Runs of the same instance do not intentionally overlap: if one lasts longer than its interval, the next pending ticker event is handled after it returns.
+Instances run independently. Each first runs after its configured interval; runs of the same instance do not overlap.
 
-Use the [base ConfigMap](../../manifests/base/cluster-health-monitor/configmap.yaml) as a configuration example and reference for defaults. Instances can be added, removed, or renamed.
+After changing the ConfigMap, restart the Deployment:
+
+```bash
+kubectl -n kube-system rollout restart deployment/cluster-health-monitor
+kubectl -n kube-system rollout status deployment/cluster-health-monitor
+```
 
 ## Checkers
 
@@ -48,57 +49,36 @@ A `DNS` instance requires `dnsConfig`:
 | Target | Behavior |
 |---|---|
 | `CoreDNS` | Query the configured domain through the `kube-dns` Service IP and directly through every ready CoreDNS endpoint. Healthy requires all queries to succeed. |
-| `CoreDNSPerPod` | Query endpoints directly and emit a separate result for each CoreDNS pod instead of an aggregate result. Endpoint-discovery failures and endpoints without a Pod target are logged without recording a result. |
-| `LocalDNS` | Query through the AKS LocalDNS address `169.254.10.11`. Registered only when the monitor pod's `/etc/resolv.conf` contains that address; otherwise skipped at startup without results. |
+| `CoreDNSPerPod` | Query endpoints directly and emit a separate result for each CoreDNS pod. Discovery failures or missing Pod references can leave results absent. |
+| `LocalDNS` | Query through `169.254.10.11`. Runs only when the monitor pod's resolver configuration uses that address. |
 
-A missing sample is not a Healthy verdict. A per-pod result applies only to that endpoint and configured domain.
+A missing sample is not a Healthy verdict.
 
 ### Pod startup
 
-The recurring `PodStartup` checker creates a synthetic pod, waits for its container to run, measures startup duration minus image-pull duration, and tests TCP connectivity. It garbage-collects old synthetic resources before each run and removes test resources afterwards.
+`PodStartup` creates a synthetic pod, measures startup time excluding image pulls, tests TCP connectivity, and cleans up test resources.
 
 It requires `podStartupConfig`:
 
 | Field | Description |
 |---|---|
-| `syntheticPodNamespace` | Required valid namespace for synthetic pods and optional PVCs. |
-| `syntheticPodLabelKey` | Required qualified label key identifying synthetic resources. |
-| `syntheticPodStartupTimeout` | Required healthy startup-duration threshold after subtracting image-pull duration. Must be greater than zero. |
-| `maxSyntheticPods` | Required maximum matching pods that may already exist. Must be greater than zero; reaching the limit prevents another pod from being created. |
+| `syntheticPodNamespace` | Required namespace for synthetic pods and optional PVCs. |
+| `syntheticPodLabelKey` | Required label key identifying synthetic resources. |
+| `syntheticPodStartupTimeout` | Required startup-duration threshold, excluding image pulls. Must be greater than zero. |
+| `maxSyntheticPods` | Required limit on existing test pods; reaching it prevents another from being created. Must be greater than zero. |
 | `tcpTimeout` | Required timeout per TCP attempt. Must be greater than zero. |
 | `tcpMaxRetries` | Number of retries after the initial TCP attempt. Must be zero or greater. |
 | `tcpRetryInterval` | Must be zero with no retries, or greater than zero when retries are enabled. |
 | `enableNodeProvisioningTest` | Optional Karpenter NodePool test that schedules the pod onto a newly provisioned node. Disabled in the base configuration. |
 | `enabledCSIs` | Optional list of CSI-backed volumes to attach. Disabled in the base configuration. |
 
-The result is Unhealthy if pod creation fails or times out, adjusted startup duration meets or exceeds the threshold, TCP attempts are exhausted, or a required StorageClass is missing. Infrastructure or client errors that do not establish a health failure produce Unknown.
+Creation failures, startup duration at or above the threshold, exhausted TCP attempts, or missing StorageClasses produce Unhealthy. Inconclusive client or infrastructure errors produce Unknown.
 
-If node provisioning is enabled but the Karpenter NodePool CRD is missing, the checker creates no synthetic pod and reports Unknown with `KarpenterNodePoolCRDNotFound`.
-
-#### Optional CSI checks
-
-Each `enabledCSIs` entry requires:
-
-| Field | Description |
-|---|---|
-| `type` | `azureFile`, `azureDisk`, or `azureBlob`. |
-| `storageClass` | Existing StorageClass name. Must be a valid DNS subdomain and unique in the list. |
-
-An explicitly present list must not be empty. For example, add this to `podStartupConfig`:
-
-```yaml
-enabledCSIs:
-  - type: azureDisk
-    storageClass: managed-csi
-  - type: azureFile
-    storageClass: azurefile-csi
-```
-
-The checker validates the StorageClasses and creates PVC-backed test resources. Ensure the service account has the required permissions and the StorageClasses exist.
+Optional node-provisioning tests require the Karpenter NodePool CRD; otherwise the result is Unknown with `KarpenterNodePoolCRDNotFound`. CSI tests require a non-empty `enabledCSIs` list whose entries specify `type` (`azureFile`, `azureDisk`, or `azureBlob`) and a unique, existing `storageClass`. Both features are disabled in the base configuration.
 
 ### API server
 
-`APIServer` performs real create, get, and delete operations on an empty ConfigMap, validating API reachability and the backing storage path. Creation is not a dry run. The checker garbage-collects old test ConfigMaps and enforces a retained-object limit.
+`APIServer` creates, reads, and deletes a test ConfigMap to validate API reachability and backing storage. These are real operations, not dry runs.
 
 It requires `apiServerConfig`:
 
@@ -116,16 +96,7 @@ The supplied RBAC grants these operations in `kube-system`; update RBAC if you c
 
 `MetricsServer` lists Node metrics through `metrics.k8s.io/v1beta1`. A successful response is Healthy; a timeout or unavailable metrics API is Unhealthy.
 
-It uses only the common configuration fields, with no checker-specific object. The cluster must expose the metrics API and the service account must be able to list Node metrics.
-
-## Apply configuration changes
-
-Update the ConfigMap and restart the Deployment after applying changes because configuration is read only at startup:
-
-```bash
-kubectl -n kube-system rollout restart deployment/cluster-health-monitor
-kubectl -n kube-system rollout status deployment/cluster-health-monitor
-```
+It uses only the common configuration fields. The cluster must expose the metrics API and the service account must be able to list Node metrics.
 
 ## Metrics and results
 
@@ -141,14 +112,10 @@ In another terminal:
 curl http://127.0.0.1:9800/metrics
 ```
 
-### Counters and labels
-
 | Metric | Recorded outcomes |
 |---|---|
 | `cluster_health_monitor_checker_result_total` | Aggregate checker outcomes. |
 | `cluster_health_monitor_pod_health_result_total` | Per-pod DNS outcomes from `CoreDNSPerPod`, instead of the aggregate counter. |
-
-Both counters use:
 
 | Label | Meaning |
 |---|---|
@@ -165,18 +132,9 @@ For example:
 cluster_health_monitor_checker_result_total{checker_type="APIServer",checker_name="APIServer",status="Unhealthy",error_code="APIServerGetTimeout"} 1
 ```
 
-### Querying and alerting
+Counters accumulate outcomes since process startup; they do not represent the latest health state. Distinguish Unhealthy results from inconclusive Unknown results and missing samples.
 
-Counters accumulate outcomes since process startup; they are not current-state gauges. Use `increase` or `rate` over a window containing multiple expected runs, and distinguish detected failures from inconclusive results. Handle process restarts and missing scrapes separately.
-
-### Error codes and troubleshooting
-
-| Checker | Error codes |
-|---|---|
-| DNS | `ServiceNotReady`, `PodsNotReady`, `ServiceTimeout`, `PodTimeout`, `ServiceError`, `PodError`, `LocalDNSTimeout`, `LocalDNSError` |
-| Pod startup | `PodCreationError`, `PodCreationTimeout`, `PodStartupDurationExceeded`, `RequestFailed`, `RequestTimeout`, `StorageClassNotFound`, `KarpenterNodePoolCRDNotFound` |
-| API server | `APIServerCreateError`, `APIServerCreateTimeout`, `APIServerGetError`, `APIServerGetTimeout`, `APIServerDeleteError`, `APIServerDeleteTimeout` |
-| Metrics Server | `MetricsServerUnavailable`, `MetricsServerTimeout` |
+### Troubleshooting
 
 Inspect logs for checker failures or configuration validation errors:
 
@@ -184,13 +142,4 @@ Inspect logs for checker failures or configuration validation errors:
 kubectl -n kube-system logs deployment/cluster-health-monitor
 ```
 
-## Permissions and side effects
-
-The supplied RBAC permits the service account to:
-
-- Read the `kube-dns` Service and EndpointSlices.
-- Create, list, read, and delete synthetic pods and read their events in `kube-system`.
-- Create, list, read, and delete test ConfigMaps in `kube-system`.
-- Make dry-run Pod create requests in `default`.
-- Read the resource metrics API.
-- Manage Karpenter NodePools and PVCs for optional node-provisioning and CSI tests.
+See the [checker source](../../pkg/checker) for error codes and the [base RBAC](../../manifests/base/cluster-health-monitor/rbac.yaml) for permissions.

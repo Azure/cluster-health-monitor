@@ -106,7 +106,7 @@ kubectl get crd checknodehealths.clusterhealthmonitor.azure.com
 Next:
 
 - [Request a node check](check-node-health/index.md#manual-request).
-- [Read results](check-node-health/index.md#results) and [controller metrics](check-node-health/index.md#prometheus-metrics).
+- [Read results](check-node-health/index.md#checknodehealth-status) and [controller metrics](check-node-health/index.md#prometheus-metrics).
 
 ### Remove
 
