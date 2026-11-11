@@ -41,35 +41,9 @@ Optional intrusive GPU checks validate GPU count, host and peer bandwidth, and N
 
 Start with [Check Node Health](docs/check-node-health/index.md).
 
-## Choose a feature
+## Installation
 
-Use **continuous checks** when you want continous monitoring of the cluster control plane.
-
-Use **Check Node Health** when you want a health verdict for a particular node.
-
-See [Getting started](docs/getting-started.md) for separate installation and verification paths.
-
-## Install the bundled preview
-
-The repository-wide base installs both the continous monitoring and node health check features, as well as the optional `HealthCheckRequest` and `HealthSignal` CRDs:
-
-```bash
-kubectl apply -k manifests/base/
-```
-
-The base manifests enable automatic health checks for new and rebooted nodes, including intrusive GPU checks on GPU nodes.
-
-For standard (non-GPU) nodes, the controller publishes each run's aggregate result as the `kubernetes.azure.com/NodeHealthy` Node condition. AKS can use this condition as a signal for node remediation. GPU nodes do not receive this condition.
-
-Review [controller settings](docs/check-node-health/index.md#controller-settings) and [GPU checks](docs/check-node-health/index.md#gpu-checks) before deploying.
-
-To remove the bundled installation:
-
-```bash
-kubectl delete -k manifests/base/
-```
-
-For independent installation commands, see [Getting started](docs/getting-started.md).
+See [Getting started](docs/getting-started.md) to install both features or either feature individually, verify the installation, and remove it.
 
 ## Documentation
 

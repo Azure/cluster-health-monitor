@@ -91,9 +91,7 @@ kubectl apply -k manifests/base/checknodehealth-controller
 
 This creates the `CheckNodeHealth` CRD, controller Deployment, service accounts, and RBAC.
 
-The base enables automatic checks for new and rebooted nodes, `NodeHealthy` publication on non-GPU nodes, and intrusive GPU checks. `HealthCheckRequest` reconciliation remains disabled.
-
-GPU checks claim all advertised GPUs while running, and external remediation may consume `NodeHealthy`. Review [controller settings](check-node-health/index.md#controller-settings) and [GPU checks](check-node-health/index.md#gpu-checks) before installing and adjust enabled capabilities as needed.
+Before installing, review the [enabled capabilities and precautions](check-node-health/index.md#installation-and-configuration), including GPU resource use and Node-condition publication.
 
 ### Verify the controller
 
