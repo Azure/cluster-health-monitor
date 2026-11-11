@@ -1,6 +1,7 @@
 # Check Node Health
 
 - [Overview](#overview)
+- [Installation and configuration](#installation-and-configuration)
 - [How to run checks](#how-to-run-checks)
 - [How to consume results](#how-to-consume-results)
 - [What checks run](#what-checks-run)
@@ -29,18 +30,26 @@ Results
    +-- NodeHealthy condition on non-GPU nodes
 ```
 
-## How to run checks
+### Execution and cleanup
 
-The controller automatically selects the relevant checks for the target node: base checks on all nodes, plus applicable SKU-based GPU checks when enabled. `HealthCheckRequest`-triggered runs use only non-GPU checks.
+The temporary checker pod runs in `kube-system` on the target node and is deleted after results are collected.
 
-### Installation and configuration
+CheckNodeHealth CRs have a six-hour TTL and are deleted on the next hourly cleanup, normally six to seven hours after creation.
+
+### GPU resource requirements
+
+GPU checks require SKU metadata and healthy GPUs advertised by the NVIDIA device plugin. The controller waits up to `--gpu-wait` (default two minutes) for these prerequisites; if they remain unavailable, GPU results are Unknown while base checks still run.
+
+The checker pod requires all allocatable GPUs, so existing GPU workloads must finish or be stopped before GPU checks can run.
+
+## Installation and configuration
 
 See [Getting started](../getting-started.md#install-only-check-node-health) for installation, verification, and removal commands. The [base Deployment](../../manifests/base/checknodehealth-controller/deployment.yaml) enables automatic new-node/reboot checks, standard-node condition publication, and intrusive GPU checks.
 
 > [!IMPORTANT]
 > Automatic checks on GPU nodes can claim all advertised GPUs while benchmarks run. Standard-node conditions can trigger external remediation. Review the settings before deploying.
 
-#### Controller settings
+### Controller settings
 
 | Setting | Binary default / base manifest | Effect |
 |---|---|---|
@@ -52,9 +61,13 @@ See [Getting started](../getting-started.md#install-only-check-node-health) for 
 
 Remove an enable flag from the Deployment to disable that capability. See the [controller specification](../../spec/components/checknodehealth-controller.md) for all settings.
 
+## How to run checks
+
+The controller automatically selects the relevant checks for the target node: base checks on all nodes, plus applicable SKU-based GPU checks when enabled. `HealthCheckRequest`-triggered runs use only non-GPU checks.
+
 ### Manual request
 
-Replace `<node-name>` and create a request:
+To run health checks on a node, create a CheckNodeHealth CR that specfies that node in `spec.nodeRef`. Example of how to do this via kubectl below. Replace `<node-name>` and create a request:
 
 ```bash
 kubectl apply -f - <<EOF
@@ -103,21 +116,9 @@ spec:
 
 On GPU nodes, `HealthCheckRequest`-triggered runs perform only the non-GPU checks: `PodStartup` and `PodNetwork`.
 
-### Automatic triggers
+### Automatically on node boot
 
 With `--enable-node-reboot-check`, eligible new Linux nodes and nodes whose boot ID changes are checked automatically. See the [Node controller specification](../../spec/components/node-controller.md) for readiness and cleanup rules.
-
-### Execution and cleanup
-
-The temporary checker pod runs in `kube-system` on the target node and is deleted after results are collected.
-
-Requests have a six-hour TTL and are deleted on the next hourly cleanup, normally six to seven hours after creation.
-
-#### GPU resource requirements
-
-GPU checks require SKU metadata and healthy GPUs advertised by the NVIDIA device plugin. The controller waits up to `--gpu-wait` (default two minutes) for these prerequisites; if they remain unavailable, GPU results are Unknown while base checks still run.
-
-The checker pod requires all allocatable GPUs, so existing GPU workloads must finish or be stopped before GPU checks can run. The GPU image is `linux/amd64` only and should match the controller version.
 
 ## How to consume results
 
@@ -207,7 +208,7 @@ kubectl events --for node/<node-name> --types=Warning
 
 ### Standard-node condition
 
-With `--enable-node-condition`, non-GPU nodes receive `kubernetes.azure.com/NodeHealthy`, mirroring the completed CR's aggregate status, reason, and message. AKS and other scheduling or remediation systems may consume it.
+With `--enable-node-condition`, non-GPU nodes receive `kubernetes.azure.com/NodeHealthy`, mirroring the completed CR's aggregate status, reason, and message. AKS may consume this condition for node remediation.
 
 Example healthy Node condition:
 
@@ -224,7 +225,7 @@ status:
       lastTransitionTime: "2026-10-15T18:00:10Z"
 ```
 
-A circuit breaker pauses condition updates for ten minutes after three consecutive unhealthy results within 15 minutes. Healthy or Unknown results reset the failure count.
+A circuit breaker pauses condition updates for ten minutes after three consecutive unhealthy results within 15 minutes. This helps prevent a cluster-wide issue, such as a DNS outage, from marking many nodes unhealthy and triggering widespread remediation. Healthy or Unknown results reset the failure count.
 
 With `--enable-node-reboot-check`, conditions not confirmed for more than 30 minutes are removed when the Node is next reconciled.
 

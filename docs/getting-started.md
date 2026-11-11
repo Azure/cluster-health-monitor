@@ -28,7 +28,7 @@ This installs both features plus the optional external `HealthCheckRequest` and 
 kubectl apply -k manifests/base
 ```
 
-The bundle does not enable `HealthCheckRequest` reconciliation. See [automatic triggers](check-node-health/index.md#automatic-triggers).
+The bundle does not enable `HealthCheckRequest` reconciliation. See the [integration guide](check-node-health/index.md#healthcheckrequest-integration).
 
 ### Verify the installation
 
