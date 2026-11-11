@@ -65,11 +65,11 @@ kubectl delete checknodehealth manual-node-check
 
 ## Automatic triggers
 
-Automatic trigger controllers are opt-in. They create ordinary `CheckNodeHealth` resources; the checks and result format are the same as for a manual request.
+The base Deployment enables automatic new-node and reboot checks; `HealthCheckRequest` integration remains opt-in. These triggers create ordinary `CheckNodeHealth` resources, with the GPU exemption below for `HealthSignal`-owned requests.
 
 ### New nodes and node reboots
 
-Enable with:
+The base Deployment enables this controller with:
 
 ```text
 --enable-node-reboot-check
@@ -163,7 +163,7 @@ See [Node Events](results.md#node-events) for the Event fields, message format, 
 
 ## Optional standard-node condition
 
-Enable standard-node `NodeHealthy` publication with:
+The base Deployment enables standard-node `NodeHealthy` publication with:
 
 ```text
 --enable-node-condition
@@ -173,7 +173,7 @@ Standard nodes receive the aggregate `kubernetes.azure.com/NodeHealthy` conditio
 
 GPU nodes never receive `NodeHealthy` or any other controller-managed Node condition. If a GPU node already carries `NodeHealthy`, the controller removes it when a check completes and condition publication is enabled. Non-passing GPU checks are reported through CR status, metrics, and Warning Events.
 
-`NodeHealthy` can be consumed by scheduling or remediation systems. AKS uses it internally. Review [Standard-node condition](results.md#standard-node-condition) before enabling this behavior.
+`NodeHealthy` can be consumed by scheduling or remediation systems. AKS uses it internally. Review [Standard-node condition](results.md#standard-node-condition) before deploying. Remove `-enable-node-condition` in an overlay to disable publication.
 
 ## Optional GPU execution
 
@@ -202,18 +202,18 @@ See [GPU checks](gpu-checks.md) for supported SKUs, resource claims, and result 
 |---|---|---|
 | `CHECKER_POD_IMAGE` | Set by the base manifest | Image used for standard checker pods. Required. |
 | `GPU_CHECKER_POD_IMAGE` | Unset / set by the base manifest | GPU image. Required when `--enable-gpu-checks` is enabled. |
-| `--enable-node-reboot-check` | `false` | Create checks for new and rebooted nodes, remove stale `NodeHealthy`, and remove `NodeHealthy` from GPU nodes. |
+| `--enable-node-reboot-check` | `false` / enabled | Create checks for new and rebooted nodes, remove stale `NodeHealthy`, and remove `NodeHealthy` from GPU nodes. |
 | `--enable-health-check-request` | `false` | Bridge `HealthCheckRequest` through `HealthSignal` to `CheckNodeHealth`. |
-| `--enable-node-condition` | `false` | Publish terminal outcomes as `NodeHealthy` on standard Nodes. GPU Nodes never receive a managed condition. |
+| `--enable-node-condition` | `false` / enabled | Publish terminal outcomes as `NodeHealthy` on standard Nodes. GPU Nodes never receive a managed condition. |
 | `--enable-gpu-checks` | `false` / enabled | Run intrusive GPU checks on detected NVIDIA GPU nodes, except `HealthSignal`-owned upgrade requests. |
 | `--gpu-wait` | `2m` | Shared startup budget for GPU SKU metadata and claimable GPUs before reporting missing prerequisites as Unknown. |
 | `--metrics-bind-address` | `:8080` | Controller-runtime metrics address. |
 | `--health-probe-bind-address` | `:8081` | Health and readiness probe address. |
 | `--leader-elect` | `false` | Enable leader election for multiple controller replicas. |
 
-## Enabling capabilities with Kustomize
+## Configuring capabilities with Kustomize
 
-Create an overlay that uses `manifests/base/checknodehealth-controller` and appends the required arguments and environment variables to the controller container. For example, an overlay enabling reboot checks and standard-node `NodeHealthy` should produce:
+Create an overlay that uses `manifests/base/checknodehealth-controller` and patches the controller arguments and environment variables. Boot checks, condition publication, and GPU checks are already enabled. To make runs manual-only and disable Node-condition publication and GPU benchmarks, replace the argument list:
 
 ```yaml
 spec:
@@ -223,8 +223,7 @@ spec:
         - name: controller
           args:
             - -v=5
-            - --enable-node-reboot-check
-            - --enable-node-condition
+            - --metrics-bind-address=:8080
 ```
 
 Use Kustomize patches rather than editing the base Deployment. Verify the rendered manifest before applying it:
@@ -233,4 +232,4 @@ Use Kustomize patches rather than editing the base Deployment. Verify the render
 kubectl kustomize <overlay-directory>
 ```
 
-The repository's test overlay demonstrates these patches but also uses local test images and should not be applied as a production configuration.
+The repository's test overlay customizes images and capabilities for local tests and should not be applied as a production configuration.

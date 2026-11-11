@@ -82,9 +82,9 @@ This creates:
 - Controller and checker-pod service accounts
 - Controller and checker-pod RBAC
 
-The base installation supports manually created `CheckNodeHealth` resources, emits Warning Events for non-passing supported-node checks, and explicitly enables intrusive GPU checks with a separate GPU image. Automatic triggers and standard-node `NodeHealthy` publication are disabled.
+The base installation supports manual requests, automatically checks eligible new and rebooted nodes, publishes `NodeHealthy` on standard nodes, and emits Warning Events for non-passing supported-node checks. Intrusive GPU checks are enabled with a separate GPU image, including for automatic boot checks. `HealthCheckRequest` reconciliation remains disabled.
 
-Review [GPU checks](check-node-health/gpu-checks.md) before targeting a GPU node. To run only base checks, remove `-enable-gpu-checks` from the controller arguments in a Kustomize overlay.
+Review [automatic checks and condition publication](check-node-health/running-checks.md) and [GPU checks](check-node-health/gpu-checks.md) before installing: GPU benchmarks claim all advertised GPUs, and external remediation may consume `NodeHealthy`. To disable a capability, remove its enable flag from the controller arguments in a Kustomize overlay. Removing `-enable-gpu-checks` limits runs to base checks; removing `-enable-node-reboot-check` disables automatic boot checks and Node-controller condition cleanup.
 
 ### Verify the controller
 

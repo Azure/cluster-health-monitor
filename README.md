@@ -3,7 +3,7 @@
 Cluster Health Monitor provides preview health-checking features for Azure Kubernetes Service (AKS). It can monitor the control plane continuously and run targeted health checks against individual nodes.
 
 > [!IMPORTANT]
-> All features in this repository are in preview. Configuration, metrics, result fields, error codes, and supported checks may change between versions.
+> All features in this repository are in preview. Configuration, metrics, result fields, error codes, and supported checks may change between versions. All interfaces are subject to change.
 
 ## Two independent features
 
@@ -16,7 +16,6 @@ Continuous checks and Check Node Health are separate features. You can install, 
 | Trigger | Per-checker interval | `CheckNodeHealth` creation or an automatic trigger |
 | Configuration | ConfigMap checker list | Controller flags, images, and request resources |
 | Results | Prometheus metrics | CR status, metrics, Warning Events for non-passing supported-node checks, and an optional standard-node condition |
-| Required together? | No | No |
 
 ### Continuous checks
 
@@ -45,23 +44,25 @@ Start with [Check Node Health](docs/check-node-health/index.md).
 
 ## Choose a feature
 
-Use **continuous checks** when you want recurring signals about cluster-level dependencies or synthetic workload behavior.
+Use **continuous checks** when you want continous monitoring of the cluster control plane.
 
-Use **Check Node Health** when you want a verdict for a particular node, need to react to node lifecycle events, or want non-passing results reported on the target Node.
+Use **Check Node Health** when you want a health verdict for a particular node.
 
 See [Getting started](docs/getting-started.md) for separate installation and verification paths.
 
 ## Install the bundled preview
 
-The repository-wide base installs both features and the optional `HealthCheckRequest` and `HealthSignal` CRDs:
+The repository-wide base installs both the continous monitoring and node health check features, as well as the optional `HealthCheckRequest` and `HealthSignal` CRDs:
 
 ```bash
 kubectl apply -k manifests/base/
 ```
 
-The base manifests enable intrusive GPU checks and configure a separate GPU checker image. The binary defaults GPU checks to off, but the supplied Deployment explicitly enables them. Review [GPU checks](docs/check-node-health/gpu-checks.md) before requesting a run on a GPU node.
+The base manifests enable automatic health checks for new and rebooted nodes, including intrusive GPU checks on GPU nodes.
 
-Automatic node-reboot checks, `HealthCheckRequest` reconciliation, and standard-node `NodeHealthy` publication remain disabled in the base manifests. Warning Events for non-passing supported-node checks do not require an additional feature flag.
+For standard (non-GPU) nodes, the controller publishes each run's aggregate result as the `kubernetes.azure.com/NodeHealthy` Node condition. AKS can use this condition as a signal for node remediation. GPU nodes do not receive this condition.
+
+Review [Running checks](docs/check-node-health/running-checks.md) and [GPU checks](docs/check-node-health/gpu-checks.md) before deploying.
 
 To remove the bundled installation:
 
@@ -86,12 +87,11 @@ For independent installation commands, see [Getting started](docs/getting-starte
 - [Component specifications](spec/README.md) (behavioral source of truth)
 - [Security](SECURITY.md)
 
-## Support boundaries
+## Usage notes
 
 - The project is intended for AKS.
-- Node checks support Linux nodes only.
-- The supplied manifests use preview images and defaults. Review and customize them before relying on them in your environment.
-- The manifests expose metrics on container ports but do not create a Service, ServiceMonitor, or PodMonitor. The documented access method is `kubectl port-forward`.
+- Node checks run on Linux nodes only.
+- Check the configuration before deploying and adjust it if needed.
 
 ## Contributing
 

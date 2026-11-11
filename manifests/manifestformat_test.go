@@ -10,9 +10,26 @@ import (
 	"github.com/Azure/cluster-health-monitor/pkg/config"
 	. "github.com/onsi/gomega"
 	"gopkg.in/yaml.v3"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	kyaml "sigs.k8s.io/kustomize/kyaml/yaml"
+	syaml "sigs.k8s.io/yaml"
 )
+
+func Test_CheckNodeHealthDeploymentDefaults(t *testing.T) {
+	g := NewWithT(t)
+	data, err := os.ReadFile("base/checknodehealth-controller/deployment.yaml")
+	g.Expect(err).ToNot(HaveOccurred())
+
+	var deployment appsv1.Deployment
+	g.Expect(syaml.Unmarshal(data, &deployment)).To(Succeed())
+	g.Expect(deployment.Spec.Template.Spec.Containers).To(HaveLen(1))
+	args := deployment.Spec.Template.Spec.Containers[0].Args
+	for _, flag := range []string{"-enable-gpu-checks", "-enable-node-reboot-check", "-enable-node-condition"} {
+		g.Expect(args).To(ContainElement(flag))
+	}
+	g.Expect(args).ToNot(ContainElement("-enable-health-check-request"))
+}
 
 func Test_ValidateConfigMapFile(t *testing.T) {
 	g := NewWithT(t)

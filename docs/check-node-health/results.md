@@ -284,7 +284,7 @@ Kubernetes Events have cluster-configured retention and should not be used as th
 
 ## Standard-node condition
 
-`NodeHealthy` publication is disabled by default. Enable it with `--enable-node-condition`.
+`NodeHealthy` publication defaults to off in the binary but is enabled by the supplied base Deployment with `--enable-node-condition`. Remove that flag in an overlay to disable publication.
 
 Standard nodes receive:
 

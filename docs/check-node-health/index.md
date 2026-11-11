@@ -25,9 +25,9 @@ kubectl apply -k manifests/base/checknodehealth-controller
 kubectl -n kube-system rollout status deployment/checknodehealth-controller
 ```
 
-The base installation enables manually created `CheckNodeHealth` resources, Warning Events for non-passing supported-node checks, and intrusive GPU checks. Although the binary defaults GPU checks to off, the supplied Deployment explicitly enables them and configures a GPU image. Automatic triggers and standard-node `NodeHealthy` publication are disabled.
+The base installation enables manual requests, automatic checks for eligible new and rebooted nodes, standard-node `NodeHealthy` publication, Warning Events for non-passing supported-node checks, and intrusive GPU checks. The supplied Deployment explicitly enables boot checks, condition publication, and GPU checks, while the binary defaults these capabilities to off. `HealthCheckRequest` reconciliation remains disabled.
 
-See [Running checks](running-checks.md) for a manual request and opt-in controller capabilities.
+Automatic GPU-node checks can claim all advertised GPUs, and standard-node conditions can trigger external remediation. See [Running checks](running-checks.md) for requests and controller configuration.
 
 ## Execution lifecycle
 

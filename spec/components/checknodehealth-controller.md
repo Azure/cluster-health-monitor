@@ -29,8 +29,6 @@ The binary is `/controller`.
 | `CHECKER_POD_IMAGE`     | Yes      | Image for the checker pod. The controller exits if it is unset. |
 | `GPU_CHECKER_POD_IMAGE` | When `-enable-gpu-checks` is on | Image for the checker pod on GPU nodes. |
 
-These are binary defaults. The supplied base Deployment explicitly enables GPU checks and sets both checker images.
-
 ## 3. Input: the `CheckNodeHealth` resource
 
 `clusterhealthmonitor.azure.com/v1alpha1`, cluster-scoped, short name `cnh`.

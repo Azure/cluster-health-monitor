@@ -7,7 +7,7 @@ Check Node Health can optionally run intrusive NVIDIA GPU checks on explicitly s
 
 GPU checks are in preview. They are disabled by default in the controller binary, but the supplied base Deployment explicitly enables them and configures the GPU image. To disable them, remove `-enable-gpu-checks` from the controller arguments in a Kustomize overlay.
 
-## Current support boundaries
+## Current capabilities and limitations
 
 Each request targets one node, and the controller selects checks automatically from its SKU profile. The current API does not support explicit check selection, recurring or idle-triggered GPU policies, coordinated multi-node or InfiniBand tests, or workload init-container preflight checks. The shared preflight described below is internal to the GPU benchmarks, not a workload admission or startup feature.
 

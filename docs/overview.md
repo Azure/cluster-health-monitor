@@ -22,7 +22,6 @@ They share a repository and status vocabulary, but they have separate deployment
 | Configuration | Checker list in a ConfigMap | Controller flags, environment variables, and request resources |
 | Primary result | Prometheus counters | `CheckNodeHealth` status |
 | Additional results | Logs | Prometheus metrics, Warning Events for non-passing supported-node checks, optional standard-node `NodeHealthy`, and optional `HealthSignal` status |
-| Can run independently? | Yes | Yes |
 
 ## Continuous-check architecture
 
@@ -107,10 +106,10 @@ The repository provides a separate Kustomize base for each feature:
 |---|---|
 | Continuous scheduled checks | Enabled in the continuous-check Deployment |
 | Manual `CheckNodeHealth` requests | Enabled |
-| New-node and reboot-triggered node checks | Disabled |
+| New-node and reboot-triggered node checks | Enabled by the supplied Deployment; disabled by default in the binary |
 | `HealthCheckRequest` integration | Disabled |
 | Warning Events for non-passing supported-node checks | Enabled |
-| Publishing `NodeHealthy` on standard nodes | Disabled |
+| Publishing `NodeHealthy` on standard nodes | Enabled by the supplied Deployment; disabled by default in the binary |
 | Intrusive GPU checks | Enabled by the supplied Deployment; disabled by default in the binary |
 
 Requests whose `CheckNodeHealth` controller owner is a `health.aks.io/v1alpha1` `HealthSignal` run only base checks, even on GPU nodes. This keeps experimental GPU benchmarks and their startup wait out of upgrade health checks. Manual and reboot-triggered requests without that owner remain eligible for GPU checks.
