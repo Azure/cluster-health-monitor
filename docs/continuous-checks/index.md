@@ -120,7 +120,7 @@ It uses only the common configuration fields, with no checker-specific object. T
 
 ## Apply configuration changes
 
-Patch the ConfigMap through a Kustomize overlay. Restart the Deployment after applying changes because configuration is read only at startup:
+Update the ConfigMap and restart the Deployment after applying changes because configuration is read only at startup:
 
 ```bash
 kubectl -n kube-system rollout restart deployment/cluster-health-monitor
@@ -168,30 +168,6 @@ cluster_health_monitor_checker_result_total{checker_type="APIServer",checker_nam
 ### Querying and alerting
 
 Counters accumulate outcomes since process startup; they are not current-state gauges. Use `increase` or `rate` over a window containing multiple expected runs, and distinguish detected failures from inconclusive results. Handle process restarts and missing scrapes separately.
-
-Outcomes by checker:
-
-```promql
-sum by (checker_name, status, error_code) (
-  increase(cluster_health_monitor_checker_result_total[15m])
-)
-```
-
-Per-CoreDNS-pod outcomes:
-
-```promql
-sum by (pod_namespace, pod_name, status, error_code) (
-  increase(cluster_health_monitor_pod_health_result_total[15m])
-)
-```
-
-Repeated failures for a checker running every 30 seconds:
-
-```promql
-sum by (checker_name, error_code) (
-  increase(cluster_health_monitor_checker_result_total{status="Unhealthy"}[5m])
-) >= 3
-```
 
 ### Error codes and troubleshooting
 

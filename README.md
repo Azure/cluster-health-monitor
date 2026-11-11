@@ -61,7 +61,7 @@ The base manifests enable automatic health checks for new and rebooted nodes, in
 
 For standard (non-GPU) nodes, the controller publishes each run's aggregate result as the `kubernetes.azure.com/NodeHealthy` Node condition. AKS can use this condition as a signal for node remediation. GPU nodes do not receive this condition.
 
-Review [Running checks](docs/check-node-health/running-checks.md) and [GPU checks](docs/check-node-health/gpu-checks.md) before deploying.
+Review [controller settings](docs/check-node-health/index.md#controller-settings) and [GPU checks](docs/check-node-health/index.md#gpu-checks) before deploying.
 
 To remove the bundled installation:
 
@@ -76,9 +76,6 @@ For independent installation commands, see [Getting started](docs/getting-starte
 - [Getting started](docs/getting-started.md)
 - [Continuous checks](docs/continuous-checks/index.md)
 - [Check Node Health](docs/check-node-health/index.md)
-  - [Running checks](docs/check-node-health/running-checks.md)
-  - [Consuming results](docs/check-node-health/results.md)
-  - [GPU checks](docs/check-node-health/gpu-checks.md)
 - [Development and testing](docs/development.md)
 - [Component specifications](spec/README.md) (behavioral source of truth)
 - [Security](SECURITY.md)

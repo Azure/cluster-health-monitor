@@ -7,7 +7,7 @@
 
 - An AKS cluster
 - `kubectl` configured for the target cluster
-- Permission to create the resources in the selected Kustomize base
+- Permission to create the resources in the selected manifests
 - Linux nodes for Check Node Health
 
 The examples assume this repository is the current directory.
@@ -28,7 +28,7 @@ This installs both features plus the optional external `HealthCheckRequest` and 
 kubectl apply -k manifests/base
 ```
 
-The bundle does not enable `HealthCheckRequest` reconciliation. See [automatic triggers](check-node-health/running-checks.md#automatic-triggers).
+The bundle does not enable `HealthCheckRequest` reconciliation. See [automatic triggers](check-node-health/index.md#automatic-triggers).
 
 ### Verify the installation
 
@@ -37,7 +37,7 @@ kubectl -n kube-system rollout status deployment/cluster-health-monitor
 kubectl -n kube-system rollout status deployment/checknodehealth-controller
 ```
 
-Continue with [continuous-check metrics](continuous-checks/index.md#metrics-and-results) or [request a node check](check-node-health/running-checks.md#manual-request).
+Continue with [continuous-check metrics](continuous-checks/index.md#metrics-and-results) or [request a node check](check-node-health/index.md#manual-request).
 
 ### Remove everything
 
@@ -93,7 +93,7 @@ This creates the `CheckNodeHealth` CRD, controller Deployment, service accounts,
 
 The base enables automatic checks for new and rebooted nodes, `NodeHealthy` publication on non-GPU nodes, and intrusive GPU checks. `HealthCheckRequest` reconciliation remains disabled.
 
-GPU checks claim all advertised GPUs while running, and external remediation may consume `NodeHealthy`. Review [controller configuration](check-node-health/running-checks.md#controller-capability-table) and [GPU checks](check-node-health/gpu-checks.md) before installing; use a Kustomize overlay to adjust enabled capabilities.
+GPU checks claim all advertised GPUs while running, and external remediation may consume `NodeHealthy`. Review [controller settings](check-node-health/index.md#controller-settings) and [GPU checks](check-node-health/index.md#gpu-checks) before installing and adjust enabled capabilities as needed.
 
 ### Verify the controller
 
@@ -105,8 +105,8 @@ kubectl get crd checknodehealths.clusterhealthmonitor.azure.com
 
 Next:
 
-- [Request a node check](check-node-health/running-checks.md#manual-request).
-- [Read results and controller metrics](check-node-health/results.md).
+- [Request a node check](check-node-health/index.md#manual-request).
+- [Read results](check-node-health/index.md#results) and [controller metrics](check-node-health/index.md#prometheus-metrics).
 
 ### Remove
 

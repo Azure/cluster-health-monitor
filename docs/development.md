@@ -40,7 +40,7 @@ make kind-setup-e2e
 
 ## Local Kind environment
 
-Create a three-node Kind cluster, build and load the images, deploy Metrics Server, and apply the test overlay:
+Create a three-node Kind cluster, build and load the images, deploy Metrics Server, and apply the test manifests:
 
 ```bash
 make kind-test-local
