@@ -1,135 +1,98 @@
 # Cluster Health Monitor
 
-A Kubernetes cluster health monitoring tool that checks various aspects of cluster health, including DNS resolution and pod startup time.
+Cluster Health Monitor provides preview health-checking features for Azure Kubernetes Service (AKS). It can monitor the control plane continuously and run targeted health checks against individual nodes.
 
-## Overview
+> [!IMPORTANT]
+> All features in this repository are in preview. Configuration, metrics, result fields, error codes, and supported checks may change between versions.
 
-Cluster Health Monitor runs as a Kubernetes deployment and exposes metrics about the health of your cluster through a Prometheus endpoint.
+## Two independent features
 
-## Deployment
+Continuous checks and Check Node Health are separate features. You can install, configure, run, and consume either feature without enabling the other.
 
-### Deploying Base Manifests
+| | Continuous checks | Check Node Health |
+|---|---|---|
+| Scope | Cluster services and synthetic workloads | One Kubernetes node |
+| Execution | Long-running scheduled checkers | One checker pod per request |
+| Trigger | Per-checker interval | `CheckNodeHealth` creation or an automatic trigger |
+| Configuration | ConfigMap checker list | Controller flags, images, and request resources |
+| Results | Prometheus metrics | CR status, metrics, Warning Events for non-passing supported-node checks, and an optional standard-node condition |
+| Required together? | No | No |
 
-To deploy the Cluster Health Monitor using the base manifests:
+### Continuous checks
+
+Continuous checks run independently on configured intervals and validate:
+
+- CoreDNS and LocalDNS resolution
+- Synthetic pod startup and pod connectivity
+- API server create, read, and delete operations
+- Metrics Server availability
+- Azure Policy enforcement
+
+Start with [Continuous checks](docs/continuous-checks/index.md).
+
+### Check Node Health
+
+Check Node Health runs a set of checks against a specific Linux node. Each `CheckNodeHealth` resource represents one run. Runs can be requested manually or created by optional automatic triggers.
+
+Base node checks validate:
+
+- Whether the node can start the checker pod
+- Pod-to-pod and Service networking through CoreDNS
+
+Optional intrusive GPU checks validate GPU count, host and peer bandwidth, and NCCL all-reduce correctness and bandwidth on explicitly supported NVIDIA GPU SKUs.
+
+Start with [Check Node Health](docs/check-node-health/index.md).
+
+## Choose a feature
+
+Use **continuous checks** when you want recurring signals about cluster-level dependencies or synthetic workload behavior.
+
+Use **Check Node Health** when you want a verdict for a particular node, need to react to node lifecycle events, or want non-passing results reported on the target Node.
+
+See [Getting started](docs/getting-started.md) for separate installation and verification paths.
+
+## Install the bundled preview
+
+The repository-wide base installs both features and the optional `HealthCheckRequest` and `HealthSignal` CRDs:
 
 ```bash
 kubectl apply -k manifests/base/
 ```
 
-### Removing Deployment
+The base manifests enable intrusive GPU checks and configure a separate GPU checker image. The binary defaults GPU checks to off, but the supplied Deployment explicitly enables them. Review [GPU checks](docs/check-node-health/gpu-checks.md) before requesting a run on a GPU node.
 
-To remove the base deployment:
+Automatic node-reboot checks, `HealthCheckRequest` reconciliation, and standard-node `NodeHealthy` publication remain disabled in the base manifests. Warning Events for non-passing supported-node checks do not require an additional feature flag.
+
+To remove the bundled installation:
 
 ```bash
 kubectl delete -k manifests/base/
 ```
 
-### Customizing Deployment
+For independent installation commands, see [Getting started](docs/getting-started.md).
 
-For custom deployments, create your own overlay in `manifests/overlays/` and change the directory to the directory containing `kustomization.yaml`, e.g., `manifests/overlays/test`.
+## Documentation
 
-## Testing
+- [Overview and architecture](docs/overview.md)
+- [Getting started](docs/getting-started.md)
+- [Continuous checks](docs/continuous-checks/index.md)
+  - [Configuration](docs/continuous-checks/configuration.md)
+  - [Consuming results](docs/continuous-checks/results.md)
+- [Check Node Health](docs/check-node-health/index.md)
+  - [Running checks](docs/check-node-health/running-checks.md)
+  - [Consuming results](docs/check-node-health/results.md)
+  - [GPU checks](docs/check-node-health/gpu-checks.md)
+- [Development and testing](docs/development.md)
+- [Component specifications](spec/README.md) (behavioral source of truth)
+- [Security](SECURITY.md)
 
-GPU checks run only when enabled and are skipped for upgrade-request checks owned by
-a `HealthSignal`. They are experimental, and their runtime can exceed AKS RP's
-upgrade health-check deadline. Other node health checks still run for these requests.
+## Support boundaries
 
-### Running Unit Tests
+- The project is intended for AKS.
+- Node checks support Linux nodes only.
+- The supplied manifests use preview images and defaults. Review and customize them before relying on them in your environment.
+- The manifests expose metrics on container ports but do not create a Service, ServiceMonitor, or PodMonitor. The documented access method is `kubectl port-forward`.
 
-To run unit tests:
+## Contributing
 
-```bash
-make test-unit
-```
-
-### Running End-to-End (E2E) Tests
-
-To run E2E tests, ensure [Ginkgo](https://onsi.github.io/ginkgo/#getting-started) is installed and run:
-
-```bash
-# Full E2E test: set up cluster, run tests, clean up cluster.
-make test-e2e
-```
-
-This command supports the following environment variables:
-
-- `E2E_SKIP_CLUSTER_SETUP=true` - Skip cluster setup and use existing Kind cluster.
-- `E2E_SKIP_CLUSTER_CLEANUP=true` - Skip cluster cleanup after tests.
-- `KIND_CLUSTER_NAME=<name>` - Customize the name of the Kind cluster to use or create.
-
-#### Setting Up a Kind Cluster for E2E Testing
-
-To set up a Kind cluster for E2E tests:
-
-```bash
-make kind-setup-e2e
-```
-
-This creates a Kind cluster and loads the necessary images without deploying the application. You can also set `KIND_CLUSTER_NAME` to use a custom cluster name.
-
-See [useful commands](#useful-commands) for other commands that can be used once the test environment is set up.
-
-### Local Testing with Kind
-
-Kind (Kubernetes IN Docker) is used to create a local Kubernetes cluster for testing and development.
-
-#### Prerequisites
-
-- [Docker](https://www.docker.com/)
-- [Kind](https://kind.sigs.k8s.io/docs/user/quick-start/#installation)
-- [kubectl](https://kubernetes.io/docs/tasks/tools/)
-
-#### Setting Up a Local Environment
-
-To set up a local test environment with Kind:
-
-```bash
-make kind-test-local
-```
-
-This command:
-
-1. Creates a Kind cluster.
-1. Builds a Docker image for the cluster health monitor.
-1. Loads the image into the Kind cluster.
-1. Applies the Kubernetes manifests using the test overlay.
-
-### Useful Commands
-
-Once your test environment is set up, you can use the following commands:
-
-- **Set kubectl context**:
-
-  ```bash
-  make kind-export-kubeconfig
-  ```
-
-- **Mock LocalDNS**:
-
-  - Enable:
-
-    ```bash
-    make kind-enable-local-dns-mock
-    ```
-
-  - Disable:
-
-    ```bash
-    make kind-disable-local-dns-mock
-    ```
-
-- **Redeploy after changes**:
-
-  ```bash
-  make kind-redeploy
-  ```
-
-  This rebuilds the image, loads it into the Kind cluster, and redeploys the application.
-
-- **Clean up**:
-
-  ```bash
-  make kind-delete-cluster
-  ```
-
-  This deletes the Kind cluster when you're done testing.
+See [Development and testing](docs/development.md) for unit tests, end-to-end tests, and local Kind workflows.
