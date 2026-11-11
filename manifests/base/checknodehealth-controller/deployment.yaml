@@ -25,6 +25,8 @@ spec:
             - "-v=5"
             - "-metrics-bind-address=:8080"
             - "-enable-gpu-checks"
+            - "-enable-node-reboot-check"
+            - "-enable-node-condition"
           imagePullPolicy: Always
           ports:
             - containerPort: 8080

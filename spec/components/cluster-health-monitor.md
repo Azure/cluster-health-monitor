@@ -68,7 +68,7 @@ checkers:
     interval: "30s"
     timeout: "10s"
 
-  - name: "AzurePolicy"        # no extra config block
+  - name: "AzurePolicy"        # no extra config block; not enabled in the base manifests
     type: "AzurePolicy"
     interval: "1m"
     timeout: "10s"

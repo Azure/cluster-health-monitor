@@ -240,15 +240,17 @@ The budget is shared, not restarted when either prerequisite arrives. At the dea
 
 Base pod checks still run on these diagnostic pods. The CNH ends `Healthy=Unknown` unless a base check is `Unhealthy`. A zero `-gpu-wait` skips waiting and reports a missing prerequisite immediately. Non-empty unsupported SKUs retain `UnknownSKU`; they are not treated as missing startup metadata.
 
+Bandwidth checks parse `nvbandwidth` JSON stdout separately from stderr. Warnings on stderr alone do not invalidate a valid measurement; available stderr is included in the bounded diagnostic message for an Unknown result.
+
 The decision is recorded on the pod as annotations (`clusterhealthmonitor.azure.com/node-kind`, `.../gpu-checks-sku`). Later reconciles read these annotations, so a node that changes mid-run changes neither the expected checks nor whether the result can reach `NodeHealthy` (§4.2).
 
 ### 5.5 Upgrade-request checks
 
 A CNH whose controller owner reference is a `health.aks.io/v1alpha1` `HealthSignal` is an upgrade-request check. For these requests, even when `-enable-gpu-checks` is on:
 
-- Skip GPU checks and the wait for claimable GPUs.
+- Skip GPU checks and the startup wait for SKU metadata and claimable GPUs.
 - Use `CHECKER_POD_IMAGE`, expect only `PodStartup` and `PodNetwork`, and apply the **2m** base pod timeout.
-- Do not add missing GPU results as `Unknown`; GPU results are not expected.
+- Do not claim GPUs or add missing GPU results as `Unknown`; GPU results are not expected.
 - Preserve GPU-node classification: GPU nodes still receive no `NodeHealthy` condition (§4.2).
 
 **Why:** GPU checks are experimental, and their runtime (up to 15m plus the GPU availability wait) can exceed AKS RP's upgrade health-check deadline (1m by default). They must not introduce GPU-related failures or delays into upgrade health checks. The base checks can still fail or time out; this exemption does not guarantee completion within RP's deadline.
