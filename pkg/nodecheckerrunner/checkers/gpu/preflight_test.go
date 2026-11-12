@@ -22,14 +22,14 @@ func TestPreflightChecker(t *testing.T) {
 	}{
 		{
 			name:        "all expected gpus present",
-			sku:         h100SKU,
+			sku:         nd96isr_h100_v5,
 			found:       8,
 			wantStatus:  checker.StatusHealthy,
 			wantMessage: "found 8 of 8 GPUs expected",
 		},
 		{
 			name:        "missing gpu reports unhealthy",
-			sku:         h100SKU,
+			sku:         nd96isr_h100_v5,
 			found:       7,
 			wantStatus:  checker.StatusUnhealthy,
 			wantCode:    ErrorCodeUnexpectedGPUCount,
@@ -37,7 +37,7 @@ func TestPreflightChecker(t *testing.T) {
 		},
 		{
 			name:        "more gpus than expected reports unhealthy",
-			sku:         h100SKU,
+			sku:         nd96isr_h100_v5,
 			found:       9,
 			wantStatus:  checker.StatusUnhealthy,
 			wantCode:    ErrorCodeUnexpectedGPUCount,
@@ -53,7 +53,7 @@ func TestPreflightChecker(t *testing.T) {
 		},
 		{
 			name:        "detection failure reports unknown",
-			sku:         h100SKU,
+			sku:         nd96isr_h100_v5,
 			detectErr:   errors.New("exec: nvidia-smi not found"),
 			wantStatus:  checker.StatusUnknown,
 			wantCode:    ErrorCodeToolFailed,
