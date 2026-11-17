@@ -48,6 +48,31 @@ func TestNewCheckers(t *testing.T) {
 			want: []string{NCCLAllReduceCheckerName, HostBandwidthCheckerName},
 		},
 		{
+			name: "one sixth gpu a10 runs only host bandwidth",
+			sku:  "Standard_NV6ads_A10_v5",
+			want: []string{HostBandwidthCheckerName},
+		},
+		{
+			name: "one third gpu a10 runs only host bandwidth",
+			sku:  "Standard_NV12ads_A10_v5",
+			want: []string{HostBandwidthCheckerName},
+		},
+		{
+			name: "one half gpu a10 runs only host bandwidth",
+			sku:  "Standard_NV18ads_A10_v5",
+			want: []string{HostBandwidthCheckerName},
+		},
+		{
+			name: "single gpu a10 runs only host bandwidth",
+			sku:  "Standard_NV36ads_A10_v5",
+			want: []string{HostBandwidthCheckerName},
+		},
+		{
+			name: "memory optimized single gpu a10 runs only host bandwidth",
+			sku:  "Standard_NV36adms_A10_v5",
+			want: []string{HostBandwidthCheckerName},
+		},
+		{
 			name: "unknown sku runs every checker",
 			sku:  "unrecognized_sku",
 			want: []string{NCCLAllReduceCheckerName, HostBandwidthCheckerName, PeerBandwidthCheckerName},
@@ -86,6 +111,11 @@ func TestNewCheckersWithSkipReason(t *testing.T) {
 	}{
 		{name: "h100", cfg: Config{SKU: h100SKU, SkipReason: ErrorCodeGPUsNotClaimable}, wantCode: ErrorCodeGPUsNotClaimable},
 		{name: "a10", cfg: Config{SKU: a10SKU, SkipReason: ErrorCodeGPUsNotClaimable}, wantCode: ErrorCodeGPUsNotClaimable},
+		{name: "one sixth gpu a10", cfg: Config{SKU: "Standard_NV6ads_A10_v5", SkipReason: ErrorCodeGPUsNotClaimable}, wantCode: ErrorCodeGPUsNotClaimable},
+		{name: "one third gpu a10", cfg: Config{SKU: "Standard_NV12ads_A10_v5", SkipReason: ErrorCodeGPUsNotClaimable}, wantCode: ErrorCodeGPUsNotClaimable},
+		{name: "one half gpu a10", cfg: Config{SKU: "Standard_NV18ads_A10_v5", SkipReason: ErrorCodeGPUsNotClaimable}, wantCode: ErrorCodeGPUsNotClaimable},
+		{name: "single gpu a10", cfg: Config{SKU: "Standard_NV36ads_A10_v5", SkipReason: ErrorCodeGPUsNotClaimable}, wantCode: ErrorCodeGPUsNotClaimable},
+		{name: "memory optimized single gpu a10", cfg: Config{SKU: "Standard_NV36adms_A10_v5", SkipReason: ErrorCodeGPUsNotClaimable}, wantCode: ErrorCodeGPUsNotClaimable},
 		{name: "unknown sku", cfg: Config{SKU: "unrecognized_sku", SkipReason: ErrorCodeGPUsNotClaimable}, wantCode: ErrorCodeUnknownSKU},
 		{name: "missing sku", cfg: Config{}, wantCode: ErrorCodeNodeSKUNotAvailable},
 		{name: "missing sku at readiness deadline", cfg: Config{SkipReason: ErrorCodeNodeSKUNotAvailable}, wantCode: ErrorCodeNodeSKUNotAvailable},
