@@ -17,7 +17,9 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
+	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes/scheme"
+	watchtools "k8s.io/client-go/tools/watch"
 	"k8s.io/client-go/util/retry"
 	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -113,9 +115,95 @@ var _ = Describe("GPU CheckNodeHealth flow on Kind", Serial, Ordered, func() {
 		nodeName, err := nodeWithRemoteCoreDNS(ctx)
 		Expect(err).NotTo(HaveOccurred())
 
-		simulateManagedNVIDIAGPUNode(ctx, nodeName)
+		simulateManagedNVIDIAGPUNode(ctx, nodeName, gpuTestSKU)
 
 		runHealthyGPUControllerFlow(ctx, k8sClient, nodeName)
+	})
+
+	It("reports UnknownSKU without requesting GPUs on an unsupported fully managed NVIDIA node", func() {
+		nodeName, err := nodeWithRemoteCoreDNS(ctx)
+		Expect(err).NotTo(HaveOccurred())
+
+		By("Simulating an unsupported SKU with eight allocatable GPUs")
+		const unsupportedSKU = "Standard_NC6s_v3"
+		_, supported := gpu.ProfiledSKU(unsupportedSKU)
+		Expect(supported).To(BeFalse(), "this scenario requires a SKU without a GPU test profile")
+		simulateManagedNVIDIAGPUNode(ctx, nodeName, unsupportedSKU)
+
+		cnhName := fmt.Sprintf("gpu-unsupported-%d", time.Now().UnixNano())
+		DeferCleanup(func() { Expect(deleteCheckNodeHealthCR(ctx, k8sClient, cnhName)).To(Succeed()) })
+
+		By("Watching for the checker pod before it can finish and be deleted")
+		watchCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
+		defer cancel()
+		podWatch, err := clientset.CoreV1().Pods(checkerNamespace).Watch(watchCtx, metav1.ListOptions{
+			LabelSelector: fmt.Sprintf("%s=%s", checknodehealth.CheckNodeHealthLabel, cnhName),
+		})
+		Expect(err).NotTo(HaveOccurred())
+		defer podWatch.Stop()
+
+		Expect(createCheckNodeHealthCR(ctx, k8sClient, cnhName, nodeName)).To(Succeed())
+		event, err := watchtools.UntilWithoutRetry(watchCtx, podWatch, func(event watch.Event) (bool, error) {
+			return event.Type == watch.Added, nil
+		})
+		Expect(err).NotTo(HaveOccurred())
+		pod, ok := event.Object.(*corev1.Pod)
+		Expect(ok).To(BeTrue(), "expected a checker pod, got %T", event.Object)
+
+		By("Verifying the checker pod requests no GPUs and sets no GPU limits")
+		Expect(pod.Spec.NodeName).To(Equal(nodeName))
+		Expect(pod.Spec.Containers).To(HaveLen(1))
+		container := pod.Spec.Containers[0]
+		Expect(container.Resources.Requests).NotTo(HaveKey(nvidiaGPUResource))
+		Expect(container.Resources.Limits).NotTo(HaveKey(nvidiaGPUResource))
+		Expect(container.Args).To(ContainElements(
+			"--enable-gpu-checks", "--sku="+unsupportedSKU, "--gpu-skip-reason="+gpu.ErrorCodeUnknownSKU))
+
+		By("Waiting for the checker to report results and the controller to finish")
+		var completed *chmv1alpha1.CheckNodeHealth
+		Eventually(func(g Gomega) {
+			completed, err = getCheckNodeHealthCR(ctx, k8sClient, cnhName)
+			g.Expect(err).NotTo(HaveOccurred())
+			g.Expect(completed.Status.FinishedAt).NotTo(BeNil())
+		}, "90s", "1s").Should(Succeed())
+
+		Expect(completed.Status.Results).To(HaveLen(5))
+		results := make(map[string]chmv1alpha1.CheckResult, len(completed.Status.Results))
+		for _, result := range completed.Status.Results {
+			Expect(results).NotTo(HaveKey(result.Name), "duplicate result %s", result.Name)
+			results[result.Name] = result
+		}
+
+		By("Verifying the base checks passed and every GPU benchmark was skipped with UnknownSKU")
+		for _, name := range []string{"PodStartup", "PodNetwork"} {
+			Expect(results).To(HaveKey(name))
+			Expect(results[name].Status).To(Equal(chmv1alpha1.CheckStatusHealthy), "%s: %+v", name, results[name])
+			Expect(results[name].ErrorCode).To(BeEmpty())
+		}
+		for _, name := range []string{"NcclAllReduce", "GpuHostBandwidth", "GpuPeerBandwidth"} {
+			Expect(results).To(HaveKey(name))
+			Expect(results[name].Status).To(Equal(chmv1alpha1.CheckStatusUnknown))
+			Expect(results[name].ErrorCode).To(Equal(gpu.ErrorCodeUnknownSKU))
+			Expect(results[name].Message).To(ContainSubstring(unsupportedSKU))
+		}
+		Expect(completed.Status.Conditions).To(HaveLen(1))
+		condition := completed.Status.Conditions[0]
+		Expect(condition.Type).To(Equal(checknodehealth.ConditionTypeHealthy))
+		Expect(condition.Status).To(Equal(metav1.ConditionUnknown))
+		Expect(condition.Reason).To(Equal(checknodehealth.ReasonCheckUnknown))
+
+		By("Verifying the node receives a warning event but no NodeHealthy condition")
+		var checkEvent *corev1.Event
+		Eventually(func() *corev1.Event {
+			checkEvent = getCheckEvent(ctx, nodeName, cnhName)
+			return checkEvent
+		}, "60s", "2s").ShouldNot(BeNil())
+		Expect(checkEvent.Type).To(Equal(corev1.EventTypeWarning))
+		Expect(checkEvent.Reason).To(Equal(checknodehealth.ReasonCheckUnknown))
+		for _, name := range []string{"NcclAllReduce", "GpuHostBandwidth", "GpuPeerBandwidth"} {
+			Expect(checkEvent.Message).To(ContainSubstring(fmt.Sprintf("%s: Unknown [%s]", name, gpu.ErrorCodeUnknownSKU)))
+		}
+		Expect(getNodeCondition(ctx, k8sClient, nodeName, checknodehealth.NodeConditionNodeHealthy)).To(BeNil())
 	})
 
 	It("never sets a node condition or check event on a healthy GPU node", func() {
@@ -123,7 +211,7 @@ var _ = Describe("GPU CheckNodeHealth flow on Kind", Serial, Ordered, func() {
 		nodeName, err := nodeWithRemoteCoreDNS(ctx)
 		Expect(err).NotTo(HaveOccurred())
 
-		simulateManagedNVIDIAGPUNode(ctx, nodeName)
+		simulateManagedNVIDIAGPUNode(ctx, nodeName, gpuTestSKU)
 
 		By("Running the GPU checks to completion")
 		cnhName := runCheckToCompletion(ctx, k8sClient, nodeName, "gpu-node-conditions")
@@ -330,11 +418,11 @@ func runDriverOnlyGPUControllerFlow(ctx context.Context, k8sClient client.Client
 		"NodeHealthy must never be set on a GPU node")
 }
 
-// simulateManagedNVIDIAGPUNode makes the node look like a fully managed NVIDIA H100 node: GPU labels
+// simulateManagedNVIDIAGPUNode makes the node look like a fully managed NVIDIA node: GPU labels
 // plus a fake device plugin advertising eight GPUs. Both are undone when the spec ends.
-func simulateManagedNVIDIAGPUNode(ctx context.Context, nodeName string) {
-	By("Simulating an NVIDIA H100 node with driver labels")
-	restoreNode, err := simulateNVIDIAGPUNode(ctx, nodeName, gpuTestSKU)
+func simulateManagedNVIDIAGPUNode(ctx context.Context, nodeName, sku string) {
+	By("Simulating an NVIDIA node with driver labels")
+	restoreNode, err := simulateNVIDIAGPUNode(ctx, nodeName, sku)
 	Expect(err).NotTo(HaveOccurred())
 	DeferCleanup(func() { Expect(restoreNode()).To(Succeed()) })
 
