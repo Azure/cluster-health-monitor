@@ -2,7 +2,9 @@
 package e2e
 
 import (
+	"context"
 	"os/exec"
+	"strings"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -48,6 +50,12 @@ var _ = Describe("DNS checker metrics", Serial, Ordered, ContinueOnFailure, func
 
 	AfterAll(func() {
 		safeSessionKill(session)
+	})
+
+	ReportAfterEach(func(report SpecReport) {
+		if report.Failed() {
+			collectDNSStartupEvidence()
+		}
 	})
 
 	It("should report healthy status for CoreDNS and LocalDNS checkers", func() {
@@ -122,6 +130,52 @@ var _ = Describe("DNS checker metrics", Serial, Ordered, ContinueOnFailure, func
 	})
 })
 
+func collectDNSStartupEvidence() {
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	diagnose := func(name string, args ...string) {
+		commandCtx, commandCancel := context.WithTimeout(ctx, 5*time.Second)
+		defer commandCancel()
+		GinkgoWriter.Printf("\nDNS startup evidence: %s %s\n", name, strings.Join(args, " "))
+		output, err := run(exec.CommandContext(commandCtx, name, args...))
+		GinkgoWriter.Printf("%s\n", output)
+		if err != nil {
+			GinkgoWriter.Printf("Evidence collection failed: %v (context: %v)\n", err, commandCtx.Err())
+		}
+	}
+
+	diagnose("kubectl", "-n", kubesystem, "describe", "pods", "-l", "app=mock-localdns")
+	diagnose("kubectl", "-n", kubesystem, "logs", "-l", "app=mock-localdns",
+		"-c", "ip-binder", "--prefix", "--timestamps", "--tail=20")
+	diagnose("kubectl", "-n", kubesystem, "logs", "-l", "app=mock-localdns",
+		"-c", "dnsmasq", "--prefix", "--timestamps", "--tail=20")
+	pods, err := clientset.CoreV1().Pods(kubesystem).List(ctx, metav1.ListOptions{LabelSelector: "app=mock-localdns"})
+	if err != nil {
+		GinkgoWriter.Printf("Failed to locate mock DNS nodes: %v\n", err)
+		return
+	}
+	for _, pod := range pods.Items {
+		if pod.Spec.NodeName == "" {
+			GinkgoWriter.Printf("Mock DNS pod %s is unscheduled\n", pod.Name)
+			continue
+		}
+		diagnose("docker", "exec", pod.Spec.NodeName, "ps", "-C", "dnsmasq", "-o", "pid,ppid,pcpu,time,etime,stat,args")
+		diagnose("docker", "exec", pod.Spec.NodeName, "sh", "-ec", `
+pids=$(pgrep -x dnsmasq)
+for pid in $pids; do
+  echo "dnsmasq PID $pid"
+  grep 'Max open files' /proc/$pid/limits
+  for sample in 1 2; do
+    date -u
+    cat /proc/$pid/stat
+    cat /proc/$pid/syscall
+    sleep 1
+  done
+done`)
+		diagnose("docker", "exec", pod.Spec.NodeName, "ss", "-lnutp")
+	}
+}
+
 // mockLocalDNSDaemonSet returns a DaemonSet struct that represents the mock LocalDNS server
 func mockLocalDNSDaemonSet() *appsv1.DaemonSet {
 	return &appsv1.DaemonSet{
@@ -180,9 +234,18 @@ echo "IP successfully added or already present."`,
 					},
 					Containers: []corev1.Container{
 						{
-							Name:    "dnsmasq",
-							Image:   "jpillora/dnsmasq",
-							Command: []string{"/usr/sbin/dnsmasq", "--no-daemon"},
+							Name:  "dnsmasq",
+							Image: "jpillora/dnsmasq",
+							Command: []string{
+								"/bin/sh", "-ec", `date -u
+printf 'dnsmasq inherited soft NOFILE: '; ulimit -Sn
+printf 'dnsmasq inherited hard NOFILE: '; ulimit -Hn
+# dnsmasq 2.80 scans the descriptor limit at startup, even for descriptors that are not open.
+ulimit -n 4096
+printf 'dnsmasq effective soft NOFILE: '; ulimit -Sn
+printf 'dnsmasq effective hard NOFILE: '; ulimit -Hn
+exec /usr/sbin/dnsmasq --no-daemon "$@"`, "dnsmasq",
+							},
 							// Options doc: https://dnsmasq.org/docs/dnsmasq-man.html.
 							Args: []string{
 								"--listen-address=169.254.10.11",
