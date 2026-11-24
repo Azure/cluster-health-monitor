@@ -2,12 +2,7 @@
 package e2e
 
 import (
-	"context"
-	"encoding/json"
-	"fmt"
 	"os/exec"
-	"strconv"
-	"strings"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -53,12 +48,6 @@ var _ = Describe("DNS checker metrics", Serial, Ordered, ContinueOnFailure, func
 
 	AfterAll(func() {
 		safeSessionKill(session)
-	})
-
-	JustAfterEach(func() {
-		if CurrentSpecReport().Failed() {
-			collectDNSDiagnostics(localPort)
-		}
 	})
 
 	It("should report healthy status for CoreDNS and LocalDNS checkers", func() {
@@ -110,10 +99,6 @@ var _ = Describe("DNS checker metrics", Serial, Ordered, ContinueOnFailure, func
 	})
 
 	It("should report unhealthy status with timeout for LocalDNS checkers when LocalDNS is unreachable", func() {
-		By("Disabling LocalDNS mock")
-		err := disableMockLocalDNS(clientset)
-		Expect(err).NotTo(HaveOccurred(), "Failed to disable LocalDNS mock")
-
 		DeferCleanup(func() {
 			By("Re-enabling LocalDNS mock")
 			err := enableMockLocalDNS(clientset)
@@ -125,6 +110,10 @@ var _ = Describe("DNS checker metrics", Serial, Ordered, ContinueOnFailure, func
 			}, "120s", "5s").Should(BeTrue(), "Mock LocalDNS is not available after re-enabling")
 		})
 
+		By("Disabling LocalDNS mock")
+		err := disableMockLocalDNS(clientset)
+		Expect(err).NotTo(HaveOccurred(), "Failed to disable LocalDNS mock")
+
 		By("Waiting for LocalDNS checker metrics to report unhealthy status")
 		waitForCheckerResultsMetricsValueIncrease(localPort,
 			checkerResultMetricName, localDNSCheckerNames, checkerTypeDNS, metricsUnhealthyStatus, localDNSTimeoutErrorCode,
@@ -132,97 +121,6 @@ var _ = Describe("DNS checker metrics", Serial, Ordered, ContinueOnFailure, func
 			"LocalDNS checker metrics did not report unhealthy status within the timeout period")
 	})
 })
-
-func collectDNSDiagnostics(localPort int) {
-	// Collect before teardown hooks and DeferCleanup restore the failing DNS configuration.
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-
-	diagnose := func(name string, args ...string) ([]byte, error) {
-		commandCtx, commandCancel := context.WithTimeout(ctx, 10*time.Second)
-		defer commandCancel()
-		GinkgoWriter.Printf("\nDNS diagnostics: %s %s\n", name, strings.Join(args, " "))
-		output, err := run(exec.CommandContext(commandCtx, name, args...))
-		GinkgoWriter.Printf("%s\n", output)
-		if err != nil {
-			GinkgoWriter.Printf("DNS diagnostic command failed: %v (context: %v)\n", err, commandCtx.Err())
-		}
-		return output, err
-	}
-
-	_, _ = diagnose("kubectl", "get", "nodes", "-o", "wide")
-	_, _ = diagnose("kubectl", "-n", kubesystem, "get", "pods", "-o", "wide")
-	_, _ = diagnose("kubectl", "-n", kubesystem, "get", "daemonset", "mock-localdns", "-o", "yaml")
-	_, _ = diagnose("kubectl", "-n", kubesystem, "describe", "pods", "-l", "app=mock-localdns")
-	_, _ = diagnose("kubectl", "-n", kubesystem, "get", "events", "--sort-by=.metadata.creationTimestamp")
-	for _, container := range []string{"ip-binder", "dnsmasq"} {
-		_, _ = diagnose("kubectl", "-n", kubesystem, "logs", "-l", "app=mock-localdns",
-			"-c", container, "--prefix", "--timestamps", "--tail=100")
-	}
-	_, _ = diagnose("kubectl", "-n", kubesystem, "logs", "-l", "app=cluster-health-monitor",
-		"--prefix", "--timestamps", "--tail=200")
-	if localPort != 0 {
-		_, _ = diagnose("curl", "--fail", "--silent", "--show-error", "--max-time", "5",
-			fmt.Sprintf("http://127.0.0.1:%d/metrics", localPort))
-	}
-
-	if clientset == nil {
-		GinkgoWriter.Println("DNS network diagnostics unavailable: Kubernetes client was not initialized")
-		return
-	}
-	podCtx, podCancel := context.WithTimeout(ctx, 10*time.Second)
-	defer podCancel()
-	pods, err := clientset.CoreV1().Pods(kubesystem).List(podCtx, metav1.ListOptions{
-		LabelSelector: "app=cluster-health-monitor",
-	})
-	if err != nil {
-		GinkgoWriter.Printf("DNS network diagnostics: failed to list monitor pods: %v\n", err)
-		return
-	}
-	for _, pod := range pods.Items {
-		if pod.Spec.NodeName == "" {
-			GinkgoWriter.Printf("DNS network diagnostics: pod %s has not been scheduled\n", pod.Name)
-			continue
-		}
-		// Kind node names are also their Docker container names. These commands are read-only.
-		_, _ = diagnose("docker", "exec", pod.Spec.NodeName, "ip", "address", "show")
-		_, _ = diagnose("docker", "exec", pod.Spec.NodeName, "ip", "route", "show", "table", "all")
-		_, _ = diagnose("docker", "exec", pod.Spec.NodeName, "ss", "-lnutp")
-		_, _ = diagnose("docker", "exec", pod.Spec.NodeName, "iptables-save")
-		output, err := diagnose("docker", "exec", pod.Spec.NodeName,
-			"crictl", "pods", "--name", "^"+pod.Name+"$", "--namespace", kubesystem, "--state", "Ready", "-q")
-		if err != nil {
-			continue
-		}
-		for _, sandboxID := range strings.Fields(string(output)) {
-			output, err := diagnose("docker", "exec", pod.Spec.NodeName, "crictl", "inspectp", sandboxID)
-			if err != nil {
-				continue
-			}
-			var sandbox struct {
-				Info struct {
-					PID int `json:"pid"`
-				} `json:"info"`
-			}
-			if err := json.Unmarshal(output, &sandbox); err != nil {
-				GinkgoWriter.Printf("DNS network diagnostics: failed to decode sandbox: %v\n", err)
-				continue
-			}
-			if sandbox.Info.PID <= 0 {
-				GinkgoWriter.Println("DNS network diagnostics: sandbox PID is missing")
-				continue
-			}
-			for _, args := range [][]string{
-				{"ip", "address", "show"},
-				{"ip", "route", "get", "169.254.10.11"},
-				{"cat", fmt.Sprintf("/proc/%d/root/etc/resolv.conf", sandbox.Info.PID)},
-			} {
-				command := []string{"exec", pod.Spec.NodeName, "nsenter", "-t", strconv.Itoa(sandbox.Info.PID), "-n", "--"}
-				_, _ = diagnose("docker", append(command, args...)...)
-			}
-		}
-	}
-}
 
 // mockLocalDNSDaemonSet returns a DaemonSet struct that represents the mock LocalDNS server
 func mockLocalDNSDaemonSet() *appsv1.DaemonSet {

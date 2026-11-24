@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -22,6 +23,7 @@ import (
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -293,12 +295,36 @@ func enableMockLocalDNS(clientset *kubernetes.Clientset) error {
 	return nil
 }
 
-// disableMockLocalDNS deletes the mock LocalDNS DaemonSet from the k8s cluster
-func disableMockLocalDNS(clientset *kubernetes.Clientset) error {
-	err := clientset.AppsV1().DaemonSets(mockLocalDNSDaemonSet().GetNamespace()).Delete(
-		context.TODO(), mockLocalDNSDaemonSet().GetName(), metav1.DeleteOptions{})
+// disableMockLocalDNS waits for the DaemonSet and its pods to finish deletion, including their IP cleanup hooks.
+func disableMockLocalDNS(clientset kubernetes.Interface) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	daemonSet := mockLocalDNSDaemonSet()
+	propagation := metav1.DeletePropagationForeground
+	err := clientset.AppsV1().DaemonSets(daemonSet.Namespace).Delete(
+		ctx, daemonSet.Name, metav1.DeleteOptions{PropagationPolicy: &propagation})
 	if err != nil && !errors.IsNotFound(err) {
 		return fmt.Errorf("failed to delete mock LocalDNS DaemonSet: %w", err)
+	}
+
+	err = wait.PollUntilContextCancel(ctx, time.Second, true, func(ctx context.Context) (bool, error) {
+		_, err := clientset.AppsV1().DaemonSets(daemonSet.Namespace).Get(ctx, daemonSet.Name, metav1.GetOptions{})
+		if err == nil {
+			return false, nil
+		}
+		if !errors.IsNotFound(err) {
+			return false, err
+		}
+		pods, err := clientset.CoreV1().Pods(daemonSet.Namespace).List(ctx, metav1.ListOptions{
+			LabelSelector: "app=mock-localdns",
+		})
+		if err != nil {
+			return false, err
+		}
+		return len(pods.Items) == 0, nil
+	})
+	if err != nil {
+		return fmt.Errorf("failed to wait for mock LocalDNS DaemonSet and pods to be deleted: %w", err)
 	}
 
 	GinkgoWriter.Printf("Successfully disabled mock LocalDNS DaemonSet\n")
