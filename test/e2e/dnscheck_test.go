@@ -13,6 +13,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -281,8 +282,9 @@ echo "IP successfully added or already present."`,
 					},
 					Containers: []corev1.Container{
 						{
-							Name:  "dnsmasq",
-							Image: "jpillora/dnsmasq",
+							Name:    "dnsmasq",
+							Image:   "jpillora/dnsmasq",
+							Command: []string{"/usr/sbin/dnsmasq", "--no-daemon"},
 							// Options doc: https://dnsmasq.org/docs/dnsmasq-man.html.
 							Args: []string{
 								"--listen-address=169.254.10.11",
@@ -292,6 +294,15 @@ echo "IP successfully added or already present."`,
 								"--address=/#/",
 								"--log-queries",
 								"--log-facility=-",
+							},
+							ReadinessProbe: &corev1.Probe{
+								ProbeHandler: corev1.ProbeHandler{
+									TCPSocket: &corev1.TCPSocketAction{
+										Host: "169.254.10.11",
+										Port: intstr.FromInt32(53),
+									},
+								},
+								PeriodSeconds: 2,
 							},
 							Lifecycle: &corev1.Lifecycle{
 								PreStop: &corev1.LifecycleHandler{

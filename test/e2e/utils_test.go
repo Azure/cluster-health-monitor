@@ -276,7 +276,9 @@ func isMockLocalDNSAvailable(clientset *kubernetes.Clientset) bool {
 		return false
 	}
 
-	return mockLocalDNS.Status.NumberAvailable == mockLocalDNS.Status.DesiredNumberScheduled
+	return mockLocalDNS.Status.ObservedGeneration >= mockLocalDNS.Generation &&
+		mockLocalDNS.Status.DesiredNumberScheduled > 0 &&
+		mockLocalDNS.Status.NumberAvailable == mockLocalDNS.Status.DesiredNumberScheduled
 }
 
 // enableMockLocalDNS creates the mock LocalDNS DaemonSet in the k8s cluster
