@@ -153,7 +153,10 @@ func (r *CheckNodeHealthReconciler) checkerSpecFor(cnh *chmv1alpha1.CheckNodeHea
 
 	spec.image = r.GPUCheckerPodImage
 	spec.checkerNames, spec.timeout = expectedRun(true, info.sku)
+	_, profiled := gpu.ProfiledSKU(info.sku)
 	switch {
+	case info.sku != "" && !profiled:
+		spec.gpuChecks = &gpuChecks{sku: info.sku, skipReason: gpu.ErrorCodeUnknownSKU}
 	case (info.sku == "" || info.claimableGPUs <= 0) && age < r.GPUWait:
 		spec.wait = min(r.GPUWait-age, gpuPollInterval)
 	case info.sku == "":
