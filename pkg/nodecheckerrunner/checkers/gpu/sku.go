@@ -13,7 +13,7 @@ type skuProfile struct {
 }
 
 // skuProfiles is keyed by normalizeSKU. When GPU checks are enabled, SKUs absent from this map
-// are treated as unknown and checks do not run.
+// are treated as unknown: checker pods do not request GPUs and checks do not run.
 var skuProfiles = map[string]skuProfile{
 	// NV72 has two 24 GiB A10 GPUs without NVLink; the 4G message fits in memory.
 	// Initial real-AKS samples measured 2.03-2.31 GB/s, so use 1.5 GB/s as a

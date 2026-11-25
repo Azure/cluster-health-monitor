@@ -185,6 +185,18 @@ func TestBuildHealthCheckPodShape(t *testing.T) {
 			},
 		},
 		{
+			name:            "unsupported sku reports the gpu checks without requesting or limiting gpus",
+			info:            gpuNodeInfo{isGPUNode: true, claimableGPUs: 2, sku: "unrecognized_sku"},
+			enableGPUChecks: true,
+			want: podShape{
+				Image:           "gpu-image",
+				Timeout:         GPUPodTimeout,
+				NodeKind:        NodeKindGPU,
+				Args:            []string{"--name=cnh-1", "--enable-gpu-checks", "--sku=unrecognized_sku", "--gpu-skip-reason=UnknownSKU"},
+				SecurityContext: wantSecurityContext,
+			},
+		},
+		{
 			// Without claimable GPUs, e.g. a driver-only pool, the checker is told so it can report that,
 			// and it never gets the GPU devices.
 			name:            "gpu node without claimable gpus reports the gpu checks without claiming any",
