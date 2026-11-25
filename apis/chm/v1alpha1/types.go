@@ -4,6 +4,14 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
+const (
+	// AnnotationTrigger identifies what caused an automated CheckNodeHealth request.
+	AnnotationTrigger = "clusterhealthmonitor.azure.com/trigger"
+
+	TriggerNodeBoot        = "node-boot"
+	TriggerAKSHealthSignal = "aks-health-signal"
+)
+
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster,shortName=cnh

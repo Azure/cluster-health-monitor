@@ -210,7 +210,8 @@ func (r *NodeRebootReconciler) createCheckNodeHealth(ctx context.Context, node *
 	crName := GenerateCNHName(node.Name, bootID)
 	cnh := &chmv1alpha1.CheckNodeHealth{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: crName,
+			Name:        crName,
+			Annotations: map[string]string{chmv1alpha1.AnnotationTrigger: chmv1alpha1.TriggerNodeBoot},
 		},
 		Spec: chmv1alpha1.CheckNodeHealthSpec{
 			NodeRef: chmv1alpha1.NodeReference{

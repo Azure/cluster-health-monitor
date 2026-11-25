@@ -306,6 +306,9 @@ func TestNodeRebootReconcile(t *testing.T) {
 					} else if cnh.Spec.NodeRef.Name != tc.node.Name {
 						t.Errorf("CNH nodeRef = %q, want %q", cnh.Spec.NodeRef.Name, tc.node.Name)
 					}
+					if err == nil && tc.existingCNH == nil && cnh.Annotations[chmv1alpha1.AnnotationTrigger] != chmv1alpha1.TriggerNodeBoot {
+						t.Errorf("new boot CNH trigger = %q, want %q", cnh.Annotations[chmv1alpha1.AnnotationTrigger], chmv1alpha1.TriggerNodeBoot)
+					}
 				} else {
 					if err == nil {
 						t.Errorf("expected no CheckNodeHealth, but %q exists", cnhName)

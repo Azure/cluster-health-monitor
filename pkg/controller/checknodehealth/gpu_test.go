@@ -164,7 +164,48 @@ func TestGPUNodeInfoFrom(t *testing.T) {
 	}
 }
 
-// GPU registration and the cloud SKU label can arrive independently after a boot CNH.
+func TestShouldSkipGPUChecks(t *testing.T) {
+	tests := []struct {
+		name     string
+		gpuNode  bool
+		enabled  bool
+		trigger  string
+		owner    *metav1.OwnerReference
+		wantSkip bool
+	}{
+		{name: "non-GPU node", gpuNode: false, enabled: true, wantSkip: true},
+		{name: "GPU checks disabled", gpuNode: true, enabled: false, wantSkip: true},
+		// simulates manual gpu check because no boot or health signal trigger is present
+		{name: "manual GPU check", gpuNode: true, enabled: true, wantSkip: false},
+		{name: "unrecognized trigger", gpuNode: true, enabled: true, trigger: "other", wantSkip: false},
+		{name: "node boot trigger", gpuNode: true, enabled: true, trigger: chmv1alpha1.TriggerNodeBoot, wantSkip: true},
+		{name: "AKS health signal trigger", gpuNode: true, enabled: true, trigger: chmv1alpha1.TriggerAKSHealthSignal, wantSkip: true},
+		{
+			name:    "legacy HealthSignal controller owner",
+			gpuNode: true, enabled: true,
+			owner:    &metav1.OwnerReference{APIVersion: "health.aks.io/v1alpha1", Kind: "HealthSignal", Controller: ptr.To(true)},
+			wantSkip: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := &CheckNodeHealthReconciler{EnableGPUChecks: tt.enabled}
+			cnh := testCNH("test-cnh")
+			if tt.trigger != "" {
+				cnh.Annotations = map[string]string{chmv1alpha1.AnnotationTrigger: tt.trigger}
+			}
+			if tt.owner != nil {
+				cnh.OwnerReferences = []metav1.OwnerReference{*tt.owner}
+			}
+			if got := r.shouldSkipGPUChecks(cnh, gpuNodeInfo{isGPUNode: tt.gpuNode}); got != tt.wantSkip {
+				t.Errorf("shouldSkipGPUChecks() = %t, want %t", got, tt.wantSkip)
+			}
+		})
+	}
+}
+
+// GPU registration and the cloud SKU label can arrive independently after a CNH on a newly booted node.
 // Do not create the checker pod until both are available, or the shared wait expires.
 func TestReconcileWaitsForGPUReadiness(t *testing.T) {
 	gpus := func(n int64) resource.Quantity { return *resource.NewQuantity(n, resource.DecimalSI) }
@@ -181,6 +222,7 @@ func TestReconcileWaitsForGPUReadiness(t *testing.T) {
 		// existingPod is a checker pod created before this reconcile.
 		existingPod  bool
 		upgradeCheck bool
+		trigger      string
 		// wantWait means the reconcile requeues without creating the checker pod.
 		wantWait bool
 		// wantImage and wantArgs describe the checker pod when one is created.
@@ -291,6 +333,36 @@ func TestReconcileWaitsForGPUReadiness(t *testing.T) {
 			wantImage:       "default-image",
 		},
 		{
+			name:            "boot trigger skips GPU checks with claimable GPUs",
+			registered:      ptr.To(gpus(8)),
+			allocatable:     ptr.To(gpus(8)),
+			enableGPUChecks: true,
+			trigger:         chmv1alpha1.TriggerNodeBoot,
+			wantImage:       "default-image",
+		},
+		{
+			name:            "boot trigger does not wait for GPU startup prerequisites",
+			enableGPUChecks: true,
+			missingSKU:      true,
+			trigger:         chmv1alpha1.TriggerNodeBoot,
+			wantImage:       "default-image",
+		},
+		{
+			name:            "AKS HealthSignal trigger skips GPU checks without an owner",
+			registered:      ptr.To(gpus(8)),
+			allocatable:     ptr.To(gpus(8)),
+			enableGPUChecks: true,
+			trigger:         chmv1alpha1.TriggerAKSHealthSignal,
+			wantImage:       "default-image",
+		},
+		{
+			name:            "AKS HealthSignal trigger does not wait for GPU startup prerequisites",
+			enableGPUChecks: true,
+			missingSKU:      true,
+			trigger:         chmv1alpha1.TriggerAKSHealthSignal,
+			wantImage:       "default-image",
+		},
+		{
 			// The node's GPU state can change while a check runs, e.g. a device plugin restart. The
 			// check that is already underway carries on.
 			name:            "does not hold back a check that already has its pod",
@@ -298,6 +370,7 @@ func TestReconcileWaitsForGPUReadiness(t *testing.T) {
 			allocatable:     ptr.To(gpus(0)),
 			enableGPUChecks: true,
 			existingPod:     true,
+			trigger:         chmv1alpha1.TriggerNodeBoot,
 		},
 	}
 
@@ -326,6 +399,9 @@ func TestReconcileWaitsForGPUReadiness(t *testing.T) {
 			}
 
 			cnh := testCNH("cnh-wait")
+			if tt.trigger != "" {
+				cnh.Annotations = map[string]string{chmv1alpha1.AnnotationTrigger: tt.trigger}
+			}
 			if tt.upgradeCheck {
 				cnh.OwnerReferences = []metav1.OwnerReference{{
 					APIVersion: "health.aks.io/v1alpha1",
@@ -374,6 +450,10 @@ func TestReconcileWaitsForGPUReadiness(t *testing.T) {
 				if updated.Status.FinishedAt == nil {
 					t.Errorf("the check with an existing pod did not complete")
 				}
+				wantNames, _ := expectedRun(true, node.Labels[instanceTypeLabel])
+				if len(updated.Status.Results) != len(wantNames) {
+					t.Errorf("existing GPU run reported %d results, want %d", len(updated.Status.Results), len(wantNames))
+				}
 				return
 			}
 
@@ -384,13 +464,13 @@ func TestReconcileWaitsForGPUReadiness(t *testing.T) {
 			if c.Image != tt.wantImage {
 				t.Errorf("image = %q, want %q", c.Image, tt.wantImage)
 			}
-			if tt.upgradeCheck {
+			if tt.upgradeCheck || tt.trigger == chmv1alpha1.TriggerNodeBoot || tt.trigger == chmv1alpha1.TriggerAKSHealthSignal {
 				if slices.Contains(c.Args, "--enable-gpu-checks") {
-					t.Errorf("upgrade request enabled GPU checks: %v", c.Args)
+					t.Errorf("automated request enabled GPU checks: %v", c.Args)
 				}
 				_, spec := recordedRun(&pods.Items[0], gpuNodeInfo{})
-				if spec.gpuChecks != nil || spec.timeout != PodTimeout || !slices.Equal(spec.checkerNames, baseCheckerNames) {
-					t.Errorf("upgrade request must expect only base checks with the base timeout: %+v", spec)
+				if !spec.gpuNode || spec.gpuChecks != nil || spec.timeout != PodTimeout || !slices.Equal(spec.checkerNames, baseCheckerNames) {
+					t.Errorf("automated request must preserve GPU classification and expect only base checks with the base timeout: %+v", spec)
 				}
 			}
 			for _, arg := range tt.wantArgs {
@@ -404,6 +484,37 @@ func TestReconcileWaitsForGPUReadiness(t *testing.T) {
 			}
 			if gotGPUs != tt.wantGPUs {
 				t.Errorf("gpu limit = %q, want %q", gotGPUs, tt.wantGPUs)
+			}
+			if tt.trigger == chmv1alpha1.TriggerNodeBoot || tt.trigger == chmv1alpha1.TriggerAKSHealthSignal {
+				pod := &pods.Items[0]
+				pod.Status = finishedCheckerPod(cnh.Name, true, "").Status
+				if err := fakeClient.Status().Update(ctx, pod); err != nil {
+					t.Fatalf("completing the checker pod: %v", err)
+				}
+				reconciler.EnableNodeCondition = true
+				if _, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: key}); err != nil {
+					t.Fatalf("reconciling the completed pod: %v", err)
+				}
+				updated := &chmv1alpha1.CheckNodeHealth{}
+				if err := fakeClient.Get(ctx, key, updated); err != nil {
+					t.Fatalf("reading the completed CR: %v", err)
+				}
+				if updated.Status.FinishedAt == nil || len(updated.Status.Results) != len(baseCheckerNames) {
+					t.Fatalf("automated check must complete with only base results: %+v", updated.Status)
+				}
+				for _, result := range updated.Status.Results {
+					if !slices.Contains(baseCheckerNames, result.Name) {
+						t.Errorf("automated check reported unexpected result %q", result.Name)
+					}
+				}
+				if err := fakeClient.Get(ctx, client.ObjectKeyFromObject(node), node); err != nil {
+					t.Fatalf("reading the node: %v", err)
+				}
+				for _, condition := range node.Status.Conditions {
+					if condition.Type == NodeConditionNodeHealthy {
+						t.Error("automated check published NodeHealthy on a GPU node")
+					}
+				}
 			}
 		})
 	}
@@ -427,7 +538,7 @@ func TestReconcileStartsGPUChecksWhenStartupMetadataArrives(t *testing.T) {
 			if err := c.Create(ctx, node); err != nil {
 				t.Fatal(err)
 			}
-			cnh := testCNH("boot-startup")
+			cnh := testCNH("manual-startup")
 			if err := c.Create(ctx, cnh); err != nil {
 				t.Fatal(err)
 			}

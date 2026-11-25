@@ -138,15 +138,28 @@ type checkerSpec struct {
 	wait time.Duration
 }
 
+func (r *CheckNodeHealthReconciler) shouldSkipGPUChecks(cnh *chmv1alpha1.CheckNodeHealth, info gpuNodeInfo) bool {
+	// Node is not applicable for gpu checks.
+	if !info.isGPUNode || !r.EnableGPUChecks {
+		return true
+	}
+
+	// Skip GPU checks for automated triggers.
+	trigger := cnh.Annotations[chmv1alpha1.AnnotationTrigger]
+	if trigger == chmv1alpha1.TriggerNodeBoot || trigger == chmv1alpha1.TriggerAKSHealthSignal {
+		return true
+	}
+
+	// Preserve the GPU exclusion for HealthSignal-owned CNHs.
+	owner := metav1.GetControllerOf(cnh)
+	return owner != nil && owner.APIVersion == healthv1alpha1.GroupVersion.String() && owner.Kind == "HealthSignal"
+}
+
 // checkerSpecFor picks the checker run for a node. GPU checks wait up to GPUWait after CNH creation
 // for both the node's SKU label and claimable GPUs, which can arrive independently during startup.
 func (r *CheckNodeHealthReconciler) checkerSpecFor(cnh *chmv1alpha1.CheckNodeHealth, info gpuNodeInfo, age time.Duration) checkerSpec {
 	spec := checkerSpec{image: r.CheckerPodImage, gpuNode: info.isGPUNode}
-	// HealthSignal-owned checks gate upgrades. Skip experimental GPU checks and their wait,
-	// which can exceed RP's health-check deadline and fail otherwise healthy upgrades.
-	owner := metav1.GetControllerOf(cnh)
-	upgradeCheck := owner != nil && owner.APIVersion == healthv1alpha1.GroupVersion.String() && owner.Kind == "HealthSignal"
-	if !info.isGPUNode || !r.EnableGPUChecks || upgradeCheck {
+	if r.shouldSkipGPUChecks(cnh, info) {
 		spec.checkerNames, spec.timeout = expectedRun(false, "")
 		return spec
 	}

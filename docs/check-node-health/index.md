@@ -40,14 +40,14 @@ CheckNodeHealth CRs have a six-hour TTL and are deleted on the next hourly clean
 
 GPU checks require SKU metadata and healthy GPUs advertised by the NVIDIA device plugin. The controller waits up to `--gpu-wait` (default two minutes) for these prerequisites; if they remain unavailable, GPU results are Unknown while base checks still run.
 
-The checker pod requires all allocatable GPUs, so existing GPU workloads must finish or be stopped before GPU checks can run.
+When running benchmarks, the checker pod requests all allocatable GPUs, so existing GPU workloads must finish or be stopped before GPU checks can run. Boot- and HealthCheckRequest-triggered checks do not request GPUs.
 
 ## Installation and configuration
 
 See [Getting started](../getting-started.md#install-only-check-node-health) for installation commands. The settings below show binary defaults and the capabilities enabled by the [base Deployment](../../manifests/base/checknodehealth-controller/deployment.yaml).
 
 > [!IMPORTANT]
-> Automatic checks on GPU nodes can claim all advertised GPUs while benchmarks run. Standard-node conditions can trigger external remediation. Review the settings before deploying.
+> Eligible checks on GPU nodes can claim all allocatable GPUs while benchmarks run. Standard-node conditions can trigger external remediation. Review the settings before deploying.
 
 ### Controller settings
 
@@ -55,7 +55,7 @@ See [Getting started](../getting-started.md#install-only-check-node-health) for 
 |---|---|---|
 | `--enable-node-reboot-check` | `false` / enabled | Create checks for eligible new and rebooted nodes; clean up stale or inapplicable `NodeHealthy` conditions. |
 | `--enable-node-condition` | `false` / enabled | Publish completed results as `NodeHealthy` on non-GPU nodes. |
-| `--enable-gpu-checks` | `false` / enabled | Run intrusive GPU checks, except for `HealthSignal`-owned requests. |
+| `--enable-gpu-checks` | `false` / enabled | Run intrusive GPU checks on eligible GPU nodes, excluding requests triggered by node boot or AKS HealthSignal. |
 | `--enable-health-check-request` | `false` / disabled | Bridge `HealthCheckRequest` through `HealthSignal` to a node check. |
 | `--gpu-wait` | `2m` | Shared startup budget for GPU SKU metadata and claimable GPUs, measured from request creation. |
 
@@ -63,7 +63,7 @@ Remove an enable flag from the Deployment to disable that capability. See the [c
 
 ## How to run checks
 
-The controller selects base checks for all nodes and applicable SKU-based GPU checks when enabled.
+The controller selects base checks for all nodes. With GPU checks enabled, CNHs targeting eligible GPU nodes also run SKU-specific benchmarks, except when triggered by node boot or AKS HealthSignal.
 
 ### Manual request
 
@@ -119,6 +119,8 @@ On GPU nodes, `HealthCheckRequest`-triggered runs perform only the non-GPU check
 ### Automatically on node boot
 
 With `--enable-node-reboot-check`, eligible new Linux nodes and nodes whose boot ID changes are checked automatically. See the [Node controller specification](../../spec/components/node-controller.md) for readiness and cleanup rules.
+
+On GPU nodes, boot-triggered checks runs perform only the non-GPU checks: `PodStartup` and `PodNetwork`.
 
 ## How to consume results
 

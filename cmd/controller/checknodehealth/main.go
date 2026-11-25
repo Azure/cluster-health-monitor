@@ -68,7 +68,7 @@ func main() {
 		"Enable setting the NodeHealthy condition on Node objects when health checks fail. "+
 			"GPU nodes never get NodeHealthy; their failed checks are only reported as node events.")
 	flag.BoolVar(&enableGPUChecks, "enable-gpu-checks", false,
-		"Enable intrusive GPU checks on CheckNodeHealth targets that are GPU nodes. "+
+		"Enable intrusive GPU checks on GPU nodes, excluding requests triggered by node boot or AKS HealthSignal. "+
 			"Requires GPU_CHECKER_POD_IMAGE to be set.")
 	flag.DurationVar(&gpuWait, "gpu-wait", checknodehealth.DefaultGPUWait,
 		"How long to wait for a GPU node's SKU label and claimable GPUs before reporting missing startup prerequisites. "+
