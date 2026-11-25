@@ -121,6 +121,9 @@ func TestReconcile(t *testing.T) {
 				if cnh.Spec.NodeRef.Name != "test-node" {
 					t.Errorf("Expected node name 'test-node', got %s", cnh.Spec.NodeRef.Name)
 				}
+				if cnh.Annotations[chmv1alpha1.AnnotationTrigger] != chmv1alpha1.TriggerAKSHealthSignal {
+					t.Errorf("CNH trigger = %q, want %q", cnh.Annotations[chmv1alpha1.AnnotationTrigger], chmv1alpha1.TriggerAKSHealthSignal)
+				}
 				// Verify CheckNodeHealth owner reference with Controller=true
 				if len(cnh.OwnerReferences) != 1 {
 					t.Errorf("Expected 1 owner reference on CheckNodeHealth, got %d", len(cnh.OwnerReferences))

@@ -18,7 +18,7 @@ The binary is `/controller`.
 | `-health-probe-bind-address`    | `:8081` | `/healthz` and `/readyz` endpoints. |
 | `-leader-elect`                 | `false` | Enable leader election (ID `checknodehealth.clusterhealthmonitor.azure.com`). |
 | `-enable-node-condition`        | `false` | Write the `NodeHealthy` condition on standard Nodes (see §4.2). Node events (§4.3) are emitted either way. |
-| `-enable-gpu-checks`            | `false` | Run GPU checks on GPU nodes, except upgrade-request checks (§5.5). Requires `GPU_CHECKER_POD_IMAGE`. |
+| `-enable-gpu-checks`            | `false` | Run GPU checks on GPU nodes, except automated checks (§5.5). Requires `GPU_CHECKER_POD_IMAGE`. |
 | `-gpu-wait`                     | `2m`    | Startup budget for the GPU node's SKU label and claimable GPUs; missing prerequisites are reported as `Unknown` after the deadline. |
 | `-v`                            | `0`     | klog verbosity. Logs are JSON. |
 
@@ -47,6 +47,16 @@ spec:
 ```
 
 Any client can create a CNH.
+
+Automated producers set the annotation `clusterhealthmonitor.azure.com/trigger`:
+
+| Trigger | Producer |
+|--------|----------|
+| `node-boot` | NodeReboot controller. |
+| `aks-health-signal` | AKS HealthSignal-backed request; set by the HealthCheckRequest controller on the CNH owned by its HealthSignal. |
+
+Both triggers exclude GPU checks (§5.5). Manual CNHs need no annotation or explicit GPU opt-in.
+An absent or unrecognized trigger leaves GPU eligibility unchanged, subject to the existing HealthSignal-owner exclusion.
 
 ## 4. Output
 
@@ -179,7 +189,7 @@ The controller watches `CheckNodeHealth` resources and the checker pods they own
 2. **Finished right away:**
    - **Node is not Linux:** no checker pod is created; the CNH finishes with `Healthy=Unknown`, reason `CheckUnsupported`, and no results. Metrics are recorded (with `reason=CheckUnsupported`), but Node conditions are not touched, no Node event is emitted, and the circuit breaker does not count it. The OS comes from the `kubernetes.io/os` label, falling back to `status.nodeInfo.operatingSystem`; an empty OS also counts as not Linux.
 3. **Delayed:**
-   - **GPU node whose SKU label is missing, or whose supported SKU has no claimable GPUs yet** (only with `-enable-gpu-checks`, excluding upgrade-request checks): start is delayed up to `-gpu-wait` after CNH creation (§5.4).
+   - **GPU node whose SKU label is missing, or whose supported SKU has no claimable GPUs yet** (only with `-enable-gpu-checks`, excluding automated checks in §5.5): start is delayed up to `-gpu-wait` after CNH creation (§5.4).
 4. **Otherwise, run the check (§5.2).**
 
 A missing node is not rejected: the checker pod is created but stays `Pending`, and the run ends by pod timeout with `PodStartup=Unhealthy`. No Node event is emitted, since there is no Node to attach it to.
@@ -199,7 +209,7 @@ A missing node is not rejected: the checker pod is created but stays `Pending`, 
    - **Owner reference:** the pod is owned by the CNH, so if the CNH is gone, Kubernetes garbage collection deletes the pod.
    - **Label:** the pod carries `clusterhealthmonitor.azure.com/checknodehealth=<cnh name>`. When a run finishes, and when a CNH is deleted, the controller lists pods by this label and deletes all of them. The controller's cache also only watches `kube-system` pods with this label.
 
-Pod timeout, counted from pod creation (not CNH creation): **2m** for runs without GPU checks (including upgrade-request checks), **15m** for GPU nodes running GPU checks.
+Pod timeout, counted from pod creation (not CNH creation): **2m** for runs without GPU checks (including boot and upgrade requests), **15m** for GPU nodes running GPU checks.
 
 Expected checks: `PodStartup` and `PodNetwork`, plus the GPU checks for the node's SKU when GPU checks run. The GPU checks are `NcclAllReduce`, `GpuHostBandwidth` and `GpuPeerBandwidth`; a known SKU may run only some of them (for example, no peer bandwidth without NVLink). An unknown SKU lists all three, but none of them runs: each reports `Unknown` with `errorCode: UnknownSKU`.
 
@@ -226,7 +236,7 @@ Before the run finishes, `Healthy` is `Unknown`. A node that is not Linux also g
 
 A node is a GPU node if it has allocatable `nvidia.com/gpu` or the label `kubernetes.azure.com/accelerator=nvidia`.
 
-GPU checks run only when `-enable-gpu-checks` is on and the CNH is not an upgrade-request check (§5.5). In that case the checker pod:
+GPU checks run only when `-enable-gpu-checks` is on and the CNH is not an excluded automated check (§5.5). In that case the checker pod:
 - uses `GPU_CHECKER_POD_IMAGE`;
 - gets `--enable-gpu-checks --sku=<node.kubernetes.io/instance-type>`;
 - requests all claimable GPUs only when the SKU has a GPU test profile.
@@ -249,18 +259,21 @@ Bandwidth checks parse `nvbandwidth` JSON stdout separately from stderr. Warning
 
 The decision is recorded on the pod as annotations (`clusterhealthmonitor.azure.com/node-kind`, `.../gpu-checks-sku`). Later reconciles read these annotations, so a node that changes mid-run changes neither the expected checks nor whether the result can reach `NodeHealthy` (§4.2).
 
-### 5.5 Upgrade-request checks
+### 5.5 Automated checks
 
-A CNH whose controller owner reference is a `health.aks.io/v1alpha1` `HealthSignal` is an upgrade-request check. For these requests, even when `-enable-gpu-checks` is on:
+A CNH with `clusterhealthmonitor.azure.com/trigger` set to `node-boot` or `aks-health-signal` is excluded from GPU checks.
+A CNH whose controller owner reference is a `health.aks.io/v1alpha1` `HealthSignal` is also excluded, preserving behavior for upgrade-request CNHs created before trigger annotations were added.
+For these requests, even when `-enable-gpu-checks` is on:
 
 - Skip GPU checks and the startup wait for SKU metadata and claimable GPUs.
 - Use `CHECKER_POD_IMAGE`, expect only `PodStartup` and `PodNetwork`, and apply the **2m** base pod timeout.
 - Do not claim GPUs or add missing GPU results as `Unknown`; GPU results are not expected.
 - Preserve GPU-node classification: GPU nodes still receive no `NodeHealthy` condition (§4.2).
 
-**Why:** GPU checks are experimental, and their runtime (up to 15m plus the GPU availability wait) can exceed AKS RP's upgrade health-check deadline (1m by default). They must not introduce GPU-related failures or delays into upgrade health checks. The base checks can still fail or time out; this exemption does not guarantee completion within RP's deadline.
+**Why:** intrusive GPU benchmarks should not run automatically on node boot or as part of upgrade health checks. GPU checks are experimental, and their runtime (up to 15m plus the GPU availability wait) can exceed AKS RP's upgrade health-check deadline (1m by default). The base checks can still fail or time out; this exemption does not guarantee completion within RP's deadline.
 
-On-demand and reboot-triggered CNHs without this controller owner remain eligible for GPU checks. Existing checker pods continue with the run recorded in their annotations (§5.4).
+Unannotated on-demand CNHs without this controller owner remain eligible for GPU checks; no explicit opt-in is required.
+Existing unannotated boot CNHs are not retroactively marked and retain their previous eligibility. Existing checker pods continue with the run recorded in their annotations (§5.4).
 
 ## 6. E2E
 

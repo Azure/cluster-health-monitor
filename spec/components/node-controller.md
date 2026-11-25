@@ -31,13 +31,16 @@ apiVersion: clusterhealthmonitor.azure.com/v1alpha1
 kind: CheckNodeHealth
 metadata:
   name: boot-1a2b3c4d-aks-nodepool1-0
+  annotations:
+    clusterhealthmonitor.azure.com/trigger: node-boot
 spec:
   nodeRef:
     name: aks-nodepool1-0
 ```
 
 - **Name:** `boot-<hash>-<node name>` (§5.1).
-- **No owner reference, no annotations.** These CNHs are ordinary (non-upgrade-request) checks and are eligible for GPU checks. Cleanup is done by the CheckNodeHealth controller (6–7h after creation); this controller never deletes CNHs.
+- **Trigger:** `clusterhealthmonitor.azure.com/trigger: node-boot`. These CNHs run only base checks, without GPU benchmarks or GPU startup waiting.
+- **No owner reference.** Cleanup is done by the CheckNodeHealth controller (6–7h after creation); this controller never deletes CNHs.
 
 ### 4.2 Node conditions
 

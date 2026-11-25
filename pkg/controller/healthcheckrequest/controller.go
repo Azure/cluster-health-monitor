@@ -236,7 +236,8 @@ func (r *HealthCheckRequestReconciler) ensureCheckNodeHealth(ctx context.Context
 	cnhName := hs.Name
 	cnh := &chmv1alpha1.CheckNodeHealth{
 		ObjectMeta: metav1.ObjectMeta{
-			Name: cnhName,
+			Name:        cnhName,
+			Annotations: map[string]string{chmv1alpha1.AnnotationTrigger: chmv1alpha1.TriggerAKSHealthSignal},
 		},
 		Spec: chmv1alpha1.CheckNodeHealthSpec{
 			NodeRef: chmv1alpha1.NodeReference{

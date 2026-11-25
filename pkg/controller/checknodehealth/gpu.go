@@ -27,7 +27,7 @@ const (
 
 	// DefaultGPUWait bounds startup waiting for both the node's SKU label and GPUs the checks can claim.
 	//
-	// A boot-triggered CNH can precede both cloud metadata initialization and NVIDIA device-plugin
+	// A CNH on a newly booted node can precede both cloud metadata initialization and NVIDIA device-plugin
 	// registration. These updates are independent: GPUs may already be advertised while the SKU
 	// label is still absent. Wait before creating the pod so a benchmark run never snapshots an empty SKU.
 	//
