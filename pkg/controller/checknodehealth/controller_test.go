@@ -113,6 +113,7 @@ func TestReconcile(t *testing.T) {
 		existingCR          *chmv1alpha1.CheckNodeHealth
 		existingPod         *corev1.Pod
 		existingNode        *corev1.Node
+		enableGPUChecks     bool
 		enableNodeCondition bool
 		circuitBreaker      *NodeConditionCircuitBreaker
 		triggerDeletion     bool // If true, call Delete() before Reconcile()
@@ -198,7 +199,7 @@ func TestReconcile(t *testing.T) {
 			},
 		},
 		{
-			name: "handles pod failed immediately and cleans up",
+			name: "GPU contention before container startup reports all checks Unknown and cleans up",
 			existingCR: &chmv1alpha1.CheckNodeHealth{
 				ObjectMeta: metav1.ObjectMeta{Name: "test-check"},
 				Spec: chmv1alpha1.CheckNodeHealthSpec{
@@ -212,12 +213,17 @@ func TestReconcile(t *testing.T) {
 					Labels: map[string]string{
 						CheckNodeHealthLabel: "test-check",
 					},
-					Annotations: runAnnotations(false, ""),
+					Annotations: runAnnotations(true, "Standard_ND96isr_H100_v5"),
 				},
-				// Admission rejection to simulate an invalid request where the controller tried to create a pod requesting all the gpu on
-				// a node when they were already in use.
-				Status: corev1.PodStatus{Phase: corev1.PodFailed, Reason: "UnexpectedAdmissionError"},
+				// Admission rejected the GPU request before any container started or reported results.
+				Status: corev1.PodStatus{
+					Phase:   corev1.PodFailed,
+					Reason:  "UnexpectedAdmissionError",
+					Message: "Allocate failed due to requested number of devices unavailable for nvidia.com/gpu. Requested: 8, Available: 0",
+				},
 			},
+			existingNode:       gpuNode("test-node"),
+			enableGPUChecks:    true,
 			expectedResult:     ctrl.Result{},
 			expectError:        false,
 			expectedPodCreated: false, // Pod already exists
@@ -231,22 +237,30 @@ func TestReconcile(t *testing.T) {
 					t.Error("Expected CheckNodeHealth to be marked as completed")
 				}
 
-				// PodStartup result should be recorded as Unknown because the pod could have failed to start due to being an invalid
-				// request. There is not sufficient evidence to flag node as unhealthy yet.
-				var podStartup *chmv1alpha1.CheckResult
-				for i := range updatedCnh.Status.Results {
-					if updatedCnh.Status.Results[i].Name == "PodStartup" {
-						podStartup = &updatedCnh.Status.Results[i]
+				condition := getHealthyCondition(updatedCnh.Status.Conditions)
+				if condition == nil {
+					t.Fatal("Expected a Healthy condition")
+				}
+				if condition.Status != metav1.ConditionUnknown || condition.Reason != ReasonCheckUnknown {
+					t.Errorf("Healthy condition = %v/%s, want Unknown/%s", condition.Status, condition.Reason, ReasonCheckUnknown)
+				}
+
+				wantChecks := []string{"PodStartup", "PodNetwork", "NcclAllReduce", "GpuHostBandwidth", "GpuPeerBandwidth"}
+				if len(updatedCnh.Status.Results) != len(wantChecks) {
+					t.Fatalf("Got %d results, want %d", len(updatedCnh.Status.Results), len(wantChecks))
+				}
+				for _, name := range wantChecks {
+					index := slices.IndexFunc(updatedCnh.Status.Results, func(result chmv1alpha1.CheckResult) bool {
+						return result.Name == name
+					})
+					if index == -1 {
+						t.Errorf("Missing result for %s", name)
+						continue
 					}
-				}
-				if podStartup == nil {
-					t.Fatal("Expected a PodStartup result to be recorded")
-				}
-				if podStartup.Status != chmv1alpha1.CheckStatusUnknown {
-					t.Errorf("PodStartup status = %v, want %v", podStartup.Status, chmv1alpha1.CheckStatusUnknown)
-				}
-				if podStartup.ErrorCode != ErrorCodeCheckNotReported {
-					t.Errorf("PodStartup error code = %q, want %q", podStartup.ErrorCode, ErrorCodeCheckNotReported)
+					result := updatedCnh.Status.Results[index]
+					if result.Status != chmv1alpha1.CheckStatusUnknown || result.ErrorCode != ErrorCodeCheckNotReported {
+						t.Errorf("%s = %v/%s, want Unknown/%s", name, result.Status, result.ErrorCode, ErrorCodeCheckNotReported)
+					}
 				}
 			},
 		},
@@ -832,6 +846,7 @@ func TestReconcile(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			reconciler, fakeClient, _ := setupTest()
+			reconciler.EnableGPUChecks = tt.enableGPUChecks
 			reconciler.EnableNodeCondition = tt.enableNodeCondition
 			reconciler.CircuitBreaker = tt.circuitBreaker
 			ctx := context.Background()
@@ -1265,13 +1280,34 @@ func TestCheckerSpecFor(t *testing.T) {
 			},
 		},
 		{
-			name:            "nonempty unsupported sku is not treated as missing metadata",
+			name:            "unsupported sku does not claim advertised gpus",
 			info:            gpuNodeInfo{isGPUNode: true, claimableGPUs: 2, sku: "unrecognized_sku"},
 			enableGPUChecks: true,
 			want: checkerSpec{
 				gpuNode: true,
 				image:   "gpu-image", timeout: GPUPodTimeout, checkerNames: gpuNames,
-				gpuChecks: &gpuChecks{sku: "unrecognized_sku", gpus: 2},
+				gpuChecks: &gpuChecks{sku: "unrecognized_sku", skipReason: gpu.ErrorCodeUnknownSKU},
+			},
+		},
+		{
+			name:            "unsupported sku does not wait for claimable gpus",
+			info:            gpuNodeInfo{isGPUNode: true, sku: "unrecognized_sku"},
+			enableGPUChecks: true,
+			want: checkerSpec{
+				gpuNode: true,
+				image:   "gpu-image", timeout: GPUPodTimeout, checkerNames: gpuNames,
+				gpuChecks: &gpuChecks{sku: "unrecognized_sku", skipReason: gpu.ErrorCodeUnknownSKU},
+			},
+		},
+		{
+			name:            "unsupported sku without claimable gpus retains UnknownSKU after the wait",
+			info:            gpuNodeInfo{isGPUNode: true, sku: "unrecognized_sku"},
+			enableGPUChecks: true,
+			age:             wait,
+			want: checkerSpec{
+				gpuNode: true,
+				image:   "gpu-image", timeout: GPUPodTimeout, checkerNames: gpuNames,
+				gpuChecks: &gpuChecks{sku: "unrecognized_sku", skipReason: gpu.ErrorCodeUnknownSKU},
 			},
 		},
 		{
