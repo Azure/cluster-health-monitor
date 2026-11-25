@@ -8,6 +8,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -98,10 +99,6 @@ var _ = Describe("DNS checker metrics", Serial, Ordered, ContinueOnFailure, func
 	})
 
 	It("should report unhealthy status with timeout for LocalDNS checkers when LocalDNS is unreachable", func() {
-		By("Disabling LocalDNS mock")
-		err := disableMockLocalDNS(clientset)
-		Expect(err).NotTo(HaveOccurred(), "Failed to disable LocalDNS mock")
-
 		DeferCleanup(func() {
 			By("Re-enabling LocalDNS mock")
 			err := enableMockLocalDNS(clientset)
@@ -112,6 +109,10 @@ var _ = Describe("DNS checker metrics", Serial, Ordered, ContinueOnFailure, func
 				return isMockLocalDNSAvailable(clientset)
 			}, "120s", "5s").Should(BeTrue(), "Mock LocalDNS is not available after re-enabling")
 		})
+
+		By("Disabling LocalDNS mock")
+		err := disableMockLocalDNS(clientset)
+		Expect(err).NotTo(HaveOccurred(), "Failed to disable LocalDNS mock")
 
 		By("Waiting for LocalDNS checker metrics to report unhealthy status")
 		waitForCheckerResultsMetricsValueIncrease(localPort,
@@ -181,6 +182,15 @@ echo "IP successfully added or already present."`,
 						{
 							Name:  "dnsmasq",
 							Image: "jpillora/dnsmasq",
+							// Use a shell to set the open-file limit before starting dnsmasq:
+							// - ulimit -n 4096: cap the file-descriptor limit so startup finishes quickly instead of
+							//   scanning ~2 billion possible descriptors with CI's default limit.
+							// - exec: replace the shell so dnsmasq receives container shutdown signals directly.
+							// - --no-daemon: keep dnsmasq in the foreground so the container stays alive.
+							// - "dnsmasq" fills shell $0 so "$@" forwards every Args entry, including the first.
+							Command: []string{
+								"/bin/sh", "-ec", `ulimit -n 4096; exec /usr/sbin/dnsmasq --no-daemon "$@"`, "dnsmasq",
+							},
 							// Options doc: https://dnsmasq.org/docs/dnsmasq-man.html.
 							Args: []string{
 								"--listen-address=169.254.10.11",
@@ -190,6 +200,15 @@ echo "IP successfully added or already present."`,
 								"--address=/#/",
 								"--log-queries",
 								"--log-facility=-",
+							},
+							ReadinessProbe: &corev1.Probe{
+								ProbeHandler: corev1.ProbeHandler{
+									TCPSocket: &corev1.TCPSocketAction{
+										Host: "169.254.10.11",
+										Port: intstr.FromInt32(53),
+									},
+								},
+								PeriodSeconds: 2,
 							},
 							Lifecycle: &corev1.Lifecycle{
 								PreStop: &corev1.LifecycleHandler{
